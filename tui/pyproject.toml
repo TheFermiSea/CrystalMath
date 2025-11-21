@@ -22,19 +22,23 @@ classifiers = [
 ]
 
 dependencies = [
-    "textual>=0.50.0",
-    "rich>=13.0.0",
-    "CRYSTALpytools>=2023.0.0",
-    "pymatgen>=2023.0.0",
-    "ase>=3.22.0",
-    "asyncssh>=2.14.0",  # For Phase 2 remote execution
-    "toml>=0.10.0",  # For config files
-    "jinja2>=3.1.0",  # Template engine
-    "pyyaml>=6.0.0",  # Template file format
-    "keyring>=24.0.0",  # Secure credential storage
+    "textual>=0.50.0",      # Terminal UI framework
+    "rich>=13.0.0",         # Rich text and tables
+    "jinja2>=3.1.0",        # Template engine (used in templates.py)
+    "pyyaml>=6.0.0",        # YAML parsing (used in templates.py)
+    "asyncssh>=2.14.0",     # SSH/SFTP for remote execution (Phase 2)
+    "keyring>=24.0.0",      # Secure credential storage (Phase 2)
 ]
 
 [project.optional-dependencies]
+# Optional analysis tools (not currently imported)
+# Install with: pip install crystal-tui[analysis]
+analysis = [
+    "CRYSTALpytools>=2023.0.0",
+    "pymatgen>=2023.0.0",
+    "ase>=3.22.0",
+]
+
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

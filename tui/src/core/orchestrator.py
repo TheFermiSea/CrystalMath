@@ -7,7 +7,11 @@ parameter resolution, and error handling.
 """
 
 import asyncio
+import atexit
 import json
+import os
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -239,7 +243,8 @@ class WorkflowOrchestrator:
         self,
         database: Database,
         queue_manager: Any,  # Will be QueueManager when implemented
-        event_callback: Optional[Callable[[WorkflowEvent], None]] = None
+        event_callback: Optional[Callable[[WorkflowEvent], None]] = None,
+        scratch_base: Optional[Path] = None
     ):
         """
         Initialize the orchestrator.
@@ -248,15 +253,28 @@ class WorkflowOrchestrator:
             database: Database instance for persistence
             queue_manager: Queue manager for job submission
             event_callback: Optional callback for workflow events
+            scratch_base: Optional base directory for workflow scratch space.
+                         If not provided, uses CRY_SCRATCH_BASE, CRY23_SCRDIR, or tempfile.gettempdir()
         """
         self.database = database
         self.queue_manager = queue_manager
         self.event_callback = event_callback
 
+        # Configure scratch base directory with proper fallback chain
+        self._scratch_base = scratch_base or self._get_scratch_base()
+
+        # Track cleanup handlers for proper resource cleanup
+        self._work_dirs: Set[Path] = set()
+        atexit.register(self._cleanup_work_dirs)
+
         # In-memory state for active workflows
         self._workflows: Dict[int, WorkflowDefinition] = {}
         self._workflow_states: Dict[int, WorkflowState] = {}
         self._node_lookup: Dict[int, Dict[str, WorkflowNode]] = {}  # workflow_id -> node_id -> node
+
+        # Callback tracking for job completions
+        # Maps job_id -> (workflow_id, node_id)
+        self._node_callbacks: Dict[int, tuple] = {}
 
         # Background monitoring task
         self._monitor_task: Optional[asyncio.Task] = None
@@ -264,6 +282,79 @@ class WorkflowOrchestrator:
 
         # Jinja2 environment for template rendering
         self._jinja_env = Environment(autoescape=False)
+
+    @staticmethod
+    def _get_scratch_base() -> Path:
+        """
+        Get the scratch base directory following the configured fallback chain.
+
+        Priority:
+        1. CRY_SCRATCH_BASE environment variable (newer convention)
+        2. CRY23_SCRDIR environment variable (CRYSTAL23 convention)
+        3. tempfile.gettempdir() system default
+
+        Returns:
+            Path object for the scratch base directory
+        """
+        # Try CRY_SCRATCH_BASE first (preferred newer convention)
+        scratch_base = os.environ.get('CRY_SCRATCH_BASE')
+        if scratch_base:
+            return Path(scratch_base)
+
+        # Fall back to CRY23_SCRDIR (CRYSTAL23 convention)
+        scratch_dir = os.environ.get('CRY23_SCRDIR')
+        if scratch_dir:
+            return Path(scratch_dir)
+
+        # Fall back to system temp directory
+        return Path(tempfile.gettempdir())
+
+    def _create_work_directory(self, workflow_id: int, node_id: str) -> Path:
+        """
+        Create a unique work directory for a workflow node.
+
+        Creates a directory with format:
+        <scratch_base>/workflow_<workflow_id>_node_<node_id>_<timestamp>_<pid>
+
+        The directory is registered for cleanup on exit.
+
+        Args:
+            workflow_id: ID of the workflow
+            node_id: ID of the node
+
+        Returns:
+            Path object for the created directory
+
+        Raises:
+            OSError: If directory creation fails
+        """
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        pid = os.getpid()
+        dir_name = f"workflow_{workflow_id}_node_{node_id}_{timestamp}_{pid}"
+        work_dir = self._scratch_base / dir_name
+
+        # Create directory
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        # Register for cleanup
+        self._work_dirs.add(work_dir)
+
+        return work_dir
+
+    def _cleanup_work_dirs(self) -> None:
+        """
+        Clean up all registered work directories.
+
+        This method is registered as an atexit handler to ensure
+        cleanup occurs even if the orchestrator is not explicitly stopped.
+        """
+        for work_dir in self._work_dirs:
+            try:
+                if work_dir.exists():
+                    shutil.rmtree(work_dir, ignore_errors=True)
+            except Exception:
+                # Silently ignore cleanup errors to prevent atexit issues
+                pass
 
     def register_workflow(self, workflow: WorkflowDefinition) -> None:
         """
@@ -588,9 +679,8 @@ class WorkflowOrchestrator:
             # Render input template
             input_content = self._render_template(node.template, resolved_params)
 
-            # Create work directory
-            work_dir = Path(f"/tmp/workflow_{workflow_id}_node_{node.node_id}")
-            work_dir.mkdir(parents=True, exist_ok=True)
+            # Create work directory using environment-based scratch location
+            work_dir = self._create_work_directory(workflow_id, node.node_id)
 
             # Create database job
             job_id = self.database.create_job(
@@ -605,11 +695,35 @@ class WorkflowOrchestrator:
             # Update state
             state.running_nodes.add(node.node_id)
 
-            # Submit to queue manager
-            # TODO: Integrate with actual queue manager
-            # await self.queue_manager.enqueue(job_id)
+            # Get job from database to access cluster_id and runner_type
+            job = self.database.get_job(job_id)
+            if not job:
+                raise OrchestratorError(f"Failed to retrieve job {job_id} from database")
 
-            # For now, update status directly
+            # Prepare dependencies: get job_ids from dependent nodes
+            dep_job_ids = []
+            for dep_node_id in node.dependencies:
+                dep_node = self._node_lookup[workflow_id].get(dep_node_id)
+                if dep_node and dep_node.job_id:
+                    dep_job_ids.append(dep_node.job_id)
+
+            # Submit to queue manager with dependencies
+            await self.queue_manager.enqueue(
+                job_id=job_id,
+                priority=2,  # Default NORMAL priority
+                dependencies=dep_job_ids if dep_job_ids else None,
+                runner_type=job.runner_type or "local",
+                cluster_id=job.cluster_id,
+                user_id=None
+            )
+
+            # Register completion callback for this job
+            # The callback will be invoked when the job completes
+            if not hasattr(self, '_node_callbacks'):
+                self._node_callbacks = {}
+            self._node_callbacks[job_id] = (workflow_id, node.node_id)
+
+            # Update database status (queue manager will manage from here)
             self.database.update_status(job_id, "QUEUED")
 
             # Emit event
@@ -625,6 +739,31 @@ class WorkflowOrchestrator:
                 node.node_id,
                 node.job_id or 0,
                 str(e)
+            )
+
+    async def _on_node_complete(self, workflow_id: int, node: WorkflowNode, job_status: str) -> None:
+        """
+        Handle completion of a workflow node.
+
+        This callback is triggered when a job submitted by _submit_node completes.
+        It processes the job results and updates workflow state.
+
+        Args:
+            workflow_id: ID of the workflow
+            node: The workflow node that completed
+            job_status: Status of the completed job ("COMPLETED" or "FAILED")
+        """
+        if not node.job_id:
+            return
+
+        if job_status == "COMPLETED":
+            await self.process_node_completion(workflow_id, node.node_id, node.job_id)
+        elif job_status == "FAILED":
+            await self._handle_node_failure(
+                workflow_id,
+                node.node_id,
+                node.job_id,
+                "Job execution failed"
             )
 
     async def _resolve_parameters(

@@ -13,6 +13,7 @@ to HPC clusters with batch scheduling. It handles:
 import asyncio
 import re
 import logging
+import shlex
 from pathlib import Path
 from typing import AsyncIterator, Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
@@ -71,6 +72,11 @@ class SLURMSubmissionError(SLURMRunnerError):
 
 class SLURMStatusError(SLURMRunnerError):
     """Raised when status checking fails."""
+    pass
+
+
+class SLURMValidationError(SLURMRunnerError):
+    """Raised when input validation fails."""
     pass
 
 
@@ -327,13 +333,270 @@ class SLURMRunner(BaseRunner):
         """
         return self._job_states.get(job_id)
 
+    @staticmethod
+    def _validate_job_name(job_name: str) -> None:
+        """
+        Validate SLURM job name format.
+
+        Job names must contain only alphanumeric characters, hyphens, and underscores.
+
+        Args:
+            job_name: Job name to validate
+
+        Raises:
+            SLURMValidationError: If job name is invalid
+        """
+        if not job_name:
+            raise SLURMValidationError("Job name cannot be empty")
+
+        if len(job_name) > 255:
+            raise SLURMValidationError("Job name cannot exceed 255 characters")
+
+        # Allow alphanumeric, hyphens, underscores only
+        if not re.match(r"^[a-zA-Z0-9_-]+$", job_name):
+            raise SLURMValidationError(
+                f"Invalid job name '{job_name}': "
+                "must contain only alphanumeric characters, hyphens, and underscores"
+            )
+
+    @staticmethod
+    def _validate_partition(partition: Optional[str]) -> None:
+        """
+        Validate SLURM partition name format.
+
+        Partition names must be alphanumeric with optional underscores.
+
+        Args:
+            partition: Partition name to validate
+
+        Raises:
+            SLURMValidationError: If partition name is invalid
+        """
+        if not partition:
+            return
+
+        if len(partition) > 255:
+            raise SLURMValidationError("Partition name cannot exceed 255 characters")
+
+        if not re.match(r"^[a-zA-Z0-9_]+$", partition):
+            raise SLURMValidationError(
+                f"Invalid partition '{partition}': "
+                "must contain only alphanumeric characters and underscores"
+            )
+
+    @staticmethod
+    def _validate_module(module: str) -> None:
+        """
+        Validate SLURM module name format.
+
+        Module names must be alphanumeric with optional slashes, dots, and hyphens.
+
+        Args:
+            module: Module name to validate
+
+        Raises:
+            SLURMValidationError: If module name is invalid
+        """
+        if not module:
+            raise SLURMValidationError("Module name cannot be empty")
+
+        if len(module) > 255:
+            raise SLURMValidationError("Module name cannot exceed 255 characters")
+
+        # Allow alphanumeric, slashes, dots, hyphens (common in module names)
+        if not re.match(r"^[a-zA-Z0-9/_.-]+$", module):
+            raise SLURMValidationError(
+                f"Invalid module '{module}': "
+                "must contain only alphanumeric characters, slashes, dots, and hyphens"
+            )
+
+    @staticmethod
+    def _validate_account(account: Optional[str]) -> None:
+        """
+        Validate SLURM account name format.
+
+        Account names must be alphanumeric with optional underscores.
+
+        Args:
+            account: Account name to validate
+
+        Raises:
+            SLURMValidationError: If account name is invalid
+        """
+        if not account:
+            return
+
+        if len(account) > 255:
+            raise SLURMValidationError("Account name cannot exceed 255 characters")
+
+        if not re.match(r"^[a-zA-Z0-9_]+$", account):
+            raise SLURMValidationError(
+                f"Invalid account '{account}': "
+                "must contain only alphanumeric characters and underscores"
+            )
+
+    @staticmethod
+    def _validate_qos(qos: Optional[str]) -> None:
+        """
+        Validate SLURM QOS name format.
+
+        QOS names must be alphanumeric with optional underscores and hyphens.
+
+        Args:
+            qos: QOS name to validate
+
+        Raises:
+            SLURMValidationError: If QOS name is invalid
+        """
+        if not qos:
+            return
+
+        if len(qos) > 255:
+            raise SLURMValidationError("QOS name cannot exceed 255 characters")
+
+        if not re.match(r"^[a-zA-Z0-9_-]+$", qos):
+            raise SLURMValidationError(
+                f"Invalid QOS '{qos}': "
+                "must contain only alphanumeric characters, hyphens, and underscores"
+            )
+
+    @staticmethod
+    def _validate_email(email: Optional[str]) -> None:
+        """
+        Validate email address format.
+
+        Args:
+            email: Email address to validate
+
+        Raises:
+            SLURMValidationError: If email is invalid
+        """
+        if not email:
+            return
+
+        # Basic email validation
+        email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        if not re.match(email_pattern, email):
+            raise SLURMValidationError(f"Invalid email address: {email}")
+
+    @staticmethod
+    def _validate_time_limit(time_limit: str) -> None:
+        """
+        Validate SLURM time limit format.
+
+        Accepts formats: HH:MM:SS, MM:SS, or minutes.
+
+        Args:
+            time_limit: Time limit string to validate
+
+        Raises:
+            SLURMValidationError: If time limit is invalid
+        """
+        if not time_limit:
+            raise SLURMValidationError("Time limit cannot be empty")
+
+        # SLURM time format: [DD-]HH:MM:SS or minutes
+        if not re.match(r"^(\d+-)?(\d{1,2}:)?\d{1,2}:\d{2}$|^\d+$", time_limit):
+            raise SLURMValidationError(
+                f"Invalid time limit '{time_limit}': "
+                "must be in format HH:MM:SS or [DD-]HH:MM:SS"
+            )
+
+    @staticmethod
+    def _validate_dependency(job_id: str) -> None:
+        """
+        Validate SLURM job dependency ID format.
+
+        Job IDs must be numeric.
+
+        Args:
+            job_id: Job ID to validate
+
+        Raises:
+            SLURMValidationError: If job ID is invalid
+        """
+        if not job_id:
+            raise SLURMValidationError("Job ID cannot be empty")
+
+        if not re.match(r"^\d+$", job_id):
+            raise SLURMValidationError(f"Invalid job ID '{job_id}': must be numeric")
+
+    @staticmethod
+    def _validate_array_spec(array_spec: str) -> None:
+        """
+        Validate SLURM job array specification.
+
+        Accepts formats: 1-10, 1,3,5 or combinations.
+
+        Args:
+            array_spec: Array specification to validate
+
+        Raises:
+            SLURMValidationError: If array spec is invalid
+        """
+        if not array_spec:
+            raise SLURMValidationError("Array specification cannot be empty")
+
+        # Allow ranges (1-10) and comma-separated lists (1,3,5)
+        if not re.match(r"^[\d,\-:]+$", array_spec):
+            raise SLURMValidationError(
+                f"Invalid array specification '{array_spec}': "
+                "must contain only digits, commas, hyphens, and colons"
+            )
+
+    def _validate_config(self, config: SLURMJobConfig) -> None:
+        """
+        Validate entire SLURM job configuration.
+
+        Args:
+            config: Configuration to validate
+
+        Raises:
+            SLURMValidationError: If any field is invalid
+        """
+        # Validate job name (required)
+        self._validate_job_name(config.job_name)
+
+        # Validate optional fields
+        if config.partition:
+            self._validate_partition(config.partition)
+        if config.account:
+            self._validate_account(config.account)
+        if config.qos:
+            self._validate_qos(config.qos)
+        if config.email:
+            self._validate_email(config.email)
+
+        # Validate time limit
+        self._validate_time_limit(config.time_limit)
+
+        # Validate modules
+        for module in config.modules:
+            self._validate_module(module)
+
+        # Validate dependencies
+        for dep in config.dependencies:
+            self._validate_dependency(dep)
+
+        # Validate array specification
+        if config.array:
+            self._validate_array_spec(config.array)
+
+        # Validate numeric fields
+        if config.nodes < 1:
+            raise SLURMValidationError("Number of nodes must be at least 1")
+        if config.ntasks < 1:
+            raise SLURMValidationError("Number of tasks must be at least 1")
+        if config.cpus_per_task < 1:
+            raise SLURMValidationError("CPUs per task must be at least 1")
+
     def _generate_slurm_script(
         self,
         config: SLURMJobConfig,
         work_dir: str
     ) -> str:
         """
-        Generate a SLURM submission script.
+        Generate a SLURM submission script with input validation and escaping.
 
         Args:
             config: SLURM job configuration
@@ -341,10 +604,23 @@ class SLURMRunner(BaseRunner):
 
         Returns:
             Complete SLURM script as string
+
+        Raises:
+            SLURMValidationError: If configuration contains invalid values
         """
+        # Validate entire configuration
+        self._validate_config(config)
+
+        # Validate work directory path (prevent injection in cd command)
+        if not work_dir or not re.match(r"^[a-zA-Z0-9/_.-]+$", work_dir):
+            raise SLURMValidationError(
+                f"Invalid work directory '{work_dir}': "
+                "must contain only alphanumeric characters, slashes, dots, and hyphens"
+            )
+
         lines = ["#!/bin/bash"]
 
-        # Required directives
+        # Required directives - use validated values directly
         lines.append(f"#SBATCH --job-name={config.job_name}")
         lines.append(f"#SBATCH --nodes={config.nodes}")
         lines.append(f"#SBATCH --ntasks={config.ntasks}")
@@ -355,27 +631,39 @@ class SLURMRunner(BaseRunner):
         lines.append("#SBATCH --output=slurm-%j.out")
         lines.append("#SBATCH --error=slurm-%j.err")
 
-        # Optional directives
+        # Optional directives with escaping for values that might come from user input
         if config.partition:
-            lines.append(f"#SBATCH --partition={config.partition}")
+            # Partition already validated, but use shlex.quote for defense in depth
+            lines.append(f"#SBATCH --partition={shlex.quote(config.partition)}")
         if config.memory:
-            lines.append(f"#SBATCH --mem={config.memory}")
+            lines.append(f"#SBATCH --mem={shlex.quote(config.memory)}")
         if config.account:
-            lines.append(f"#SBATCH --account={config.account}")
+            lines.append(f"#SBATCH --account={shlex.quote(config.account)}")
         if config.qos:
-            lines.append(f"#SBATCH --qos={config.qos}")
+            lines.append(f"#SBATCH --qos={shlex.quote(config.qos)}")
         if config.email:
-            lines.append(f"#SBATCH --mail-user={config.email}")
+            lines.append(f"#SBATCH --mail-user={shlex.quote(config.email)}")
             if config.email_type:
-                lines.append(f"#SBATCH --mail-type={config.email_type}")
+                # Email types are comma-separated standard values, validate them
+                email_types = config.email_type.split(",")
+                valid_types = {"BEGIN", "END", "FAIL", "REQUEUE", "ALL"}
+                for et in email_types:
+                    if et.strip().upper() not in valid_types:
+                        raise SLURMValidationError(
+                            f"Invalid email type '{et}': "
+                            "must be one of BEGIN, END, FAIL, REQUEUE, ALL"
+                        )
+                lines.append(f"#SBATCH --mail-type={shlex.quote(config.email_type)}")
         if config.constraint:
-            lines.append(f"#SBATCH --constraint={config.constraint}")
+            lines.append(f"#SBATCH --constraint={shlex.quote(config.constraint)}")
         if config.exclusive:
             lines.append("#SBATCH --exclusive")
         if config.dependencies:
+            # Dependencies already validated as numeric
             dep_str = ":".join(config.dependencies)
             lines.append(f"#SBATCH --dependency=afterok:{dep_str}")
         if config.array:
+            # Array spec already validated
             lines.append(f"#SBATCH --array={config.array}")
 
         lines.append("")
@@ -383,21 +671,52 @@ class SLURMRunner(BaseRunner):
         # Environment setup
         lines.append("# Environment setup")
 
-        # Load modules
+        # Load modules - already validated
         if config.modules:
             for module in config.modules:
                 lines.append(f"module load {module}")
 
-        # Custom environment setup
+        # Custom environment setup - IMPORTANT: Validate to prevent injection
         if config.environment_setup:
-            lines.append(config.environment_setup)
+            # Split by newlines and validate each line
+            for line in config.environment_setup.strip().split("\n"):
+                if line.strip():
+                    # Check for obviously dangerous patterns
+                    dangerous_patterns = [";", "|", "&", ">", "<", "$("]
+                    has_dangerous = any(pattern in line for pattern in dangerous_patterns)
+
+                    if has_dangerous:
+                        # Only allow these in safe contexts (assignments, source commands)
+                        line_stripped = line.strip()
+                        is_safe_command = (
+                            line_stripped.startswith("export ") or
+                            line_stripped.startswith("source ") or
+                            line_stripped.startswith(".")
+                        )
+
+                        if is_safe_command:
+                            # For export statements, ensure they're simple assignments
+                            # Pattern: export NAME=value (no special chars in value)
+                            if line_stripped.startswith("export "):
+                                after_export = line_stripped[7:]  # Remove "export "
+                                # Must be NAME=value format, no pipes, redirects, command subs, or chaining
+                                if any(p in after_export for p in ["|", "&", ">", "<", "$(", "`", ";"]):
+                                    raise SLURMValidationError(
+                                        f"Dangerous command in environment setup: {line}"
+                                    )
+                        else:
+                            raise SLURMValidationError(
+                                f"Dangerous command in environment setup: {line}"
+                            )
+
+                    lines.append(line)
 
         # Set OpenMP threads
-        lines.append(f"export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK")
+        lines.append("export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK")
 
         lines.append("")
 
-        # Change to work directory
+        # Change to work directory - path already validated
         lines.append("# Change to working directory")
         lines.append(f"cd {work_dir}")
 

@@ -48,18 +48,62 @@ class EnvironmentError(Exception):
 _cached_config: Optional[CrystalConfig] = None
 
 
+def _find_bashrc_path(explicit_path: Optional[Path] = None) -> Path:
+    """
+    Find cry23.bashrc using precedence chain.
+
+    Precedence order:
+    1. Explicit path parameter (highest priority)
+    2. CRY23_ROOT environment variable
+    3. Development layout detection (last resort)
+
+    Args:
+        explicit_path: Explicitly specified bashrc path
+
+    Returns:
+        Path: Path to cry23.bashrc (may not exist yet)
+    """
+    # 1. Explicit parameter (highest priority)
+    if explicit_path is not None:
+        return explicit_path.resolve()
+
+    # 2. CRY23_ROOT environment variable
+    cry23_root = os.environ.get('CRY23_ROOT')
+    if cry23_root:
+        bashrc = Path(cry23_root) / 'utils23' / 'cry23.bashrc'
+        if bashrc.exists():
+            return bashrc.resolve()
+
+    # 3. Development layout (last resort)
+    # This file is in: CRYSTAL23/crystalmath/tui/src/core/environment.py
+    # bashrc is in: CRYSTAL23/utils23/cry23.bashrc
+    # Path structure: environment.py -> core -> src -> tui -> crystalmath -> CRYSTAL23
+    dev_bashrc = Path(__file__).resolve().parents[4] / 'utils23' / 'cry23.bashrc'
+    if dev_bashrc.exists():
+        return dev_bashrc
+
+    # Return best guess (development layout) even if it doesn't exist
+    # Will be caught and reported clearly by load_crystal_environment
+    return dev_bashrc
+
+
 def load_crystal_environment(
     bashrc_path: Optional[Path] = None,
     force_reload: bool = False
 ) -> CrystalConfig:
     """
-    Load CRYSTAL23 environment configuration.
+    Load CRYSTAL23 environment configuration with proper fallback chain.
 
     Sources cry23.bashrc and extracts environment variables to create
     a validated CrystalConfig object.
 
+    Precedence for finding cry23.bashrc:
+    1. Explicit bashrc_path parameter (highest priority)
+    2. CRY23_ROOT environment variable
+    3. Development layout detection (__file__.parents[4]) as last resort
+
     Args:
-        bashrc_path: Path to cry23.bashrc (default: auto-detect from CRYSTAL23 structure)
+        bashrc_path: Path to cry23.bashrc (explicit override, highest priority)
         force_reload: If True, bypass cached config and reload from bashrc
 
     Returns:
@@ -74,20 +118,18 @@ def load_crystal_environment(
     if _cached_config is not None and not force_reload:
         return _cached_config
 
-    # Determine bashrc path
-    if bashrc_path is None:
-        # Try to auto-detect from current file location
-        # This file is in: CRYSTAL23/crystalmath/tui/src/core/environment.py
-        # bashrc is in: CRYSTAL23/utils23/cry23.bashrc
-        # Path structure: environment.py -> core -> src -> tui -> crystalmath -> CRYSTAL23
-        crystal_root = Path(__file__).resolve().parents[4]  # Go up 5 levels from file
-        bashrc_path = crystal_root / "utils23" / "cry23.bashrc"
+    # Determine bashrc path using precedence chain
+    bashrc_path = _find_bashrc_path(bashrc_path)
 
     if not bashrc_path.exists():
         raise EnvironmentError(
             f"cry23.bashrc not found at: {bashrc_path}\n"
-            f"Please ensure CRYSTAL23 is properly installed.\n"
-            f"Expected location: <CRYSTAL23_ROOT>/utils23/cry23.bashrc"
+            f"\nPlease ensure CRYSTAL23 is properly installed and configured.\n"
+            f"\nSetup instructions:\n"
+            f"1. Set environment variable: export CRY23_ROOT=/path/to/CRYSTAL23\n"
+            f"2. Verify bashrc exists: $CRY23_ROOT/utils23/cry23.bashrc\n"
+            f"3. Or pass explicit path: load_crystal_environment(bashrc_path=Path('/...'))\n"
+            f"\nExpected location: <CRYSTAL23_ROOT>/utils23/cry23.bashrc"
         )
 
     # Source bashrc and extract environment variables

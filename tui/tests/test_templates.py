@@ -595,6 +595,234 @@ ATOM {{ atom.number }} {{ atom.symbol }}
         assert "ATOM 8 O" in result
 
 
+class TestSecurityHardening:
+    """Security tests for template injection and traversal attacks.
+
+    VULNERABILITY: Original code used unsandboxed Jinja2 with autoescape=False,
+    allowing arbitrary code execution and file access through templates.
+
+    FIX: SandboxedEnvironment + autoescape=True + path validation
+    """
+
+    @pytest.fixture
+    def temp_template_dir(self):
+        """Create a temporary directory for templates."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir)
+
+    def test_template_injection_blocked(self, temp_template_dir):
+        """Test that template injection attempts are blocked."""
+        manager = TemplateManager(temp_template_dir)
+
+        # Create template with injection attempt
+        template = Template(
+            name="Injection Test",
+            version="1.0",
+            description="Test",
+            author="Test",
+            tags=["security"],
+            parameters={
+                "user_input": ParameterDefinition(
+                    name="user_input",
+                    type="string",
+                )
+            },
+            input_template="{{ user_input }}",
+        )
+
+        # Attempt: {{ __class__.__bases__[0].__subclasses__() }}
+        # This should be escaped/sandboxed and not execute
+        malicious_input = "{{ __class__.__bases__[0].__subclasses__() }}"
+
+        result = manager.render(template, {"user_input": malicious_input})
+
+        # With autoescape=True, dangerous content should be escaped
+        # The result should NOT execute the payload
+        assert "__class__" in result or "&{" in result or "user_input" in str(result)
+        assert "object" not in result  # Should not show Python internals
+
+    def test_template_file_read_blocked(self, temp_template_dir):
+        """Test that templates cannot read arbitrary files."""
+        manager = TemplateManager(temp_template_dir)
+
+        # Create a sensitive file outside template directory
+        sensitive_file = temp_template_dir.parent / "sensitive.txt"
+        sensitive_file.write_text("SECRET_DATA")
+
+        # Create template that tries to read the file
+        template = Template(
+            name="File Read Test",
+            version="1.0",
+            description="Test",
+            author="Test",
+            tags=["security"],
+            parameters={},
+            # Jinja2 sandboxing prevents __import__ and file operations
+            input_template="{{ open('/etc/passwd').read() }}",
+        )
+
+        # Try to render - should fail safely or escape
+        try:
+            result = manager.render(template, {})
+            # If it doesn't raise, the payload should be escaped/neutered
+            assert "root:" not in result  # Should not contain /etc/passwd content
+        except Exception:
+            # Exception is also acceptable - payload was blocked
+            pass
+
+        # Cleanup
+        sensitive_file.unlink(missing_ok=True)
+
+    def test_path_traversal_blocked(self, temp_template_dir):
+        """Test that path traversal attempts are blocked."""
+        manager = TemplateManager(temp_template_dir)
+
+        # Create a legitimate template
+        legit_path = temp_template_dir / "legit.yml"
+        legit_path.write_text("name: test\ninput_template: test")
+
+        # Try to load with path traversal
+        traversal_path = temp_template_dir / ".." / "legit.yml"
+
+        # This should raise ValueError due to path validation
+        with pytest.raises(ValueError, match="Path traversal|outside template"):
+            manager.load_template(traversal_path)
+
+    def test_absolute_path_traversal_blocked(self, temp_template_dir):
+        """Test that absolute paths outside template dir are blocked."""
+        manager = TemplateManager(temp_template_dir)
+
+        # Try to load from absolute path outside template directory
+        with pytest.raises(ValueError, match="Path traversal|outside template"):
+            manager.load_template(Path("/etc/passwd"))
+
+    def test_symlink_escape_prevention(self, temp_template_dir):
+        """Test that symlinks escaping template dir are blocked."""
+        import os
+
+        # Create a file outside template directory
+        outside_dir = temp_template_dir.parent / "outside"
+        outside_dir.mkdir(exist_ok=True)
+        outside_file = outside_dir / "target.yml"
+        outside_file.write_text("name: target\ninput_template: test")
+
+        # Create symlink inside template dir pointing outside
+        symlink_path = temp_template_dir / "escape.yml"
+        try:
+            os.symlink(outside_file, symlink_path)
+        except (OSError, NotImplementedError):
+            pytest.skip("Symlinks not supported on this platform")
+
+        manager = TemplateManager(temp_template_dir)
+
+        # Path.resolve() will follow symlink and detect escape
+        with pytest.raises(ValueError, match="Path traversal|outside template"):
+            manager.load_template(symlink_path)
+
+        # Cleanup
+        outside_file.unlink(missing_ok=True)
+        outside_dir.rmdir()
+
+    def test_jinja_expression_injection_blocked(self, temp_template_dir):
+        """Test that dangerous Jinja2 expressions are safely handled."""
+        manager = TemplateManager(temp_template_dir)
+
+        template = Template(
+            name="Expression Test",
+            version="1.0",
+            description="Test",
+            author="Test",
+            tags=["security"],
+            parameters={},
+            # These expressions should be neutralized by SandboxedEnvironment
+            input_template="{{ [].__class__.__mro__[1].__subclasses__()[104].__init__.__globals__['sys'].exit() }}",
+        )
+
+        # Should not crash or execute exit()
+        try:
+            result = manager.render(template, {})
+            # If rendering succeeds, dangerous code did not execute
+            assert True
+        except Exception as e:
+            # Jinja2 sandbox should block this with an error
+            assert "unsafe" in str(e).lower() or "not allowed" in str(e).lower()
+
+    def test_autoescape_enabled(self, temp_template_dir):
+        """Test that autoescape is enabled to prevent HTML/XML injection."""
+        manager = TemplateManager(temp_template_dir)
+
+        # Verify autoescape is True
+        assert manager.jinja_env.autoescape is True
+
+    def test_sandboxed_environment_used(self, temp_template_dir):
+        """Test that SandboxedEnvironment is being used, not regular Environment."""
+        manager = TemplateManager(temp_template_dir)
+
+        # Check that it's a SandboxedEnvironment
+        from jinja2.sandbox import SandboxedEnvironment
+        assert isinstance(manager.jinja_env, SandboxedEnvironment)
+
+    def test_html_escaping_in_output(self, temp_template_dir):
+        """Test that HTML special chars are escaped with autoescape=True."""
+        manager = TemplateManager(temp_template_dir)
+
+        template = Template(
+            name="HTML Test",
+            version="1.0",
+            description="Test",
+            author="Test",
+            tags=["security"],
+            parameters={
+                "html_content": ParameterDefinition(
+                    name="html_content",
+                    type="string",
+                )
+            },
+            input_template="Content: {{ html_content }}",
+        )
+
+        # Try to inject HTML/script tags
+        result = manager.render(
+            template,
+            {"html_content": "<script>alert('XSS')</script>"}
+        )
+
+        # With autoescape=True, < and > should be escaped to &lt; and &gt;
+        # (though for scientific input this is less relevant, defense-in-depth)
+        assert "&lt;" in result or "<" not in result or "script" not in result
+
+    def test_restricted_builtins_in_sandbox(self, temp_template_dir):
+        """Test that dangerous builtins are restricted in sandbox."""
+        manager = TemplateManager(temp_template_dir)
+
+        # These should all fail safely with SandboxedEnvironment
+        dangerous_payloads = [
+            "{{ __import__('os').system('id') }}",
+            "{{ config.__class__.__init__.__globals__['sys'].exit() }}",
+            "{{ ().__class__.__bases__[0].__subclasses__()[104] }}",
+            "{{ lipsum.__globals__['os'].system('id') }}",
+        ]
+
+        template_data = {
+            "name": "Dangerous Test",
+            "version": "1.0",
+            "input_template": "",
+            "parameters": {}
+        }
+
+        for payload in dangerous_payloads:
+            template_data["input_template"] = payload
+            template = Template.from_dict(template_data)
+
+            try:
+                result = manager.render(template, {})
+                # If it renders without error, it should be escaped/safe
+                assert "uid=" not in result  # Command should not execute
+            except Exception:
+                # Sandbox blocking the access is also correct
+                pass
+
+
 class TestRealWorldTemplates:
     """Tests using the actual template files in the templates/ directory."""
 

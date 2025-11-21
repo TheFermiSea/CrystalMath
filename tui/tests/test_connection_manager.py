@@ -10,6 +10,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch, call
 import time
 
+import asyncssh
+
 from src.core.connection_manager import (
     ConnectionManager,
     ConnectionConfig,
@@ -63,6 +65,8 @@ class TestConnectionConfig:
         assert config.use_agent is True
         assert config.timeout == 30
         assert config.keepalive_interval == 60
+        assert config.known_hosts_file is None
+        assert config.strict_host_key_checking is True
 
     def test_config_custom_values(self):
         """Test custom configuration values."""
@@ -72,12 +76,16 @@ class TestConnectionConfig:
             username="testuser",
             key_file=Path("/path/to/key"),
             use_agent=False,
+            known_hosts_file=Path("/custom/known_hosts"),
+            strict_host_key_checking=False,
         )
         assert config.host == "custom.example.com"
         assert config.port == 2222
         assert config.username == "testuser"
         assert config.key_file == Path("/path/to/key")
         assert config.use_agent is False
+        assert config.known_hosts_file == Path("/custom/known_hosts")
+        assert config.strict_host_key_checking is False
 
 
 class TestPooledConnection:
@@ -210,6 +218,10 @@ class TestConnectionManager:
         call_kwargs = mock_connect.call_args[1]
         assert call_kwargs["host"] == "test.example.com"
         assert call_kwargs["client_keys"] == ["/path/to/key"]
+        # Verify known_hosts is set (not None)
+        assert call_kwargs["known_hosts"] is not None or isinstance(
+            call_kwargs.get("known_hosts"), str
+        )
 
     @pytest.mark.asyncio
     @patch("src.core.connection_manager.asyncssh.connect")
@@ -462,3 +474,110 @@ class TestConnectionManager:
             assert 1 not in started_manager._pools or len(started_manager._pools[1]) == 0
         finally:
             await started_manager.stop()
+
+    @pytest.mark.asyncio
+    @patch("src.core.connection_manager.asyncssh.connect")
+    async def test_connect_with_host_key_verification(self, mock_connect, connection_manager):
+        """Test that host key verification is enabled by default."""
+        mock_conn = mock_ssh_connection()
+
+        async def mock_connect_coro(*args, **kwargs):
+            return mock_conn
+
+        mock_connect.side_effect = mock_connect_coro
+        connection_manager.register_cluster(1, "test.example.com")
+
+        await connection_manager.connect(1)
+
+        call_kwargs = mock_connect.call_args[1]
+        # known_hosts should be set to enable host key verification
+        assert "known_hosts" in call_kwargs
+        # Should not be None (which would disable verification)
+        assert call_kwargs["known_hosts"] is not None or isinstance(
+            call_kwargs.get("known_hosts"), (str, tuple)
+        )
+
+    @pytest.mark.asyncio
+    @patch("src.core.connection_manager.asyncssh.connect")
+    async def test_connect_with_custom_known_hosts(self, mock_connect, connection_manager):
+        """Test connecting with custom known_hosts file."""
+        mock_conn = mock_ssh_connection()
+
+        async def mock_connect_coro(*args, **kwargs):
+            return mock_conn
+
+        mock_connect.side_effect = mock_connect_coro
+        custom_known_hosts = Path("/custom/path/known_hosts")
+        connection_manager.register_cluster(
+            1, "test.example.com", known_hosts_file=custom_known_hosts
+        )
+
+        await connection_manager.connect(1)
+
+        call_kwargs = mock_connect.call_args[1]
+        assert call_kwargs["known_hosts"] == str(custom_known_hosts)
+
+    @pytest.mark.asyncio
+    @patch("src.core.connection_manager.asyncssh.connect")
+    async def test_connect_with_disabled_host_key_checking(self, mock_connect, connection_manager):
+        """Test connecting with strict host key checking disabled (NOT recommended)."""
+        mock_conn = mock_ssh_connection()
+
+        async def mock_connect_coro(*args, **kwargs):
+            return mock_conn
+
+        mock_connect.side_effect = mock_connect_coro
+        connection_manager.register_cluster(
+            1, "test.example.com", strict_host_key_checking=False
+        )
+
+        await connection_manager.connect(1)
+
+        call_kwargs = mock_connect.call_args[1]
+        # When strict checking disabled, known_hosts should be empty tuple
+        assert call_kwargs["known_hosts"] == ()
+
+    @pytest.mark.asyncio
+    @patch("src.core.connection_manager.asyncssh.connect")
+    async def test_connect_host_key_verification_failure(self, mock_connect, connection_manager):
+        """Test handling of host key verification failure."""
+        async def mock_connect_coro(*args, **kwargs):
+            raise asyncssh.HostKeyNotVerifiable("Host key could not be verified")
+
+        mock_connect.side_effect = mock_connect_coro
+        connection_manager.register_cluster(1, "test.example.com")
+
+        with pytest.raises(asyncssh.HostKeyNotVerifiable) as exc_info:
+            await connection_manager.connect(1)
+
+        # Verify error message contains helpful information
+        assert "ssh-keyscan" in str(exc_info.value)
+        assert "test.example.com" in str(exc_info.value)
+
+    def test_get_known_hosts_file_default(self):
+        """Test default known_hosts file resolution."""
+        config = ConnectionConfig(host="test.example.com")
+        known_hosts = ConnectionManager._get_known_hosts_file(config)
+
+        # Should return None or path to ~/.ssh/known_hosts
+        if known_hosts is not None:
+            expected_path = Path.home() / ".ssh" / "known_hosts"
+            assert Path(known_hosts) == expected_path
+
+    def test_get_known_hosts_file_custom(self):
+        """Test custom known_hosts file resolution."""
+        custom_path = Path("/custom/known_hosts")
+        config = ConnectionConfig(host="test.example.com", known_hosts_file=custom_path)
+        known_hosts = ConnectionManager._get_known_hosts_file(config)
+
+        assert known_hosts == str(custom_path)
+
+    def test_get_known_hosts_file_disabled(self):
+        """Test that empty Path() disables host key checking."""
+        config = ConnectionConfig(
+            host="test.example.com", known_hosts_file=Path()
+        )
+        known_hosts = ConnectionManager._get_known_hosts_file(config)
+
+        # Empty Path() should return empty tuple
+        assert known_hosts == ()

@@ -4,11 +4,16 @@ SSH-based remote job execution backend for CRYSTAL calculations.
 This module implements the SSHRunner class which executes CRYSTAL jobs on
 remote machines via SSH, with features including file transfer, remote
 process monitoring, and output streaming.
+
+Security:
+    All remote commands are properly escaped to prevent shell injection attacks.
+    Path interpolations use shlex.quote() and PIDs are validated as integers.
 """
 
 import asyncio
 import asyncssh
 import logging
+import shlex
 import time
 from pathlib import Path, PurePosixPath
 from typing import Dict, Optional, Any, AsyncIterator
@@ -137,8 +142,9 @@ class SSHRunner(BaseRunner):
 
         try:
             async with self.connection_manager.get_connection(self.cluster_id) as conn:
-                # Create remote directory
-                await conn.run(f"mkdir -p {remote_work_dir}", check=True)
+                # Create remote directory (with proper shell escaping)
+                mkdir_cmd = f"mkdir -p {shlex.quote(str(remote_work_dir))}"
+                await conn.run(mkdir_cmd, check=True)
                 logger.info(f"Created remote work directory: {remote_work_dir}")
 
                 # Upload input files
@@ -158,16 +164,24 @@ class SSHRunner(BaseRunner):
                 async with conn.start_sftp_client() as sftp:
                     async with sftp.open(str(script_path), "w") as f:
                         await f.write(script_content)
-                await conn.run(f"chmod +x {script_path}", check=True)
+                chmod_cmd = f"chmod +x {shlex.quote(str(script_path))}"
+                await conn.run(chmod_cmd, check=True)
 
                 # Execute job in background and capture PID
                 execute_cmd = (
-                    f"cd {remote_work_dir} && "
+                    f"cd {shlex.quote(str(remote_work_dir))} && "
                     f"nohup bash run_job.sh > output.log 2>&1 & "
                     f"echo $!"
                 )
                 result = await conn.run(execute_cmd, check=True)
-                pid = int(result.stdout.strip())
+                pid_str = result.stdout.strip()
+                # Validate PID is an integer
+                try:
+                    pid = int(pid_str)
+                except ValueError:
+                    raise JobSubmissionError(f"Invalid PID returned: {pid_str}")
+                if pid <= 0:
+                    raise JobSubmissionError(f"Invalid PID (must be > 0): {pid}")
 
                 # Create job handle
                 job_handle = f"{self.cluster_id}:{pid}:{remote_work_dir}"
@@ -216,8 +230,14 @@ class SSHRunner(BaseRunner):
 
         try:
             async with self.connection_manager.get_connection(cluster_id) as conn:
+                # Validate PID is an integer
+                try:
+                    validated_pid = int(pid)
+                except (ValueError, TypeError):
+                    raise JobNotFoundError(f"Invalid PID in job handle: {pid}")
+
                 # Check if process is running
-                check_cmd = f"ps -p {pid} > /dev/null 2>&1 && echo running || echo stopped"
+                check_cmd = f"ps -p {validated_pid} > /dev/null 2>&1 && echo running || echo stopped"
                 result = await conn.run(check_cmd, check=False)
 
                 if "running" in result.stdout:
@@ -225,13 +245,15 @@ class SSHRunner(BaseRunner):
                     return "running"
 
                 # Process stopped, check output for completion status
-                check_output_cmd = f"test -f {remote_work_dir}/output.log && echo exists"
+                quoted_work_dir = shlex.quote(remote_work_dir)
+                check_output_cmd = f"test -f {quoted_work_dir}/output.log && echo exists"
                 result = await conn.run(check_output_cmd, check=False)
 
                 if "exists" in result.stdout:
                     # Check for error indicators in output
+                    output_file = f"{quoted_work_dir}/output.log"
                     error_check_cmd = (
-                        f"grep -i 'error\\|failed\\|abort' {remote_work_dir}/output.log "
+                        f"grep -i 'error\\|failed\\|abort' {output_file} "
                         f"> /dev/null 2>&1 && echo failed || echo completed"
                     )
                     result = await conn.run(error_check_cmd, check=False)
@@ -275,31 +297,40 @@ class SSHRunner(BaseRunner):
 
         try:
             async with self.connection_manager.get_connection(cluster_id) as conn:
+                # Validate PID is an integer
+                try:
+                    validated_pid = int(pid)
+                except (ValueError, TypeError):
+                    raise JobNotFoundError(f"Invalid PID in job handle: {pid}")
+
+                if validated_pid <= 0:
+                    raise ValueError(f"Invalid PID (must be > 0): {validated_pid}")
+
                 # Check if process is running
-                check_cmd = f"ps -p {pid} > /dev/null 2>&1 && echo running"
+                check_cmd = f"ps -p {validated_pid} > /dev/null 2>&1 && echo running"
                 result = await conn.run(check_cmd, check=False)
 
                 if "running" not in result.stdout:
-                    logger.info(f"Job {pid} not running, nothing to cancel")
+                    logger.info(f"Job {validated_pid} not running, nothing to cancel")
                     return False
 
                 # Send SIGTERM
-                logger.info(f"Sending SIGTERM to job {pid}")
-                await conn.run(f"kill {pid}", check=False)
+                logger.info(f"Sending SIGTERM to job {validated_pid}")
+                await conn.run(f"kill {validated_pid}", check=False)
 
                 # Wait for termination
                 start_time = time.time()
                 while time.time() - start_time < timeout:
                     result = await conn.run(check_cmd, check=False)
                     if "running" not in result.stdout:
-                        logger.info(f"Job {pid} terminated gracefully")
+                        logger.info(f"Job {validated_pid} terminated gracefully")
                         job_info["status"] = "cancelled"
                         return True
                     await asyncio.sleep(0.5)
 
                 # Force kill
-                logger.info(f"Sending SIGKILL to job {pid}")
-                await conn.run(f"kill -9 {pid}", check=False)
+                logger.info(f"Sending SIGKILL to job {validated_pid}")
+                await conn.run(f"kill -9 {validated_pid}", check=False)
                 await asyncio.sleep(1.0)
 
                 job_info["status"] = "cancelled"
@@ -329,7 +360,9 @@ class SSHRunner(BaseRunner):
             raise JobNotFoundError(f"Job handle not found: {job_handle}")
 
         cluster_id, pid, remote_work_dir = self._parse_job_handle(job_handle)
-        output_file = f"{remote_work_dir}/output.log"
+        # Properly escape the output file path
+        quoted_work_dir = shlex.quote(remote_work_dir)
+        output_file = f"{quoted_work_dir}/output.log"
 
         try:
             async with self.connection_manager.get_connection(cluster_id) as conn:
@@ -341,7 +374,7 @@ class SSHRunner(BaseRunner):
                         break
                     await asyncio.sleep(1.0)
                 else:
-                    logger.warning(f"Output file not found after 30 seconds: {output_file}")
+                    logger.warning(f"Output file not found after 30 seconds: {remote_work_dir}/output.log")
                     yield "⚠ Output file not created yet\n"
                     return
 
@@ -468,7 +501,9 @@ class SSHRunner(BaseRunner):
         try:
             if remove_files:
                 async with self.connection_manager.get_connection(cluster_id) as conn:
-                    await conn.run(f"rm -rf {remote_work_dir}", check=False)
+                    # Properly escape the directory path for removal
+                    cleanup_cmd = f"rm -rf {shlex.quote(remote_work_dir)}"
+                    await conn.run(cleanup_cmd, check=False)
                     logger.info(f"Removed remote work directory: {remote_work_dir}")
 
             # Remove from tracking
@@ -481,6 +516,30 @@ class SSHRunner(BaseRunner):
             self._active_jobs.pop(job_handle, None)
 
     # Helper methods
+
+    @staticmethod
+    def _validate_pid(pid: Any) -> int:
+        """
+        Validate and convert a PID to an integer.
+
+        Args:
+            pid: Value to validate as a PID
+
+        Returns:
+            Validated PID as integer
+
+        Raises:
+            ValueError: If PID is not a valid positive integer
+        """
+        try:
+            validated_pid = int(pid)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid PID: must be an integer, got {type(pid).__name__}: {pid}") from e
+
+        if validated_pid <= 0:
+            raise ValueError(f"Invalid PID: must be > 0, got {validated_pid}")
+
+        return validated_pid
 
     def _parse_job_handle(self, job_handle: str) -> tuple[int, int, str]:
         """

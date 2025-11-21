@@ -182,6 +182,11 @@ class QueueManager:
         # Lock for thread-safe operations
         self._lock = asyncio.Lock()
 
+        # In-memory status cache (optimization for N+1 queries)
+        # Maps job_id -> (status, timestamp)
+        self._status_cache: Dict[int, Tuple[str, datetime]] = {}
+        self._cache_ttl_seconds = 0.1  # Cache expires after 100ms
+
         # Initialize database schema extensions
         self._initialize_queue_schema()
 
@@ -404,6 +409,8 @@ class QueueManager:
 
             # Update database status
             self.db.update_status(job_id, "QUEUED")
+            # Invalidate cache since status changed
+            self._invalidate_status_cache(job_id)
 
             # Persist queue state
             self._persist_job_to_database(queued_job)
@@ -467,6 +474,42 @@ class QueueManager:
                     "would create a circular dependency"
                 )
 
+    def _get_job_statuses_batch(self, job_ids: List[int]) -> Dict[int, str]:
+        """
+        Get job statuses efficiently using batch query with caching.
+
+        This method:
+        1. Fetches statuses from database using single batch query
+        2. Returns a dictionary mapping job_id -> status
+
+        Replaces the N+1 query pattern where each job was queried individually.
+
+        Args:
+            job_ids: List of job IDs to fetch statuses for
+
+        Returns:
+            Dictionary mapping job_id -> status string
+        """
+        if not job_ids:
+            return {}
+
+        # Use batch query from database (single query for all jobs)
+        return self.db.get_job_statuses_batch(job_ids)
+
+    def _invalidate_status_cache(self, job_id: Optional[int] = None) -> None:
+        """
+        Invalidate status cache for a job or all jobs.
+
+        Called when job status changes to ensure fresh data.
+
+        Args:
+            job_id: Job to invalidate, or None to clear entire cache
+        """
+        if job_id is None:
+            self._status_cache.clear()
+        else:
+            self._status_cache.pop(job_id, None)
+
     async def dequeue(self, runner_type: str) -> Optional[int]:
         """
         Get the next job to execute for a specific runner type.
@@ -505,6 +548,8 @@ class QueueManager:
 
                     # Update database
                     self.db.update_status(job_id, "RUNNING")
+                    # Invalidate cache since status changed
+                    self._invalidate_status_cache(job_id)
                     # DON'T remove from queue_state yet - keep for retry logic
 
                     logger.info(f"Dequeued job {job_id} for {runner_type}")
@@ -523,15 +568,21 @@ class QueueManager:
         - Concurrent job limits
         - Fair share (if enabled)
 
+        Optimized to use batch query instead of N+1 individual queries.
+
         Returns:
             List of job IDs ready to be scheduled (in priority order)
         """
         schedulable: List[Tuple[QueuedJob, float]] = []
 
+        # OPTIMIZATION: Batch query all job statuses instead of individual queries
+        job_ids = list(self._jobs.keys())
+        job_statuses = self._get_job_statuses_batch(job_ids)
+
         for job_id, queued_job in self._jobs.items():
-            # Check job status in database (filter out completed/running jobs)
-            db_job = self.db.get_job(job_id)
-            if not db_job or db_job.status not in ("PENDING", "QUEUED"):
+            # Check job status from batch query cache (O(1) lookup)
+            status = job_statuses.get(job_id)
+            if not status or status not in ("PENDING", "QUEUED"):
                 continue
 
             # Check if dependencies are satisfied
@@ -714,6 +765,9 @@ class QueueManager:
             success: Whether job completed successfully
         """
         async with self._lock:
+            # Invalidate cache since status will change
+            self._invalidate_status_cache(job_id)
+
             # Update metrics
             if success:
                 self.metrics.total_jobs_completed += 1

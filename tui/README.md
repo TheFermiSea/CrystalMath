@@ -58,8 +58,20 @@ crystal-tui
 
 - Python 3.10+
 - CRYSTAL23 executable (crystalOMP) in PATH or configured in cry23.bashrc
-- CRYSTALpytools
-- Textual
+- Textual (for TUI interface)
+
+## Optional Dependencies
+
+For enhanced analysis features (energy parsing, structure visualization):
+```bash
+# Install with optional analysis tools
+pip install -e ".[analysis]"
+```
+
+This adds:
+- **CRYSTALpytools**: Advanced output parsing and analysis (graceful fallback if missing)
+- **Pymatgen**: Structure manipulation and conversion
+- **ASE**: Atomic structure representation
 
 ## Architecture
 
@@ -100,9 +112,9 @@ your_project/
 
 ## Integration with Existing Tools
 
-- **CRYSTALpytools**: Used for all input generation and output parsing
-- **Pymatgen/ASE**: Structure manipulation and conversion
-- **CRYSTAL23**: Direct integration with your existing installation
+- **CRYSTAL23**: Direct integration with your existing installation (required)
+- **CRYSTALpytools**: Advanced output parsing (optional, with automatic fallback)
+- **Pymatgen/ASE**: Structure manipulation (optional analysis extras)
 
 ## Development
 

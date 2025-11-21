@@ -197,9 +197,16 @@ class Database:
     def __init__(self, db_path: Path):
         """Initialize database connection and apply migrations."""
         self.db_path = db_path
-        self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        # Allow check_same_thread=False for async/threaded use
+        self.conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=5.0)
         self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
+
+        # Configure for concurrent access
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=5000")  # 5 seconds
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA foreign_keys=ON")
+
         self._initialize_schema()
         self._apply_migrations()
 
@@ -211,11 +218,11 @@ class Database:
         )
         if not cursor.fetchone():
             # New database - apply base schema
-            self.conn.executescript(self.SCHEMA_V1)
-            self.conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?)", (1,)
-            )
-            self.conn.commit()
+            with self.conn:
+                self.conn.executescript(self.SCHEMA_V1)
+                self.conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (1,)
+                )
 
     def _apply_migrations(self) -> None:
         """Apply database migrations to reach current schema version."""
@@ -236,11 +243,11 @@ class Database:
     def _migrate_v1_to_v2(self) -> None:
         """Migrate from version 1 to version 2."""
         try:
-            self.conn.executescript(self.MIGRATION_V1_TO_V2)
-            self.conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?)", (2,)
-            )
-            self.conn.commit()
+            with self.conn:
+                self.conn.executescript(self.MIGRATION_V1_TO_V2)
+                self.conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (2,)
+                )
         except sqlite3.OperationalError as e:
             # Migration may have been partially applied - check and skip if needed
             if "duplicate column name" not in str(e).lower():
@@ -264,18 +271,18 @@ class Database:
         """Create a new job entry."""
         parallelism_json = json.dumps(parallelism_config) if parallelism_config else None
 
-        cursor = self.conn.execute(
-            """
-            INSERT INTO jobs (name, work_dir, status, input_file, cluster_id, runner_type, parallelism_config)
-            VALUES (?, ?, 'PENDING', ?, ?, ?, ?)
-            """,
-            (name, work_dir, input_content, cluster_id, runner_type, parallelism_json)
-        )
-        self.conn.commit()
-        job_id = cursor.lastrowid
-        if job_id is None:
-            raise RuntimeError("Failed to create job: lastrowid is None")
-        return job_id
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO jobs (name, work_dir, status, input_file, cluster_id, runner_type, parallelism_config)
+                VALUES (?, ?, 'PENDING', ?, ?, ?, ?)
+                """,
+                (name, work_dir, input_content, cluster_id, runner_type, parallelism_json)
+            )
+            job_id = cursor.lastrowid
+            if job_id is None:
+                raise RuntimeError("Failed to create job: lastrowid is None")
+            return job_id
 
     def get_job(self, job_id: int) -> Optional[Job]:
         """Get a job by ID."""
@@ -295,6 +302,29 @@ class Database:
         ).fetchall()
 
         return [self._row_to_job(row) for row in rows]
+
+    def get_job_statuses_batch(self, job_ids: List[int]) -> Dict[int, str]:
+        """
+        Get statuses for multiple jobs in a single batch query.
+
+        This is the primary optimization for the N+1 query problem in the scheduler.
+
+        Args:
+            job_ids: List of job IDs to fetch statuses for
+
+        Returns:
+            Dictionary mapping job_id -> status string
+        """
+        if not job_ids:
+            return {}
+
+        # Create placeholders for parameterized query
+        placeholders = ','.join('?' * len(job_ids))
+        cursor = self.conn.execute(
+            f"SELECT id, status FROM jobs WHERE id IN ({placeholders})",
+            job_ids
+        )
+        return {row[0]: row[1] for row in cursor.fetchall()}
 
     def get_jobs_by_cluster(self, cluster_id: int) -> List[Job]:
         """Get all jobs for a specific cluster."""
@@ -327,21 +357,21 @@ class Database:
         elif status in ("COMPLETED", "FAILED"):
             timestamp_field = "completed_at"
 
-        if timestamp_field:
-            self.conn.execute(
-                f"""
-                UPDATE jobs
-                SET status = ?, pid = ?, {timestamp_field} = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (status, pid, job_id)
-            )
-        else:
-            self.conn.execute(
-                "UPDATE jobs SET status = ?, pid = ? WHERE id = ?",
-                (status, pid, job_id)
-            )
-        self.conn.commit()
+        with self.conn:
+            if timestamp_field:
+                self.conn.execute(
+                    f"""
+                    UPDATE jobs
+                    SET status = ?, pid = ?, {timestamp_field} = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (status, pid, job_id)
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE jobs SET status = ?, pid = ? WHERE id = ?",
+                    (status, pid, job_id)
+                )
 
     def update_results(
         self,
@@ -351,15 +381,15 @@ class Database:
     ) -> None:
         """Update job results after completion."""
         results_json = json.dumps(key_results) if key_results else None
-        self.conn.execute(
-            """
-            UPDATE jobs
-            SET final_energy = ?, key_results = ?
-            WHERE id = ?
-            """,
-            (final_energy, results_json, job_id)
-        )
-        self.conn.commit()
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE jobs
+                SET final_energy = ?, key_results = ?
+                WHERE id = ?
+                """,
+                (final_energy, results_json, job_id)
+            )
 
     def _row_to_job(self, row: sqlite3.Row) -> Job:
         """Convert database row to Job object."""
@@ -413,18 +443,18 @@ class Database:
         """Create a new cluster configuration."""
         config_json = json.dumps(connection_config or {})
 
-        cursor = self.conn.execute(
-            """
-            INSERT INTO clusters (name, type, hostname, port, username, connection_config)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (name, type, hostname, port, username, config_json)
-        )
-        self.conn.commit()
-        cluster_id = cursor.lastrowid
-        if cluster_id is None:
-            raise RuntimeError("Failed to create cluster: lastrowid is None")
-        return cluster_id
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO clusters (name, type, hostname, port, username, connection_config)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (name, type, hostname, port, username, config_json)
+            )
+            cluster_id = cursor.lastrowid
+            if cluster_id is None:
+                raise RuntimeError("Failed to create cluster: lastrowid is None")
+            return cluster_id
 
     def get_cluster(self, cluster_id: int) -> Optional[Cluster]:
         """Get a cluster by ID."""
@@ -501,14 +531,14 @@ class Database:
             updates.append("updated_at = CURRENT_TIMESTAMP")
             params.append(cluster_id)
 
-            query = f"UPDATE clusters SET {', '.join(updates)} WHERE id = ?"
-            self.conn.execute(query, params)
-            self.conn.commit()
+            with self.conn:
+                query = f"UPDATE clusters SET {', '.join(updates)} WHERE id = ?"
+                self.conn.execute(query, params)
 
     def delete_cluster(self, cluster_id: int) -> None:
         """Delete a cluster configuration."""
-        self.conn.execute("DELETE FROM clusters WHERE id = ?", (cluster_id,))
-        self.conn.commit()
+        with self.conn:
+            self.conn.execute("DELETE FROM clusters WHERE id = ?", (cluster_id,))
 
     def _row_to_cluster(self, row: sqlite3.Row) -> Cluster:
         """Convert database row to Cluster object."""
@@ -541,19 +571,19 @@ class Database:
         """Create a remote job tracking entry."""
         metadata_json = json.dumps(metadata or {})
 
-        cursor = self.conn.execute(
-            """
-            INSERT INTO remote_jobs (job_id, cluster_id, remote_handle, working_directory,
-                                    queue_name, metadata, submission_time)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """,
-            (job_id, cluster_id, remote_handle, working_directory, queue_name, metadata_json)
-        )
-        self.conn.commit()
-        remote_job_id = cursor.lastrowid
-        if remote_job_id is None:
-            raise RuntimeError("Failed to create remote job: lastrowid is None")
-        return remote_job_id
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO remote_jobs (job_id, cluster_id, remote_handle, working_directory,
+                                        queue_name, metadata, submission_time)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (job_id, cluster_id, remote_handle, working_directory, queue_name, metadata_json)
+            )
+            remote_job_id = cursor.lastrowid
+            if remote_job_id is None:
+                raise RuntimeError("Failed to create remote job: lastrowid is None")
+            return remote_job_id
 
     def get_remote_job(self, remote_job_id: int) -> Optional[RemoteJob]:
         """Get a remote job by ID."""
@@ -604,9 +634,9 @@ class Database:
 
         if updates:
             params.append(remote_job_id)
-            query = f"UPDATE remote_jobs SET {', '.join(updates)} WHERE id = ?"
-            self.conn.execute(query, params)
-            self.conn.commit()
+            with self.conn:
+                query = f"UPDATE remote_jobs SET {', '.join(updates)} WHERE id = ?"
+                self.conn.execute(query, params)
 
     def _row_to_remote_job(self, row: sqlite3.Row) -> RemoteJob:
         """Convert database row to RemoteJob object."""
@@ -637,18 +667,18 @@ class Database:
         dependency_type: str = "after_ok"
     ) -> int:
         """Add a dependency between two jobs."""
-        cursor = self.conn.execute(
-            """
-            INSERT INTO job_dependencies (job_id, depends_on_job_id, dependency_type)
-            VALUES (?, ?, ?)
-            """,
-            (job_id, depends_on_job_id, dependency_type)
-        )
-        self.conn.commit()
-        dep_id = cursor.lastrowid
-        if dep_id is None:
-            raise RuntimeError("Failed to create job dependency: lastrowid is None")
-        return dep_id
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO job_dependencies (job_id, depends_on_job_id, dependency_type)
+                VALUES (?, ?, ?)
+                """,
+                (job_id, depends_on_job_id, dependency_type)
+            )
+            dep_id = cursor.lastrowid
+            if dep_id is None:
+                raise RuntimeError("Failed to create job dependency: lastrowid is None")
+            return dep_id
 
     def get_job_dependencies(self, job_id: int) -> List[JobDependency]:
         """Get all dependencies for a job."""
@@ -668,8 +698,8 @@ class Database:
 
     def remove_job_dependency(self, dependency_id: int) -> None:
         """Remove a job dependency."""
-        self.conn.execute("DELETE FROM job_dependencies WHERE id = ?", (dependency_id,))
-        self.conn.commit()
+        with self.conn:
+            self.conn.execute("DELETE FROM job_dependencies WHERE id = ?", (dependency_id,))
 
     def can_job_run(self, job_id: int) -> Tuple[bool, List[str]]:
         """

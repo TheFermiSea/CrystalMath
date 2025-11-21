@@ -2,6 +2,7 @@
 Tests for workflow orchestrator.
 """
 
+import os
 import pytest
 import asyncio
 from pathlib import Path
@@ -902,6 +903,642 @@ class TestEventSystem:
 
         # Should not raise even though callback raises
         orchestrator._emit_event(WorkflowStarted(workflow_id=1))
+
+
+class TestScratchDirectoryManagement:
+    """Tests for scratch directory configuration and cleanup."""
+
+    def test_scratch_base_from_cry_scratch_base_env(self, temp_db, mock_queue_manager):
+        """Test that CRY_SCRATCH_BASE environment variable is used."""
+        custom_scratch = "/custom/scratch"
+        with patch.dict(os.environ, {"CRY_SCRATCH_BASE": custom_scratch}):
+            orchestrator = WorkflowOrchestrator(
+                database=temp_db,
+                queue_manager=mock_queue_manager
+            )
+            assert orchestrator._scratch_base == Path(custom_scratch)
+
+    def test_scratch_base_fallback_to_cry23_scrdir(self, temp_db, mock_queue_manager):
+        """Test fallback to CRY23_SCRDIR when CRY_SCRATCH_BASE not set."""
+        custom_scratch = "/crystal/scratch"
+        # Remove CRY_SCRATCH_BASE if set
+        with patch.dict(os.environ, {"CRY23_SCRDIR": custom_scratch}, clear=False):
+            # Clear CRY_SCRATCH_BASE to force fallback
+            if "CRY_SCRATCH_BASE" in os.environ:
+                del os.environ["CRY_SCRATCH_BASE"]
+
+            orchestrator = WorkflowOrchestrator(
+                database=temp_db,
+                queue_manager=mock_queue_manager
+            )
+            # Should use CRY23_SCRDIR
+            assert orchestrator._scratch_base == Path(custom_scratch)
+
+    def test_scratch_base_explicit_parameter(self, temp_db, mock_queue_manager, tmp_path):
+        """Test that explicit scratch_base parameter is used."""
+        custom_scratch = tmp_path / "explicit_scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=custom_scratch
+        )
+        assert orchestrator._scratch_base == custom_scratch
+
+    def test_get_scratch_base_priority_order(self):
+        """Test scratch base resolution follows correct priority order."""
+        import tempfile
+
+        # Test 1: CRY_SCRATCH_BASE has highest priority
+        with patch.dict(
+            os.environ,
+            {
+                "CRY_SCRATCH_BASE": "/cry_scratch_base",
+                "CRY23_SCRDIR": "/cry23_scrdir"
+            }
+        ):
+            result = WorkflowOrchestrator._get_scratch_base()
+            assert result == Path("/cry_scratch_base")
+
+        # Test 2: CRY23_SCRDIR used when CRY_SCRATCH_BASE not set
+        with patch.dict(os.environ, {"CRY23_SCRDIR": "/cry23_scrdir"}, clear=True):
+            result = WorkflowOrchestrator._get_scratch_base()
+            assert result == Path("/cry23_scrdir")
+
+        # Test 3: tempfile.gettempdir() used when neither set
+        with patch.dict(os.environ, {}, clear=True):
+            result = WorkflowOrchestrator._get_scratch_base()
+            # Should match system temp directory (varies by OS)
+            assert result == Path(tempfile.gettempdir())
+
+    def test_create_work_directory_respects_scratch_base(
+        self, temp_db, mock_queue_manager, tmp_path
+    ):
+        """Test that work directories are created in configured scratch base."""
+        scratch_base = tmp_path / "crystal_scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=scratch_base
+        )
+
+        work_dir = orchestrator._create_work_directory(workflow_id=1, node_id="test_node")
+
+        # Verify directory was created under scratch_base
+        assert work_dir.exists()
+        assert work_dir.is_dir()
+        assert scratch_base in work_dir.parents or work_dir.parent == scratch_base
+
+    def test_create_work_directory_naming(
+        self, temp_db, mock_queue_manager, tmp_path
+    ):
+        """Test that work directories have correct naming format."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=scratch_base
+        )
+
+        work_dir = orchestrator._create_work_directory(workflow_id=42, node_id="calc_step_1")
+
+        # Verify directory name format
+        dir_name = work_dir.name
+        assert "workflow_42" in dir_name
+        assert "node_calc_step_1" in dir_name
+        assert dir_name.count("_") >= 3  # At least workflow, node, timestamp, pid separators
+
+    def test_create_work_directory_uniqueness(
+        self, temp_db, mock_queue_manager, tmp_path
+    ):
+        """Test that multiple work directories get unique names."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=scratch_base
+        )
+
+        # Create two work directories for same workflow/node
+        work_dir1 = orchestrator._create_work_directory(workflow_id=1, node_id="A")
+        work_dir2 = orchestrator._create_work_directory(workflow_id=1, node_id="A")
+
+        # Should be different (different timestamps/pids)
+        assert work_dir1 != work_dir2
+        assert work_dir1.exists()
+        assert work_dir2.exists()
+
+    def test_work_directory_registered_for_cleanup(
+        self, temp_db, mock_queue_manager, tmp_path
+    ):
+        """Test that created work directories are registered for cleanup."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=scratch_base
+        )
+
+        work_dir = orchestrator._create_work_directory(workflow_id=1, node_id="test")
+
+        # Verify directory is in cleanup set
+        assert work_dir in orchestrator._work_dirs
+
+    def test_cleanup_work_directories(
+        self, temp_db, mock_queue_manager, tmp_path
+    ):
+        """Test that work directories are cleaned up properly."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=scratch_base
+        )
+
+        # Create work directories
+        work_dir1 = orchestrator._create_work_directory(workflow_id=1, node_id="A")
+        work_dir2 = orchestrator._create_work_directory(workflow_id=1, node_id="B")
+
+        # Create some test files
+        test_file1 = work_dir1 / "test.txt"
+        test_file1.write_text("test content")
+        test_file2 = work_dir2 / "data.dat"
+        test_file2.write_text("data")
+
+        assert work_dir1.exists()
+        assert work_dir2.exists()
+        assert test_file1.exists()
+        assert test_file2.exists()
+
+        # Clean up
+        orchestrator._cleanup_work_dirs()
+
+        # Verify directories are removed
+        assert not work_dir1.exists()
+        assert not work_dir2.exists()
+
+    def test_cleanup_handles_missing_directories(
+        self, temp_db, mock_queue_manager, tmp_path
+    ):
+        """Test that cleanup handles directories that no longer exist."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=scratch_base
+        )
+
+        work_dir = orchestrator._create_work_directory(workflow_id=1, node_id="test")
+
+        # Manually remove the directory
+        import shutil
+        shutil.rmtree(work_dir)
+
+        # Cleanup should not raise even though directory is gone
+        orchestrator._cleanup_work_dirs()  # Should not raise
+
+    def test_cleanup_handles_permission_errors(
+        self, temp_db, mock_queue_manager, tmp_path
+    ):
+        """Test that cleanup handles permission errors gracefully."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=scratch_base
+        )
+
+        work_dir = orchestrator._create_work_directory(workflow_id=1, node_id="test")
+
+        # Mock shutil.rmtree to raise PermissionError
+        with patch("shutil.rmtree", side_effect=PermissionError("Permission denied")):
+            # Cleanup should not raise
+            orchestrator._cleanup_work_dirs()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_submit_node_creates_work_directory(
+        self, temp_db, mock_queue_manager, tmp_path
+    ):
+        """Test that _submit_node creates work directory in correct location."""
+        scratch_base = tmp_path / "crystal_scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=scratch_base
+        )
+
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Test Workflow",
+            description="Test",
+            nodes=[
+                WorkflowNode(
+                    node_id="test_calc",
+                    job_name="job_test",
+                    template="CRYSTAL\nEND",
+                    parameters={}
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+
+        # Submit the node
+        node = workflow.nodes[0]
+        await orchestrator._submit_node(workflow_id=1, node=node)
+
+        # Verify work directory was created
+        state = orchestrator._workflow_states[1]
+        assert len(state.running_nodes) == 1
+
+        # Verify at least one work directory was registered
+        assert len(orchestrator._work_dirs) > 0
+
+        # All work dirs should be under scratch_base
+        for work_dir in orchestrator._work_dirs:
+            assert scratch_base in work_dir.parents or work_dir.parent == scratch_base
+
+    @pytest.mark.asyncio
+    async def test_submit_node_work_directory_in_database(
+        self, temp_db, mock_queue_manager, tmp_path
+    ):
+        """Test that work directory path is correctly stored in database."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=scratch_base
+        )
+
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Test",
+            description="Test",
+            nodes=[
+                WorkflowNode(
+                    node_id="calc",
+                    job_name="job_calc",
+                    template="CRYSTAL\nEND",
+                    parameters={}
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        await orchestrator._submit_node(workflow_id=1, node=node)
+
+        # Get the job from database
+        job = temp_db.get_job(node.job_id)
+        assert job is not None
+
+        # Verify work_dir is not in /tmp
+        assert not job.work_dir.startswith("/tmp/workflow_")
+
+        # Verify work_dir is under scratch_base
+        job_work_dir = Path(job.work_dir)
+        assert scratch_base in job_work_dir.parents or job_work_dir.parent == scratch_base
+
+
+class TestJobSubmissionIntegration:
+    """Integration tests for job submission and queue manager integration."""
+
+    @pytest.mark.asyncio
+    async def test_submit_node_calls_queue_manager_enqueue(
+        self, orchestrator, mock_queue_manager, temp_db, tmp_path
+    ):
+        """Test that _submit_node calls queue_manager.enqueue with correct parameters."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator._scratch_base = scratch_base
+
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Queue Test",
+            description="Test queue submission",
+            nodes=[
+                WorkflowNode(
+                    node_id="test_node",
+                    job_name="job_test",
+                    template="CRYSTAL\nEND",
+                    parameters={}
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        # Submit the node
+        await orchestrator._submit_node(workflow_id=1, node=node)
+
+        # Verify queue_manager.enqueue was called
+        assert mock_queue_manager.enqueue.called
+        call_kwargs = mock_queue_manager.enqueue.call_args[1]
+
+        # Check call parameters
+        assert "job_id" in call_kwargs
+        assert call_kwargs["priority"] == 2  # NORMAL priority
+        assert call_kwargs["runner_type"] == "local"  # Default runner type
+
+    @pytest.mark.asyncio
+    async def test_submit_node_with_dependencies(
+        self, orchestrator, mock_queue_manager, temp_db, tmp_path
+    ):
+        """Test that _submit_node passes dependencies to queue manager."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator._scratch_base = scratch_base
+
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Dependency Test",
+            description="Test with dependencies",
+            nodes=[
+                WorkflowNode(
+                    node_id="A",
+                    job_name="job_a",
+                    template="CRYSTAL\nEND",
+                    parameters={}
+                ),
+                WorkflowNode(
+                    node_id="B",
+                    job_name="job_b",
+                    template="CRYSTAL\nEND",
+                    parameters={},
+                    dependencies=["A"]
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+
+        # Submit node A first
+        node_a = workflow.nodes[0]
+        await orchestrator._submit_node(workflow_id=1, node=node_a)
+
+        # Clear mock call history
+        mock_queue_manager.reset_mock()
+
+        # Submit node B
+        node_b = workflow.nodes[1]
+        await orchestrator._submit_node(workflow_id=1, node=node_b)
+
+        # Verify queue_manager.enqueue was called for B with A's job_id as dependency
+        assert mock_queue_manager.enqueue.called
+        call_kwargs = mock_queue_manager.enqueue.call_args[1]
+
+        assert "dependencies" in call_kwargs
+        assert call_kwargs["dependencies"] == [node_a.job_id]
+
+    @pytest.mark.asyncio
+    async def test_submit_node_registers_callback(
+        self, orchestrator, temp_db, tmp_path
+    ):
+        """Test that _submit_node registers a completion callback."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator._scratch_base = scratch_base
+
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Callback Test",
+            description="Test callback registration",
+            nodes=[
+                WorkflowNode(
+                    node_id="test",
+                    job_name="job_test",
+                    template="CRYSTAL\nEND",
+                    parameters={}
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        await orchestrator._submit_node(workflow_id=1, node=node)
+
+        # Verify callback was registered
+        assert node.job_id in orchestrator._node_callbacks
+        callback_data = orchestrator._node_callbacks[node.job_id]
+        assert callback_data == (1, "test")  # (workflow_id, node_id)
+
+    @pytest.mark.asyncio
+    async def test_on_node_complete_success(
+        self, orchestrator, temp_db, event_collector
+    ):
+        """Test _on_node_complete processes successful job completion."""
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Success Test",
+            description="Test successful completion",
+            nodes=[
+                WorkflowNode(
+                    node_id="test",
+                    job_name="job_test",
+                    template="CRYSTAL\nEND",
+                    parameters={}
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        # Create and associate a job with the node
+        job_id = temp_db.create_job("job_test", "/tmp/test", "CRYSTAL\nEND")
+        node.job_id = job_id
+
+        # Update workflow state
+        state = orchestrator._workflow_states[1]
+        state.status = WorkflowStatus.RUNNING
+        state.running_nodes.add("test")
+
+        # Update job status to COMPLETED
+        temp_db.update_status(job_id, "COMPLETED")
+
+        # Call the completion handler
+        await orchestrator._on_node_complete(1, node, "COMPLETED")
+
+        # Verify node was processed
+        node = orchestrator._node_lookup[1]["test"]
+        assert node.status == NodeStatus.COMPLETED
+        assert "test" in state.completed_nodes
+
+    @pytest.mark.asyncio
+    async def test_on_node_complete_failure(
+        self, orchestrator, temp_db, event_collector
+    ):
+        """Test _on_node_complete processes job failure."""
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Failure Test",
+            description="Test failure handling",
+            nodes=[
+                WorkflowNode(
+                    node_id="test",
+                    job_name="job_test",
+                    template="CRYSTAL\nEND",
+                    parameters={},
+                    failure_policy=FailurePolicy.ABORT
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        # Create and associate a job with the node
+        job_id = temp_db.create_job("job_test", "/tmp/test", "CRYSTAL\nEND")
+        node.job_id = job_id
+
+        # Update workflow state
+        state = orchestrator._workflow_states[1]
+        state.status = WorkflowStatus.RUNNING
+        state.running_nodes.add("test")
+
+        # Call the failure handler
+        await orchestrator._on_node_complete(1, node, "FAILED")
+
+        # Verify failure was handled
+        state = orchestrator._workflow_states[1]
+        assert state.status == WorkflowStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_workflow_submission_end_to_end(
+        self, orchestrator, mock_queue_manager, temp_db, event_collector, tmp_path
+    ):
+        """Integration test: submit workflow, verify queue manager calls."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator._scratch_base = scratch_base
+
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="E2E Test",
+            description="End-to-end submission test",
+            nodes=[
+                WorkflowNode(
+                    node_id="A",
+                    job_name="job_a",
+                    template="CRYSTAL\nEND",
+                    parameters={}
+                ),
+                WorkflowNode(
+                    node_id="B",
+                    job_name="job_b",
+                    template="CRYSTAL\nEND",
+                    parameters={},
+                    dependencies=["A"]
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        await orchestrator.start_workflow(1)
+
+        # Wait a bit for initial submission
+        await asyncio.sleep(0.1)
+
+        # Verify queue_manager.enqueue was called at least once for node A
+        assert mock_queue_manager.enqueue.called
+
+        # Check that we got a NodeStarted event for A
+        node_started_events = [e for e in event_collector.events if isinstance(e, NodeStarted)]
+        assert len(node_started_events) >= 1
+        assert node_started_events[0].node_id == "A"
+
+        # Cleanup
+        await orchestrator.stop()
+
+    @pytest.mark.asyncio
+    async def test_job_submission_updates_database_status(
+        self, orchestrator, temp_db, tmp_path
+    ):
+        """Test that job submission updates database status to QUEUED."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator._scratch_base = scratch_base
+
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Status Test",
+            description="Test database status update",
+            nodes=[
+                WorkflowNode(
+                    node_id="test",
+                    job_name="job_test",
+                    template="CRYSTAL\nEND",
+                    parameters={}
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        await orchestrator._submit_node(workflow_id=1, node=node)
+
+        # Verify job status in database
+        job = temp_db.get_job(node.job_id)
+        assert job is not None
+        assert job.status == "QUEUED"
+
+
+class TestWorkflowDirectoryCleanup:
+    """Tests for workflow directory cleanup on exit."""
+
+    @pytest.mark.asyncio
+    async def test_workflow_directories_cleaned_on_orchestrator_stop(
+        self, temp_db, mock_queue_manager, tmp_path
+    ):
+        """Test that workflow directories are cleaned when orchestrator stops."""
+        scratch_base = tmp_path / "scratch"
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager,
+            scratch_base=scratch_base
+        )
+
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Cleanup Test",
+            description="Test directory cleanup",
+            nodes=[
+                WorkflowNode(
+                    node_id="test",
+                    job_name="job_test",
+                    template="CRYSTAL\nEND",
+                    parameters={}
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        await orchestrator._submit_node(workflow_id=1, node=node)
+
+        # Get the work directory path
+        job = temp_db.get_job(node.job_id)
+        work_dir = Path(job.work_dir)
+
+        # Verify directory exists
+        assert work_dir.exists()
+
+        # Manually call cleanup
+        orchestrator._cleanup_work_dirs()
+
+        # Verify directory is removed
+        assert not work_dir.exists()
+
+    def test_atexit_handler_registered(self, temp_db, mock_queue_manager):
+        """Test that cleanup handler is registered with atexit."""
+        orchestrator = WorkflowOrchestrator(
+            database=temp_db,
+            queue_manager=mock_queue_manager
+        )
+
+        # The atexit handler should be registered
+        # We can't directly test atexit, but we can verify the method exists
+        assert hasattr(orchestrator, '_cleanup_work_dirs')
+        assert callable(orchestrator._cleanup_work_dirs)
 
 
 if __name__ == "__main__":

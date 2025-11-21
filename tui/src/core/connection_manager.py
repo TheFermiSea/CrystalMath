@@ -14,7 +14,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union, Tuple
 from contextlib import asynccontextmanager
 
 import asyncssh
@@ -34,6 +34,8 @@ class ConnectionConfig:
     use_agent: bool = True
     timeout: int = 30
     keepalive_interval: int = 60
+    known_hosts_file: Optional[Path] = None
+    strict_host_key_checking: bool = True
 
 
 @dataclass
@@ -119,6 +121,8 @@ class ConnectionManager:
         username: Optional[str] = None,
         key_file: Optional[Path] = None,
         use_agent: bool = True,
+        known_hosts_file: Optional[Path] = None,
+        strict_host_key_checking: bool = True,
     ) -> None:
         """
         Register a cluster configuration.
@@ -130,6 +134,18 @@ class ConnectionManager:
             username: SSH username (optional, uses current user if not set)
             key_file: Path to SSH private key file (optional)
             use_agent: Whether to use SSH agent for authentication
+            known_hosts_file: Path to SSH known_hosts file for host key verification.
+                If None, uses ~/.ssh/known_hosts by default.
+                Set to empty Path() to disable host key checking (NOT RECOMMENDED).
+            strict_host_key_checking: Whether to strictly verify host keys and fail on
+                unknown hosts (default: True). When False, unknown hosts are logged but
+                connection proceeds (NOT RECOMMENDED for production).
+
+        Note:
+            Host key verification is ENABLED by default for security. To verify host keys:
+            1. Ensure the remote host's public key is in ~/.ssh/known_hosts
+            2. You can manually add it by running: ssh-keyscan -H <host> >> ~/.ssh/known_hosts
+            3. Or connect once manually and confirm the host key to add it automatically
         """
         config = ConnectionConfig(
             host=host,
@@ -137,6 +153,8 @@ class ConnectionManager:
             username=username,
             key_file=key_file,
             use_agent=use_agent,
+            known_hosts_file=known_hosts_file,
+            strict_host_key_checking=strict_host_key_checking,
         )
         self._configs[cluster_id] = config
         logger.info(f"Registered cluster {cluster_id}: {host}:{port}")
@@ -182,7 +200,10 @@ class ConnectionManager:
 
     async def connect(self, cluster_id: int) -> asyncssh.SSHClientConnection:
         """
-        Create a new SSH connection to a cluster.
+        Create a new SSH connection to a cluster with host key verification.
+
+        Establishes SSH connection with strict host key verification enabled by default.
+        Host keys are verified against ~/.ssh/known_hosts (or custom known_hosts file).
 
         Args:
             cluster_id: Cluster identifier
@@ -192,7 +213,14 @@ class ConnectionManager:
 
         Raises:
             ValueError: If cluster is not registered
-            asyncssh.Error: If connection fails
+            asyncssh.HostKeyNotVerifiable: If host key cannot be verified and strict
+                checking is enabled. This indicates the host is unknown or has a changed
+                key (potential MITM attack). To fix:
+                1. Verify the host is correct
+                2. Add the host key: ssh-keyscan -H <host> >> ~/.ssh/known_hosts
+                3. Or connect manually and confirm the key
+            asyncssh.Error: If connection fails for other reasons
+            asyncio.TimeoutError: If connection times out
         """
         config = self._configs.get(cluster_id)
         if not config:
@@ -200,14 +228,25 @@ class ConnectionManager:
 
         logger.info(f"Creating new connection to cluster {cluster_id}")
 
-        # Build connection options
+        # Determine known_hosts file path
+        known_hosts = self._get_known_hosts_file(config)
+        logger.debug(
+            f"Using known_hosts file: {known_hosts} (strict checking: "
+            f"{config.strict_host_key_checking})"
+        )
+
+        # Build connection options with host key verification
         connect_kwargs = {
             "host": config.host,
             "port": config.port,
             "username": config.username,
-            "known_hosts": None,  # For testing; in production use known_hosts file
+            "known_hosts": known_hosts,
             "keepalive_interval": config.keepalive_interval,
         }
+
+        # Configure host key verification behavior
+        if not config.strict_host_key_checking:
+            connect_kwargs["known_hosts"] = ()  # Accept unknown hosts with warning
 
         # Add authentication options
         if config.key_file:
@@ -222,14 +261,54 @@ class ConnectionManager:
             connection = await asyncio.wait_for(
                 asyncssh.connect(**connect_kwargs), timeout=config.timeout
             )
-            logger.info(f"Successfully connected to cluster {cluster_id}")
+            logger.info(
+                f"Successfully connected to cluster {cluster_id} "
+                f"(host key verified: {config.strict_host_key_checking})"
+            )
             return connection
         except asyncio.TimeoutError:
             logger.error(f"Connection timeout for cluster {cluster_id}")
             raise
+        except asyncssh.HostKeyNotVerifiable as e:
+            error_msg = (
+                f"Host key verification failed for cluster {cluster_id} ({config.host}). "
+                f"The host is either unknown or has a changed key (potential MITM attack). "
+                f"To add the host key, run: ssh-keyscan -H {config.host} >> ~/.ssh/known_hosts"
+            )
+            logger.error(error_msg)
+            raise asyncssh.HostKeyNotVerifiable(error_msg) from e
         except asyncssh.Error as e:
             logger.error(f"Connection failed for cluster {cluster_id}: {e}")
             raise
+
+    @staticmethod
+    def _get_known_hosts_file(config: ConnectionConfig) -> Union[str, Tuple[()], None]:
+        """
+        Determine the known_hosts file path to use for host key verification.
+
+        Args:
+            config: Connection configuration
+
+        Returns:
+            Path to known_hosts file as string, or None to use asyncssh defaults,
+            or empty tuple () to disable host key verification.
+
+        Precedence:
+            1. Custom known_hosts_file from config (if set to Path)
+            2. Empty Path() to disable checking
+            3. Default ~/.ssh/known_hosts
+        """
+        # If custom known_hosts file explicitly set
+        if config.known_hosts_file is not None:
+            # Empty Path() means disable host key checking
+            if config.known_hosts_file.parts == ():
+                return ()
+            # Otherwise use the specified path
+            return str(config.known_hosts_file.expanduser().resolve())
+
+        # Use default SSH known_hosts location
+        default_known_hosts = Path.home() / ".ssh" / "known_hosts"
+        return str(default_known_hosts) if default_known_hosts.exists() else None
 
     async def disconnect(self, cluster_id: int) -> None:
         """

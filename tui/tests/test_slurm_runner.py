@@ -23,6 +23,7 @@ from src.runners.slurm_runner import (
     SLURMJobState,
     SLURMSubmissionError,
     SLURMStatusError,
+    SLURMValidationError,
 )
 from src.core.connection_manager import ConnectionManager
 
@@ -47,7 +48,27 @@ def mock_connection():
 @pytest.fixture
 def slurm_runner(mock_connection_manager):
     """Create a SLURMRunner instance with mocked dependencies."""
-    runner = SLURMRunner(
+    from unittest.mock import AsyncMock
+
+    # Create a concrete subclass that implements abstract methods for testing
+    class TestSLURMRunner(SLURMRunner):
+        async def submit_job(self, job_id, input_file, work_dir, threads=None, **kwargs):
+            return f"job_{job_id}"
+
+        async def get_status(self, job_handle):
+            from src.runners.base import JobStatus
+            return JobStatus.RUNNING
+
+        async def cancel_job(self, job_handle):
+            return True
+
+        async def get_output(self, job_handle):
+            yield "test output"
+
+        async def retrieve_results(self, job_handle, dest, cleanup=None):
+            pass
+
+    runner = TestSLURMRunner(
         connection_manager=mock_connection_manager,
         cluster_id=1,
         poll_interval=0.1  # Fast polling for tests
@@ -66,6 +87,218 @@ def temp_work_dir(tmp_path):
     input_file.write_text("CRYSTAL\nEND\n")
 
     return work_dir
+
+
+class TestSLURMInputValidation:
+    """Test SLURM input validation and command injection prevention."""
+
+    def test_validate_job_name_valid(self, slurm_runner):
+        """Test valid job name validation."""
+        # Should not raise
+        slurm_runner._validate_job_name("test_job")
+        slurm_runner._validate_job_name("test-job")
+        slurm_runner._validate_job_name("test123")
+        slurm_runner._validate_job_name("_test-123")
+
+    def test_validate_job_name_invalid_empty(self, slurm_runner):
+        """Test empty job name fails validation."""
+        with pytest.raises(SLURMValidationError, match="Job name cannot be empty"):
+            slurm_runner._validate_job_name("")
+
+    def test_validate_job_name_injection_semicolon(self, slurm_runner):
+        """Test command injection via semicolon in job name."""
+        with pytest.raises(SLURMValidationError, match="Invalid job name"):
+            slurm_runner._validate_job_name("test; rm -rf /")
+
+    def test_validate_job_name_injection_pipe(self, slurm_runner):
+        """Test command injection via pipe in job name."""
+        with pytest.raises(SLURMValidationError, match="Invalid job name"):
+            slurm_runner._validate_job_name("test | cat /etc/passwd")
+
+    def test_validate_job_name_injection_ampersand(self, slurm_runner):
+        """Test command injection via ampersand in job name."""
+        with pytest.raises(SLURMValidationError, match="Invalid job name"):
+            slurm_runner._validate_job_name("test & malicious_command")
+
+    def test_validate_job_name_injection_backtick(self, slurm_runner):
+        """Test command injection via backticks in job name."""
+        with pytest.raises(SLURMValidationError, match="Invalid job name"):
+            slurm_runner._validate_job_name("test`cat /etc/passwd`")
+
+    def test_validate_job_name_injection_dollar_paren(self, slurm_runner):
+        """Test command injection via $() in job name."""
+        with pytest.raises(SLURMValidationError, match="Invalid job name"):
+            slurm_runner._validate_job_name("test$(whoami)")
+
+    def test_validate_job_name_too_long(self, slurm_runner):
+        """Test job name exceeding length limit."""
+        long_name = "a" * 256
+        with pytest.raises(SLURMValidationError, match="exceed 255 characters"):
+            slurm_runner._validate_job_name(long_name)
+
+    def test_validate_partition_valid(self, slurm_runner):
+        """Test valid partition names."""
+        slurm_runner._validate_partition("compute")
+        slurm_runner._validate_partition("gpu_nodes")
+        slurm_runner._validate_partition(None)  # Optional
+
+    def test_validate_partition_injection(self, slurm_runner):
+        """Test command injection via partition name."""
+        with pytest.raises(SLURMValidationError, match="Invalid partition"):
+            slurm_runner._validate_partition("compute; rm -rf /")
+
+    def test_validate_partition_special_chars(self, slurm_runner):
+        """Test partition with special characters."""
+        with pytest.raises(SLURMValidationError, match="Invalid partition"):
+            slurm_runner._validate_partition("compute-gpu")  # Hyphens not allowed
+
+    def test_validate_module_valid(self, slurm_runner):
+        """Test valid module names."""
+        slurm_runner._validate_module("crystal23")
+        slurm_runner._validate_module("intel/2023")
+        slurm_runner._validate_module("openmpi/4.1.0")
+        slurm_runner._validate_module("gcc-11.2")
+
+    def test_validate_module_injection_semicolon(self, slurm_runner):
+        """Test command injection via semicolon in module name."""
+        with pytest.raises(SLURMValidationError, match="Invalid module"):
+            slurm_runner._validate_module("crystal23; rm -rf /")
+
+    def test_validate_module_injection_backtick(self, slurm_runner):
+        """Test command injection via backticks in module name."""
+        with pytest.raises(SLURMValidationError, match="Invalid module"):
+            slurm_runner._validate_module("crystal23`whoami`")
+
+    def test_validate_account_valid(self, slurm_runner):
+        """Test valid account names."""
+        slurm_runner._validate_account("myproject")
+        slurm_runner._validate_account("project_123")
+
+    def test_validate_account_injection(self, slurm_runner):
+        """Test command injection via account name."""
+        with pytest.raises(SLURMValidationError, match="Invalid account"):
+            slurm_runner._validate_account("project; malicious")
+
+    def test_validate_qos_valid(self, slurm_runner):
+        """Test valid QOS names."""
+        slurm_runner._validate_qos("high")
+        slurm_runner._validate_qos("gpu-priority")
+
+    def test_validate_qos_injection(self, slurm_runner):
+        """Test command injection via QOS name."""
+        with pytest.raises(SLURMValidationError, match="Invalid QOS"):
+            slurm_runner._validate_qos("high| whoami")
+
+    def test_validate_email_valid(self, slurm_runner):
+        """Test valid email addresses."""
+        slurm_runner._validate_email("user@example.com")
+        slurm_runner._validate_email("test.user@sub.example.org")
+
+    def test_validate_email_injection(self, slurm_runner):
+        """Test command injection via email field."""
+        with pytest.raises(SLURMValidationError, match="Invalid email"):
+            slurm_runner._validate_email("user@example.com; rm -rf /")
+
+    def test_validate_time_limit_valid(self, slurm_runner):
+        """Test valid time limit formats."""
+        slurm_runner._validate_time_limit("01:00:00")
+        slurm_runner._validate_time_limit("24:00:00")
+        slurm_runner._validate_time_limit("1-12:30:00")
+        slurm_runner._validate_time_limit("3600")
+
+    def test_validate_time_limit_injection(self, slurm_runner):
+        """Test command injection via time limit."""
+        with pytest.raises(SLURMValidationError, match="Invalid time limit"):
+            slurm_runner._validate_time_limit("01:00:00; rm -rf /")
+
+    def test_validate_dependency_valid(self, slurm_runner):
+        """Test valid job dependencies."""
+        slurm_runner._validate_dependency("12345")
+        slurm_runner._validate_dependency("999999")
+
+    def test_validate_dependency_injection(self, slurm_runner):
+        """Test command injection via job dependency ID."""
+        with pytest.raises(SLURMValidationError, match="Invalid job ID"):
+            slurm_runner._validate_dependency("12345; rm -rf /")
+
+    def test_validate_dependency_non_numeric(self, slurm_runner):
+        """Test non-numeric job dependency."""
+        with pytest.raises(SLURMValidationError, match="must be numeric"):
+            slurm_runner._validate_dependency("abc123")
+
+    def test_validate_array_spec_valid(self, slurm_runner):
+        """Test valid array specifications."""
+        slurm_runner._validate_array_spec("1-10")
+        slurm_runner._validate_array_spec("1,3,5,7")
+        slurm_runner._validate_array_spec("0-999:10")
+
+    def test_validate_array_spec_injection(self, slurm_runner):
+        """Test command injection via array specification."""
+        with pytest.raises(SLURMValidationError, match="Invalid array"):
+            slurm_runner._validate_array_spec("1-10; echo hacked")
+
+    def test_validate_config_comprehensive(self, slurm_runner):
+        """Test comprehensive config validation."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            partition="compute",
+            account="myproject",
+            qos="high",
+            email="user@example.com",
+            time_limit="12:00:00",
+            modules=["crystal23", "intel/2023"]
+        )
+        # Should not raise
+        slurm_runner._validate_config(config)
+
+    def test_validate_config_invalid_job_name(self, slurm_runner):
+        """Test config validation with invalid job name."""
+        config = SLURMJobConfig(
+            job_name="test; rm -rf /",
+            time_limit="01:00:00"
+        )
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._validate_config(config)
+
+    def test_validate_config_invalid_partition(self, slurm_runner):
+        """Test config validation with invalid partition."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            partition="compute; malicious",
+            time_limit="01:00:00"
+        )
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._validate_config(config)
+
+    def test_validate_config_invalid_module(self, slurm_runner):
+        """Test config validation with invalid module."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            modules=["crystal23; rm -rf /"],
+            time_limit="01:00:00"
+        )
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._validate_config(config)
+
+    def test_validate_config_negative_nodes(self, slurm_runner):
+        """Test config validation with negative node count."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            nodes=-1,
+            time_limit="01:00:00"
+        )
+        with pytest.raises(SLURMValidationError, match="at least 1"):
+            slurm_runner._validate_config(config)
+
+    def test_validate_config_invalid_dependency(self, slurm_runner):
+        """Test config validation with invalid dependency."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            dependencies=["12345; malicious"],
+            time_limit="01:00:00"
+        )
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._validate_config(config)
 
 
 class TestSLURMScriptGeneration:
@@ -190,6 +423,104 @@ class TestSLURMScriptGeneration:
 
         assert "source /opt/crystal/env.sh" in script
         assert "export MY_VAR=value" in script
+
+    def test_script_injection_via_job_name(self, slurm_runner):
+        """Test that injection via job name is blocked."""
+        config = SLURMJobConfig(
+            job_name="test; rm -rf /",
+            time_limit="01:00:00"
+        )
+
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._generate_slurm_script(config, "/scratch/test")
+
+    def test_script_injection_via_partition(self, slurm_runner):
+        """Test that injection via partition is blocked."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            partition="compute; malicious",
+            time_limit="01:00:00"
+        )
+
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._generate_slurm_script(config, "/scratch/test")
+
+    def test_script_injection_via_module(self, slurm_runner):
+        """Test that injection via module is blocked."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            modules=["crystal23 && rm -rf /"],
+            time_limit="01:00:00"
+        )
+
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._generate_slurm_script(config, "/scratch/test")
+
+    def test_script_injection_via_work_dir(self, slurm_runner):
+        """Test that injection via work directory is blocked."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            time_limit="01:00:00"
+        )
+
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._generate_slurm_script(config, "/scratch/test; rm -rf /")
+
+    def test_script_injection_via_email(self, slurm_runner):
+        """Test that injection via email is blocked."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            email="user@example.com; rm -rf /",
+            time_limit="01:00:00"
+        )
+
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._generate_slurm_script(config, "/scratch/test")
+
+    def test_script_injection_via_dependency(self, slurm_runner):
+        """Test that injection via job dependency is blocked."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            dependencies=["12345 && rm -rf /"],
+            time_limit="01:00:00"
+        )
+
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._generate_slurm_script(config, "/scratch/test")
+
+    def test_script_injection_via_array_spec(self, slurm_runner):
+        """Test that injection via array spec is blocked."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            array="1-10; echo hacked",
+            time_limit="01:00:00"
+        )
+
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._generate_slurm_script(config, "/scratch/test")
+
+    def test_script_injection_via_environment_setup(self, slurm_runner):
+        """Test that injection via environment setup is blocked."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            environment_setup="export VAR=value; rm -rf /",
+            time_limit="01:00:00"
+        )
+
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._generate_slurm_script(config, "/scratch/test")
+
+    def test_script_injection_via_email_type(self, slurm_runner):
+        """Test that injection via email type is blocked."""
+        config = SLURMJobConfig(
+            job_name="test_job",
+            email="user@example.com",
+            email_type="BEGIN,INVALID_TYPE",
+            time_limit="01:00:00"
+        )
+
+        with pytest.raises(SLURMValidationError):
+            slurm_runner._generate_slurm_script(config, "/scratch/test")
 
 
 class TestJobIDParsing:

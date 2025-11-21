@@ -15,6 +15,7 @@ from src.core.environment import (
     reset_config_cache,
     _source_bashrc,
     _validate_environment,
+    _find_bashrc_path,
 )
 
 
@@ -66,6 +67,82 @@ class TestCrystalConfig:
         assert isinstance(config.scratch_dir, Path)
         assert isinstance(config.utils_dir, Path)
         assert isinstance(config.executable_path, Path)
+
+
+class TestFindBashrcPath:
+    """Tests for _find_bashrc_path function (precedence chain)."""
+
+    def test_explicit_path_highest_priority(self, tmp_path):
+        """Test that explicit path has highest priority."""
+        explicit_bashrc = tmp_path / "explicit" / "cry23.bashrc"
+        explicit_bashrc.parent.mkdir(parents=True)
+        explicit_bashrc.touch()
+
+        result = _find_bashrc_path(explicit_path=explicit_bashrc)
+        assert result == explicit_bashrc.resolve()
+
+    def test_explicit_path_even_if_invalid(self, tmp_path):
+        """Test explicit path is returned even if it doesn't exist."""
+        explicit_bashrc = tmp_path / "nonexistent" / "cry23.bashrc"
+
+        result = _find_bashrc_path(explicit_path=explicit_bashrc)
+        assert result == explicit_bashrc.resolve()
+
+    def test_cry23_root_env_var_second_priority(self, tmp_path):
+        """Test CRY23_ROOT environment variable is checked second."""
+        cry23_root = tmp_path / "crystal23"
+        bashrc = cry23_root / "utils23" / "cry23.bashrc"
+        bashrc.parent.mkdir(parents=True)
+        bashrc.touch()
+
+        with patch.dict(os.environ, {'CRY23_ROOT': str(cry23_root)}):
+            # Clear explicit path
+            result = _find_bashrc_path(explicit_path=None)
+            assert result == bashrc.resolve()
+
+    def test_cry23_root_env_var_ignored_if_not_exists(self, tmp_path):
+        """Test CRY23_ROOT is skipped if bashrc doesn't exist there."""
+        cry23_root = tmp_path / "crystal23"
+        # Don't create bashrc
+
+        with patch.dict(os.environ, {'CRY23_ROOT': str(cry23_root)}):
+            result = _find_bashrc_path(explicit_path=None)
+            # Should fall back to development layout
+            # The key is that it doesn't use the non-existent CRY23_ROOT path
+            assert str(cry23_root) not in str(result)
+
+    def test_development_layout_last_resort(self, tmp_path):
+        """Test development layout is checked as last resort."""
+        with patch.dict(os.environ, {}, clear=True):  # Clear CRY23_ROOT
+            result = _find_bashrc_path(explicit_path=None)
+            # Should compute dev_bashrc path (will include utils23/cry23.bashrc)
+            assert 'utils23' in str(result)
+            assert 'cry23.bashrc' in str(result)
+
+    def test_precedence_explicit_over_env_var(self, tmp_path):
+        """Test explicit path takes precedence over CRY23_ROOT."""
+        explicit_bashrc = tmp_path / "explicit" / "cry23.bashrc"
+        explicit_bashrc.parent.mkdir(parents=True)
+        explicit_bashrc.touch()
+
+        cry23_root = tmp_path / "crystal23"
+        env_bashrc = cry23_root / "utils23" / "cry23.bashrc"
+        env_bashrc.parent.mkdir(parents=True)
+        env_bashrc.touch()
+
+        with patch.dict(os.environ, {'CRY23_ROOT': str(cry23_root)}):
+            result = _find_bashrc_path(explicit_path=explicit_bashrc)
+            assert result == explicit_bashrc.resolve()
+            assert result != env_bashrc.resolve()
+
+    def test_returns_path_object(self, tmp_path):
+        """Test that function returns resolved Path object."""
+        bashrc = tmp_path / "cry23.bashrc"
+        bashrc.touch()
+
+        result = _find_bashrc_path(explicit_path=bashrc)
+        assert isinstance(result, Path)
+        assert result.is_absolute()
 
 
 class TestSourceBashrc:
@@ -216,6 +293,21 @@ class TestLoadCrystalEnvironment:
 
         with pytest.raises(EnvironmentError, match="cry23.bashrc not found"):
             load_crystal_environment(bashrc_path=bashrc_path)
+
+    def test_error_message_has_setup_instructions(self, tmp_path):
+        """Test that error message includes setup instructions."""
+        bashrc_path = tmp_path / "nonexistent.bashrc"
+
+        try:
+            load_crystal_environment(bashrc_path=bashrc_path)
+            pytest.fail("Expected EnvironmentError")
+        except EnvironmentError as e:
+            error_msg = str(e)
+            # Should include setup instructions
+            assert "Setup instructions" in error_msg
+            assert "CRY23_ROOT" in error_msg
+            assert "export CRY23_ROOT" in error_msg
+            assert "utils23/cry23.bashrc" in error_msg
 
     @patch('src.core.environment._source_bashrc')
     @patch('src.core.environment._validate_environment')
