@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Mock crystalOMP binary for testing
+# Simulates CRYSTAL17 OMP execution
+
+# Log that crystalOMP was called
+MOCK_LOG="${TEST_TEMP_DIR:-/tmp}/crystalOMP.called"
+echo "crystalOMP called with args: $*" >> "${MOCK_LOG}"
+
+# Parse arguments
+INPUT_FILE=""
+OUTPUT_FILE="out.out"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -i|--input)
+            INPUT_FILE="$2"
+            shift 2
+            ;;
+        -o|--output)
+            OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        *)
+            # Positional argument is input file
+            if [[ -z "${INPUT_FILE}" ]]; then
+                INPUT_FILE="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate input file exists
+if [[ -n "${INPUT_FILE}" && ! -f "${INPUT_FILE}" ]]; then
+    echo "Error: Input file not found: ${INPUT_FILE}" >&2
+    exit 1
+fi
+
+# Generate mock output
+cat > "${OUTPUT_FILE}" <<'EOF'
+ *******************************************************************************
+ *                                                                             *
+ *                      CRYSTAL17 (Mock Output)                                *
+ *                                                                             *
+ *******************************************************************************
+
+ INFORMATION **** CRYSTAL17 MOCK - TEST EXECUTION ****
+
+ GEOMETRY INPUT
+ ==============
+
+ Mock calculation starting...
+
+ SCF ITERATIONS
+ ==============
+
+ ITERATION     1
+ TOTAL ENERGY (AU): -123.456789
+
+ ITERATION     2
+ TOTAL ENERGY (AU): -123.456790
+
+ CONVERGENCE REACHED
+
+ FINAL RESULTS
+ =============
+
+ TOTAL ENERGY (AU):        -123.456790
+ TOTAL ENERGY (EV):       -3360.12345
+
+ CALCULATION COMPLETED SUCCESSFULLY
+
+ EEEEEEEEEE TERMINATION  DATE 19 11 2025 TIME 20:00:00.0
+
+EOF
+
+echo "Mock crystalOMP execution completed"
+echo "Input: ${INPUT_FILE:-stdin}"
+echo "Output: ${OUTPUT_FILE}"
+
+# Exit with success or TEST_CRYSTALOMP_EXIT if set
+exit "${TEST_CRYSTALOMP_EXIT:-0}"

@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crystal-tui"
+version = "0.1.0"
+description = "A modern TUI workstation for CRYSTAL DFT calculations"
+authors = [{name = "Brian Squires", email = "brian@example.com"}]
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["crystal", "dft", "tui", "computational-chemistry"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "textual>=0.50.0",
+    "rich>=13.0.0",
+    "CRYSTALpytools>=2023.0.0",
+    "pymatgen>=2023.0.0",
+    "ase>=3.22.0",
+    "asyncssh>=2.14.0",  # For Phase 2 remote execution
+    "toml>=0.10.0",  # For config files
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+crystal-tui = "src.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+packages = ["src", "src.core", "src.tui", "src.tui.screens", "src.runners"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

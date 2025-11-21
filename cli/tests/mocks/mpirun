@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Mock mpirun for testing
+# Logs invocation and simulates successful MPI execution
+
+# Log that mpirun was called
+MOCK_LOG="${TEST_TEMP_DIR:-/tmp}/mpirun.called"
+echo "mpirun called with args: $*" >> "${MOCK_LOG}"
+
+# Parse arguments to understand what's being requested
+NP=1
+COMMAND=""
+ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -np|--np)
+            NP="$2"
+            shift 2
+            ;;
+        --hostfile|--host)
+            # Ignore hostfile in mock
+            shift 2
+            ;;
+        --bind-to|--map-by|--rank-by)
+            # Ignore binding options in mock
+            shift 2
+            ;;
+        -*)
+            # Ignore other flags
+            shift
+            ;;
+        *)
+            # First non-flag is the command
+            if [[ -z "${COMMAND}" ]]; then
+                COMMAND="$1"
+            else
+                ARGS+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Output mock MPI execution details
+echo "Mock MPI execution:"
+echo "  Processes: ${NP}"
+echo "  Command: ${COMMAND}"
+if [[ ${#ARGS[@]} -gt 0 ]]; then
+    echo "  Arguments: ${ARGS[*]}"
+fi
+
+# Simulate successful execution
+echo "Mock MPI job completed successfully"
+
+exit 0

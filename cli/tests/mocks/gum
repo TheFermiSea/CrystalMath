@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Mock gum (Charmbracelet gum) for testing
+# Returns predefined test data based on subcommand
+
+# Log that gum was called
+MOCK_LOG="${TEST_TEMP_DIR:-/tmp}/gum.called"
+echo "gum called with args: $*" >> "${MOCK_LOG}"
+
+SUBCOMMAND="${1:-}"
+shift
+
+case "${SUBCOMMAND}" in
+    choose)
+        # Return first option or TEST_GUM_CHOICE if set
+        if [[ -n "${TEST_GUM_CHOICE}" ]]; then
+            echo "${TEST_GUM_CHOICE}"
+        else
+            # Default to first argument
+            echo "${1:-option1}"
+        fi
+        ;;
+
+    input)
+        # Return TEST_GUM_INPUT if set, otherwise a default
+        echo "${TEST_GUM_INPUT:-test_input}"
+        ;;
+
+    confirm)
+        # Return success if TEST_GUM_CONFIRM=yes, failure otherwise
+        if [[ "${TEST_GUM_CONFIRM:-yes}" == "yes" ]]; then
+            exit 0
+        else
+            exit 1
+        fi
+        ;;
+
+    spin)
+        # Mock spinner - just execute the command without spinner
+        if [[ "$1" == "--title" ]]; then
+            shift 2  # Skip --title and its value
+        fi
+        # Execute remaining args as command
+        if [[ $# -gt 0 ]]; then
+            eval "$@"
+        fi
+        ;;
+
+    style)
+        # Mock style - just echo the text without styling
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --bold|--italic|--underline|--strikethrough|--foreground|--background|--border|--align|--width|--height|--margin|--padding)
+                    shift 2
+                    ;;
+                *)
+                    echo "$1"
+                    shift
+                    ;;
+            esac
+        done
+        ;;
+
+    filter)
+        # Mock filter - return first line or TEST_GUM_FILTER if set
+        if [[ -n "${TEST_GUM_FILTER}" ]]; then
+            echo "${TEST_GUM_FILTER}"
+        else
+            # Read stdin and return first line
+            head -n 1
+        fi
+        ;;
+
+    write)
+        # Mock write - return TEST_GUM_WRITE if set
+        echo "${TEST_GUM_WRITE:-test write output}"
+        ;;
+
+    *)
+        echo "Mock gum: unknown subcommand '${SUBCOMMAND}'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

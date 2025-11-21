@@ -1,0 +1,126 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# CRYSTAL temporary files
+*.out
+*.ERR
+*.hess
+*.HESSOPT
+*.OPTINFO
+*.f9
+*.f13
+*.f25
+*.f31
+*.f32
+*.f34
+*.f80
+fort.*
+*.d3
+*.d12e
+*.dat
+*.AUX
+*.xyz
+*.cif
+*.gui
+
+# Scratch directories
+tmp_crystal/
+calculations/*/
+
+# TUI database (user data, not committed)
+.crystal_tui.db
+.crystal_tui.db-shm
+.crystal_tui.db-wal
+
+# Beads daemon files (user-specific)
+.beads/daemon.lock
+.beads/daemon.log
+.beads/daemon.pid
+.beads/bd.sock
+.beads/*.left.jsonl
+.beads/*.left.meta.json
+
+# Logs
+*.log
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Build artifacts
+*.o
+*.a
+*.la
+*.lo
+*.dylib
+
+# Documentation builds
+docs/_build/
+site/
+
+# Test artifacts
+.bats-cache/
+test-results/
