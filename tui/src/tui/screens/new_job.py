@@ -2,13 +2,14 @@
 Modal screen for creating new CRYSTAL calculation jobs.
 """
 
+import os
 from pathlib import Path
 from typing import Optional
 
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
-from textual.containers import Container, Vertical, Horizontal
-from textual.widgets import Input, TextArea, Button, Static, Label
+from textual.containers import Container, Vertical, Horizontal, ScrollableContainer
+from textual.widgets import Input, TextArea, Button, Static, Label, Select, RadioSet, RadioButton, Checkbox
 from textual.message import Message
 from textual.binding import Binding
 
@@ -33,9 +34,9 @@ class NewJobScreen(ModalScreen):
     }
 
     #modal_container {
-        width: 80;
+        width: 90;
         height: auto;
-        max-height: 40;
+        max-height: 45;
         background: $surface;
         border: thick $primary;
         padding: 1 2;
@@ -49,42 +50,86 @@ class NewJobScreen(ModalScreen):
         padding: 1 0;
     }
 
-    #input_section {
+    #form_scroll {
         width: 100%;
         height: auto;
+        max-height: 35;
         padding: 1 0;
     }
 
-    #job_name_container {
+    .form_section {
         width: 100%;
         height: auto;
         padding: 0 0 1 0;
+        border: solid $accent-darken-1;
+        margin: 0 0 1 0;
+        padding: 1;
     }
 
-    #job_name_label {
+    .section_title {
         width: 100%;
+        text-style: bold;
+        color: $accent;
         padding: 0 0 1 0;
     }
 
-    #job_name_input {
-        width: 100%;
-    }
-
-    #textarea_container {
-        width: 100%;
-        height: auto;
-        padding: 0 0 1 0;
-    }
-
-    #textarea_label {
+    .field_label {
         width: 100%;
         padding: 0 0 1 0;
+        color: $text;
+    }
+
+    .field_input {
+        width: 100%;
+        margin: 0 0 1 0;
     }
 
     #input_textarea {
         width: 100%;
-        height: 20;
+        height: 12;
         border: solid $accent;
+    }
+
+    #aux_files_container {
+        width: 100%;
+        height: auto;
+        padding: 0 0 1 0;
+    }
+
+    .aux_file_row {
+        width: 100%;
+        height: auto;
+        layout: horizontal;
+        padding: 0 0 1 0;
+    }
+
+    .aux_checkbox {
+        width: auto;
+        margin: 0 2 0 0;
+    }
+
+    .aux_file_input {
+        width: 1fr;
+    }
+
+    #parallelism_container {
+        width: 100%;
+        height: auto;
+    }
+
+    RadioSet {
+        width: 100%;
+        height: auto;
+        padding: 0 0 1 0;
+    }
+
+    #mpi_ranks_input {
+        width: 20;
+        margin: 0 0 1 0;
+    }
+
+    #work_dir_input {
+        width: 100%;
     }
 
     #button_container {
@@ -115,6 +160,13 @@ class NewJobScreen(ModalScreen):
     #error_message.visible {
         display: block;
     }
+
+    #info_message {
+        width: 100%;
+        color: $accent;
+        padding: 1 0;
+        text-style: italic;
+    }
     """
 
     BINDINGS = [
@@ -138,23 +190,91 @@ class NewJobScreen(ModalScreen):
         with Container(id="modal_container"):
             yield Static("Create New CRYSTAL Job", id="modal_title")
 
-            with Vertical(id="input_section"):
-                # Job name input
-                with Vertical(id="job_name_container"):
-                    yield Label("Job Name:", id="job_name_label")
+            with ScrollableContainer(id="form_scroll"):
+                # Section 1: Job Configuration
+                with Vertical(classes="form_section"):
+                    yield Label("Job Configuration", classes="section_title")
+                    yield Label("Job Name (letters, numbers, hyphens, underscores only):", classes="field_label")
                     yield Input(
-                        placeholder="Enter unique job name (e.g., mgo_bulk)",
-                        id="job_name_input"
+                        placeholder="e.g., mgo_bulk_optimization",
+                        id="job_name_input",
+                        classes="field_input"
                     )
 
-                # Input file text area
-                with Vertical(id="textarea_container"):
-                    yield Label("CRYSTAL Input File (.d12):", id="textarea_label")
+                # Section 2: Input File
+                with Vertical(classes="form_section"):
+                    yield Label("CRYSTAL Input File (.d12)", classes="section_title")
+                    yield Static(
+                        "Paste your .d12 input content below or use 'Browse Files' to load from disk",
+                        id="info_message"
+                    )
                     yield TextArea(
                         id="input_textarea",
                         language="text",
                         theme="monokai",
                         show_line_numbers=True
+                    )
+                    yield Button("Browse Files...", variant="default", id="browse_button")
+
+                # Section 3: Auxiliary Files
+                with Vertical(classes="form_section"):
+                    yield Label("Auxiliary Files (Optional)", classes="section_title")
+                    with Vertical(id="aux_files_container"):
+                        # .gui file
+                        with Horizontal(classes="aux_file_row"):
+                            yield Checkbox("Use .gui file", id="gui_checkbox", classes="aux_checkbox")
+                            yield Input(
+                                placeholder="Path to .gui file (EXTERNAL geometry)",
+                                id="gui_file_input",
+                                classes="aux_file_input",
+                                disabled=True
+                            )
+                        # .f9 file
+                        with Horizontal(classes="aux_file_row"):
+                            yield Checkbox("Use .f9 file", id="f9_checkbox", classes="aux_checkbox")
+                            yield Input(
+                                placeholder="Path to .f9 file (wave function guess)",
+                                id="f9_file_input",
+                                classes="aux_file_input",
+                                disabled=True
+                            )
+                        # .hessopt file
+                        with Horizontal(classes="aux_file_row"):
+                            yield Checkbox("Use .hessopt file", id="hessopt_checkbox", classes="aux_checkbox")
+                            yield Input(
+                                placeholder="Path to .hessopt file (Hessian restart)",
+                                id="hessopt_file_input",
+                                classes="aux_file_input",
+                                disabled=True
+                            )
+
+                # Section 4: Parallelism Settings
+                with Vertical(classes="form_section"):
+                    yield Label("Parallelism Settings", classes="section_title")
+                    with Vertical(id="parallelism_container"):
+                        with RadioSet(id="parallel_mode"):
+                            yield RadioButton("Serial (single process, OpenMP only)", id="serial_radio", value=True)
+                            yield RadioButton("Parallel (MPI + OpenMP hybrid)", id="parallel_radio")
+
+                        yield Label("MPI Ranks (if parallel):", classes="field_label")
+                        yield Input(
+                            placeholder="e.g., 4, 8, 16",
+                            id="mpi_ranks_input",
+                            disabled=True,
+                            value="1"
+                        )
+
+                # Section 5: Working Directory
+                with Vertical(classes="form_section"):
+                    yield Label("Working Directory", classes="section_title")
+                    yield Static(
+                        "Will be auto-generated as: calculations/XXXX_jobname",
+                        classes="field_label"
+                    )
+                    yield Input(
+                        id="work_dir_input",
+                        classes="field_input",
+                        disabled=True
                     )
 
             # Error message (hidden by default)
@@ -170,6 +290,41 @@ class NewJobScreen(ModalScreen):
         """Focus the job name input when the modal opens."""
         job_name_input = self.query_one("#job_name_input", Input)
         job_name_input.focus()
+        self._update_work_dir_preview()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle input field changes."""
+        if event.input.id == "job_name_input":
+            self._update_work_dir_preview()
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Handle checkbox state changes to enable/disable file inputs."""
+        checkbox_id = event.checkbox.id
+
+        if checkbox_id == "gui_checkbox":
+            gui_input = self.query_one("#gui_file_input", Input)
+            gui_input.disabled = not event.value
+            if not event.value:
+                gui_input.value = ""
+        elif checkbox_id == "f9_checkbox":
+            f9_input = self.query_one("#f9_file_input", Input)
+            f9_input.disabled = not event.value
+            if not event.value:
+                f9_input.value = ""
+        elif checkbox_id == "hessopt_checkbox":
+            hessopt_input = self.query_one("#hessopt_file_input", Input)
+            hessopt_input.disabled = not event.value
+            if not event.value:
+                hessopt_input.value = ""
+
+    def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
+        """Handle parallelism mode changes."""
+        if event.radio_set.id == "parallel_mode":
+            mpi_input = self.query_one("#mpi_ranks_input", Input)
+            is_parallel = event.index == 1  # Index 1 is parallel mode
+            mpi_input.disabled = not is_parallel
+            if not is_parallel:
+                mpi_input.value = "1"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press events."""
@@ -177,6 +332,30 @@ class NewJobScreen(ModalScreen):
             self.action_submit()
         elif event.button.id == "cancel_button":
             self.action_cancel()
+        elif event.button.id == "browse_button":
+            self._browse_for_input_file()
+
+    def _update_work_dir_preview(self) -> None:
+        """Update the working directory preview based on job name."""
+        job_name_input = self.query_one("#job_name_input", Input)
+        work_dir_input = self.query_one("#work_dir_input", Input)
+        job_name = job_name_input.value.strip()
+
+        if job_name:
+            existing_jobs = self.database.get_all_jobs()
+            next_id = max([job.id for job in existing_jobs], default=0) + 1
+            work_dir_name = f"{next_id:04d}_{job_name}"
+            work_dir_input.value = f"calculations/{work_dir_name}"
+        else:
+            work_dir_input.value = "calculations/XXXX_jobname"
+
+    def _browse_for_input_file(self) -> None:
+        """Browse for an input file and load its content."""
+        # For now, show a message - full file browser would require a separate screen
+        error_message = self.query_one("#error_message", Static)
+        error_message.update("File browser: Use the input path in auxiliary files section")
+        error_message.add_class("visible")
+        # In a full implementation, this would open a file selection dialog
 
     def action_cancel(self) -> None:
         """Cancel and close the modal."""
@@ -188,6 +367,18 @@ class NewJobScreen(ModalScreen):
         job_name_input = self.query_one("#job_name_input", Input)
         input_textarea = self.query_one("#input_textarea", TextArea)
         error_message = self.query_one("#error_message", Static)
+
+        # Auxiliary files
+        gui_checkbox = self.query_one("#gui_checkbox", Checkbox)
+        gui_file_input = self.query_one("#gui_file_input", Input)
+        f9_checkbox = self.query_one("#f9_checkbox", Checkbox)
+        f9_file_input = self.query_one("#f9_file_input", Input)
+        hessopt_checkbox = self.query_one("#hessopt_checkbox", Checkbox)
+        hessopt_file_input = self.query_one("#hessopt_file_input", Input)
+
+        # Parallelism
+        parallel_mode = self.query_one("#parallel_mode", RadioSet)
+        mpi_ranks_input = self.query_one("#mpi_ranks_input", Input)
 
         job_name = job_name_input.value.strip()
         input_content = input_textarea.text.strip()
@@ -228,6 +419,47 @@ class NewJobScreen(ModalScreen):
             input_textarea.focus()
             return
 
+        # Validate auxiliary files if checked
+        aux_files = {}
+        if gui_checkbox.value:
+            gui_path = gui_file_input.value.strip()
+            if gui_path and not Path(gui_path).is_file():
+                self._show_error(f"GUI file not found: {gui_path}")
+                gui_file_input.focus()
+                return
+            if gui_path:
+                aux_files['gui'] = gui_path
+
+        if f9_checkbox.value:
+            f9_path = f9_file_input.value.strip()
+            if f9_path and not Path(f9_path).is_file():
+                self._show_error(f"F9 file not found: {f9_path}")
+                f9_file_input.focus()
+                return
+            if f9_path:
+                aux_files['f9'] = f9_path
+
+        if hessopt_checkbox.value:
+            hessopt_path = hessopt_file_input.value.strip()
+            if hessopt_path and not Path(hessopt_path).is_file():
+                self._show_error(f"Hessopt file not found: {hessopt_path}")
+                hessopt_file_input.focus()
+                return
+            if hessopt_path:
+                aux_files['hessopt'] = hessopt_path
+
+        # Validate MPI ranks if parallel mode
+        mpi_ranks = 1
+        if parallel_mode.pressed_index == 1:  # Parallel mode
+            try:
+                mpi_ranks = int(mpi_ranks_input.value.strip())
+                if mpi_ranks < 1:
+                    raise ValueError()
+            except ValueError:
+                self._show_error("MPI ranks must be a positive integer")
+                mpi_ranks_input.focus()
+                return
+
         # Generate next job ID
         next_id = max([job.id for job in existing_jobs], default=0) + 1
 
@@ -257,6 +489,45 @@ class NewJobScreen(ModalScreen):
                 pass
             return
 
+        # Copy auxiliary files
+        try:
+            for file_type, file_path in aux_files.items():
+                src_path = Path(file_path)
+                if file_type == 'gui':
+                    dst_path = work_dir / f"{job_name}.gui"
+                elif file_type == 'f9':
+                    dst_path = work_dir / f"{job_name}.f9"
+                elif file_type == 'hessopt':
+                    dst_path = work_dir / f"{job_name}.hessopt"
+                else:
+                    continue
+
+                # Copy file content
+                dst_path.write_bytes(src_path.read_bytes())
+        except Exception as e:
+            self._show_error(f"Failed to copy auxiliary file: {str(e)}")
+            # Clean up
+            try:
+                import shutil
+                shutil.rmtree(work_dir)
+            except:
+                pass
+            return
+
+        # Write job metadata file
+        metadata = {
+            "mpi_ranks": mpi_ranks,
+            "parallel_mode": "parallel" if parallel_mode.pressed_index == 1 else "serial",
+            "auxiliary_files": list(aux_files.keys())
+        }
+        metadata_file = work_dir / "job_metadata.json"
+        try:
+            import json
+            metadata_file.write_text(json.dumps(metadata, indent=2))
+        except Exception as e:
+            # Non-critical, just log
+            pass
+
         # Add job to database
         try:
             job_id = self.database.create_job(
@@ -268,8 +539,8 @@ class NewJobScreen(ModalScreen):
             self._show_error(f"Failed to create job in database: {str(e)}")
             # Clean up files
             try:
-                input_file.unlink()
-                work_dir.rmdir()
+                import shutil
+                shutil.rmtree(work_dir)
             except:
                 pass
             return

@@ -1,0 +1,112 @@
+name: "Electronic Band Structure"
+version: "1.0"
+description: "Calculate electronic band structure along high-symmetry k-path"
+author: "CRYSTAL-TUI Team"
+tags: ["advanced", "band-structure", "electronic", "properties"]
+
+parameters:
+  system_name:
+    type: "string"
+    default: "Band Structure Calculation"
+    description: "Name/description of the system"
+    required: true
+
+  space_group:
+    type: "integer"
+    default: 225
+    min: 1
+    max: 230
+    description: "Space group number"
+    required: true
+
+  lattice_param:
+    type: "float"
+    default: 4.21
+    min: 0.1
+    max: 100.0
+    description: "Lattice parameter in Angstroms"
+    required: true
+
+  basis_set:
+    type: "select"
+    options: ["sto-3g", "3-21g", "6-21g", "6-31g", "pob-tzvp", "pob-dzvp"]
+    default: "pob-tzvp"
+    description: "Basis set for all atoms"
+    required: true
+
+  shrink:
+    type: "integer"
+    default: 12
+    min: 1
+    max: 32
+    description: "Shrinking factor for SCF k-point mesh"
+    required: true
+
+  convergence:
+    type: "float"
+    default: 1.0e-9
+    min: 1.0e-12
+    max: 1.0e-4
+    description: "SCF convergence threshold"
+    required: true
+
+  k_path_points:
+    type: "integer"
+    default: 50
+    min: 10
+    max: 200
+    description: "Number of k-points along each segment"
+
+  band_range_lower:
+    type: "integer"
+    default: 1
+    min: 1
+    max: 1000
+    description: "First band to include"
+
+  band_range_upper:
+    type: "integer"
+    default: 30
+    min: 1
+    max: 1000
+    description: "Last band to include"
+
+  use_dft:
+    type: "boolean"
+    default: true
+    description: "Use DFT (PBE functional)"
+
+  fermi_print:
+    type: "boolean"
+    default: true
+    description: "Print Fermi energy"
+
+input_template: |
+  {{ system_name }}
+  CRYSTAL
+  0 0 0
+  {{ space_group }}
+  {{ lattice_param }}
+  1
+  12 {{ basis_set }}
+  {% if use_dft %}
+  DFT
+  PBE
+  {% endif %}
+  SHRINK
+  {{ shrink }} {{ shrink }}
+  TOLINTEG
+  7 7 7 7 14
+  TOLDEE
+  {{ convergence }}
+  END
+  {{ system_name }} - Properties
+  BAND
+  {{ band_range_lower }} {{ band_range_upper }} {{ k_path_points }}
+  0.0 0.0 0.0  0.5 0.0 0.5
+  0.5 0.25 0.75  0.375 0.375 0.75
+  0.0 0.0 0.0  0.5 0.5 0.5
+  {% if fermi_print %}
+  FERMIPRT
+  {% endif %}
+  END

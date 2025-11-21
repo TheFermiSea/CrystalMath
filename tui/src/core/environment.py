@@ -16,18 +16,25 @@ from typing import Optional
 class CrystalConfig:
     """Configuration for CRYSTAL23 environment."""
 
+    root_dir: Path
     executable_dir: Path
     scratch_dir: Path
+    utils_dir: Path
+    architecture: str
     version: str
     executable_path: Path
 
     def __post_init__(self):
         """Validate configuration after initialization."""
         # Convert to Path objects if strings were provided
+        if not isinstance(self.root_dir, Path):
+            self.root_dir = Path(self.root_dir)
         if not isinstance(self.executable_dir, Path):
             self.executable_dir = Path(self.executable_dir)
         if not isinstance(self.scratch_dir, Path):
             self.scratch_dir = Path(self.scratch_dir)
+        if not isinstance(self.utils_dir, Path):
+            self.utils_dir = Path(self.utils_dir)
         if not isinstance(self.executable_path, Path):
             self.executable_path = Path(self.executable_path)
 
@@ -70,15 +77,17 @@ def load_crystal_environment(
     # Determine bashrc path
     if bashrc_path is None:
         # Try to auto-detect from current file location
-        # This file is in: CRYSTAL23/crystalmath/tui/src/core/
-        # bashrc is in: CRYSTAL23/utils23/
-        project_root = Path(__file__).parent.parent.parent.parent.parent.parent
-        bashrc_path = project_root / "utils23" / "cry23.bashrc"
+        # This file is in: CRYSTAL23/crystalmath/tui/src/core/environment.py
+        # bashrc is in: CRYSTAL23/utils23/cry23.bashrc
+        # Path structure: environment.py -> core -> src -> tui -> crystalmath -> CRYSTAL23
+        crystal_root = Path(__file__).resolve().parents[4]  # Go up 5 levels from file
+        bashrc_path = crystal_root / "utils23" / "cry23.bashrc"
 
     if not bashrc_path.exists():
         raise EnvironmentError(
             f"cry23.bashrc not found at: {bashrc_path}\n"
-            f"Please ensure CRYSTAL23 is properly installed."
+            f"Please ensure CRYSTAL23 is properly installed.\n"
+            f"Expected location: <CRYSTAL23_ROOT>/utils23/cry23.bashrc"
         )
 
     # Source bashrc and extract environment variables
@@ -93,9 +102,12 @@ def load_crystal_environment(
     except Exception as e:
         raise EnvironmentError(f"Error loading environment: {e}")
 
-    # Create config object
+    # Extract configuration paths
+    root_dir = Path(config_data['CRY23_ROOT'])
     executable_dir = Path(config_data['CRY23_EXEDIR'])
     scratch_dir = Path(config_data['CRY23_SCRDIR'])
+    utils_dir = Path(config_data['CRY23_UTILS'])
+    architecture = config_data['CRY23_ARCH']
     version = config_data['VERSION']
 
     # Construct full path to crystalOMP
@@ -106,8 +118,11 @@ def load_crystal_environment(
 
     # Create config object
     config = CrystalConfig(
+        root_dir=root_dir,
         executable_dir=executable_dir,
         scratch_dir=scratch_dir,
+        utils_dir=utils_dir,
+        architecture=architecture,
         version=version,
         executable_path=executable_path
     )
@@ -131,10 +146,14 @@ def _source_bashrc(bashrc_path: Path) -> dict[str, str]:
         subprocess.CalledProcessError: If bash command fails
     """
     # Create bash command that sources the file and prints variables
+    # Redirect echo output from cry23.bashrc to stderr so we only get our output
     bash_cmd = f"""
-    source "{bashrc_path}"
+    source "{bashrc_path}" >/dev/null 2>&1
+    echo "CRY23_ROOT=$CRY23_ROOT"
     echo "CRY23_EXEDIR=$CRY23_EXEDIR"
     echo "CRY23_SCRDIR=$CRY23_SCRDIR"
+    echo "CRY23_UTILS=$CRY23_UTILS"
+    echo "CRY23_ARCH=$CRY23_ARCH"
     echo "VERSION=$VERSION"
     """
 
@@ -149,17 +168,17 @@ def _source_bashrc(bashrc_path: Path) -> dict[str, str]:
     # Parse output
     config_data = {}
     for line in result.stdout.strip().split('\n'):
-        # Skip echo messages from cry23.bashrc
-        if '=' not in line:
+        # Skip empty lines
+        if not line or '=' not in line:
             continue
 
         # Parse KEY=VALUE lines
         key, value = line.split('=', 1)
-        if key in ['CRY23_EXEDIR', 'CRY23_SCRDIR', 'VERSION']:
+        if key in ['CRY23_ROOT', 'CRY23_EXEDIR', 'CRY23_SCRDIR', 'CRY23_UTILS', 'CRY23_ARCH', 'VERSION']:
             config_data[key] = value
 
     # Validate we got all required variables
-    required = ['CRY23_EXEDIR', 'CRY23_SCRDIR', 'VERSION']
+    required = ['CRY23_ROOT', 'CRY23_EXEDIR', 'CRY23_SCRDIR', 'CRY23_UTILS', 'CRY23_ARCH', 'VERSION']
     missing = [var for var in required if var not in config_data]
     if missing:
         raise EnvironmentError(

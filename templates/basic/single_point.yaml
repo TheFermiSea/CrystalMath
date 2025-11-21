@@ -1,0 +1,39 @@
+name: "Single Point Energy"
+version: "1.0"
+description: "Basic single point energy calculation with minimal options"
+author: "CRYSTAL Team"
+tags: ["basic", "single-point", "energy"]
+
+parameters:
+  shrink:
+    type: integer
+    description: "k-point shrinking factor (Monkhorst-Pack)"
+    default: 8
+    min: 2
+    max: 20
+    required: true
+
+  convergence:
+    type: float
+    description: "SCF convergence threshold (Hartree)"
+    default: 1.0e-8
+    min: 1.0e-12
+    max: 1.0e-4
+    required: true
+
+input_template: |
+  Single Point Energy Calculation
+  EXTERNAL
+  END
+  SHRINK
+  {{ shrink }} {{ shrink }}
+  TOLINTEG
+  7 7 7 7 14
+  TOLDEE
+  {{ convergence }}
+  END
+
+metadata:
+  calculation_type: "single_point"
+  system_type: "general"
+  complexity: "basic"

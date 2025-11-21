@@ -1,0 +1,163 @@
+{
+  "fields": [
+    {
+      "name": "calculation_type",
+      "type": "select",
+      "label": "Calculation Type",
+      "options": ["Single Point", "Geometry Optimization", "Frequency", "Elastic Constants"],
+      "default": "Single Point",
+      "required": true,
+      "help": "Type of calculation to perform"
+    },
+    {
+      "name": "enable_optimization",
+      "type": "boolean",
+      "label": "Enable Geometry Optimization",
+      "default": false,
+      "help": "Optimize atomic positions and/or cell parameters",
+      "visible_when": {
+        "calculation_type": "Geometry Optimization"
+      }
+    },
+    {
+      "name": "opt_max_cycles",
+      "type": "integer",
+      "label": "Max Optimization Cycles",
+      "default": 50,
+      "min": 1,
+      "max": 1000,
+      "help": "Maximum geometry optimization steps",
+      "visible_when": {
+        "enable_optimization": true
+      },
+      "depends_on": "enable_optimization"
+    },
+    {
+      "name": "opt_convergence",
+      "type": "float",
+      "label": "Optimization Convergence",
+      "default": 1e-5,
+      "min": 1e-8,
+      "max": 1e-2,
+      "help": "Gradient convergence threshold",
+      "visible_when": {
+        "enable_optimization": true
+      },
+      "depends_on": "enable_optimization"
+    },
+    {
+      "name": "optimize_cell",
+      "type": "boolean",
+      "label": "Optimize Cell Parameters",
+      "default": false,
+      "help": "Allow lattice vectors to change",
+      "visible_when": {
+        "enable_optimization": true
+      }
+    },
+    {
+      "name": "enable_frequency",
+      "type": "boolean",
+      "label": "Calculate Frequencies",
+      "default": false,
+      "help": "Compute phonon frequencies at Gamma point",
+      "visible_when": {
+        "calculation_type": "Frequency"
+      }
+    },
+    {
+      "name": "freq_temperature",
+      "type": "float",
+      "label": "Temperature (K)",
+      "default": 298.15,
+      "min": 0.0,
+      "max": 5000.0,
+      "help": "Temperature for thermodynamic properties",
+      "visible_when": {
+        "enable_frequency": true
+      },
+      "depends_on": "enable_frequency"
+    },
+    {
+      "name": "freq_pressure",
+      "type": "float",
+      "label": "Pressure (GPa)",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 100.0,
+      "help": "Pressure for thermodynamic corrections",
+      "visible_when": {
+        "enable_frequency": true
+      },
+      "depends_on": "enable_frequency"
+    },
+    {
+      "name": "enable_elastic",
+      "type": "boolean",
+      "label": "Calculate Elastic Constants",
+      "default": false,
+      "help": "Compute elastic tensor components",
+      "visible_when": {
+        "calculation_type": "Elastic Constants"
+      }
+    },
+    {
+      "name": "elastic_scheme",
+      "type": "select",
+      "label": "Elastic Scheme",
+      "options": ["Central Differences", "Forward Differences"],
+      "default": "Central Differences",
+      "help": "Numerical differentiation scheme",
+      "visible_when": {
+        "enable_elastic": true
+      },
+      "depends_on": "enable_elastic"
+    },
+    {
+      "name": "elastic_delta",
+      "type": "float",
+      "label": "Strain Amplitude",
+      "default": 0.01,
+      "min": 0.001,
+      "max": 0.1,
+      "help": "Strain step for elastic tensor calculation",
+      "visible_when": {
+        "enable_elastic": true
+      },
+      "depends_on": "enable_elastic"
+    },
+    {
+      "name": "enable_parallel",
+      "type": "boolean",
+      "label": "Enable MPI Parallelization",
+      "default": false,
+      "help": "Use MPI for parallel execution"
+    },
+    {
+      "name": "mpi_ranks",
+      "type": "integer",
+      "label": "Number of MPI Ranks",
+      "default": 4,
+      "min": 2,
+      "max": 256,
+      "help": "Number of MPI processes",
+      "visible_when": {
+        "enable_parallel": true
+      },
+      "depends_on": "enable_parallel"
+    },
+    {
+      "name": "omp_threads",
+      "type": "integer",
+      "label": "OpenMP Threads per Rank",
+      "default": 1,
+      "min": 1,
+      "max": 64,
+      "help": "Number of OpenMP threads per MPI rank",
+      "visible_when": {
+        "enable_parallel": true
+      },
+      "depends_on": "enable_parallel"
+    }
+  ]
+}

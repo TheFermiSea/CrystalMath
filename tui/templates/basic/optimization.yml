@@ -1,0 +1,104 @@
+name: "Geometry Optimization"
+version: "1.0"
+description: "Full geometry optimization (cell + atomic positions)"
+author: "CRYSTAL-TUI Team"
+tags: ["basic", "optimization", "structure"]
+
+parameters:
+  system_name:
+    type: "string"
+    default: "Geometry Optimization"
+    description: "Name/description of the system"
+    required: true
+
+  space_group:
+    type: "integer"
+    default: 225
+    min: 1
+    max: 230
+    description: "Space group number"
+    required: true
+
+  lattice_param:
+    type: "float"
+    default: 4.21
+    min: 0.1
+    max: 100.0
+    description: "Initial lattice parameter in Angstroms"
+    required: true
+
+  basis_set:
+    type: "select"
+    options: ["sto-3g", "3-21g", "6-21g", "6-31g", "pob-tzvp", "pob-dzvp"]
+    default: "6-21g"
+    description: "Basis set for all atoms"
+    required: true
+
+  shrink:
+    type: "integer"
+    default: 8
+    min: 1
+    max: 32
+    description: "Shrinking factor for k-point mesh"
+    required: true
+
+  convergence:
+    type: "float"
+    default: 1.0e-8
+    min: 1.0e-12
+    max: 1.0e-4
+    description: "SCF convergence threshold"
+    required: true
+
+  opt_type:
+    type: "select"
+    options: ["FULLOPTG", "CELLONLY", "ITATOCEL", "ATOMONLY"]
+    default: "FULLOPTG"
+    description: "Optimization type (FULLOPTG=cell+atoms, CELLONLY=cell only, etc.)"
+    required: true
+
+  max_opt_cycles:
+    type: "integer"
+    default: 100
+    min: 1
+    max: 1000
+    description: "Maximum optimization cycles"
+
+  grad_threshold:
+    type: "float"
+    default: 3.0e-4
+    min: 1.0e-6
+    max: 1.0e-2
+    description: "Gradient threshold for convergence (RMS gradient)"
+
+  disp_threshold:
+    type: "float"
+    default: 1.2e-3
+    min: 1.0e-6
+    max: 1.0e-2
+    description: "Displacement threshold for convergence (RMS displacement)"
+
+input_template: |
+  {{ system_name }}
+  CRYSTAL
+  0 0 0
+  {{ space_group }}
+  {{ lattice_param }}
+  1
+  12 {{ basis_set }}
+  SHRINK
+  {{ shrink }} {{ shrink }}
+  TOLINTEG
+  7 7 7 7 14
+  TOLDEE
+  {{ convergence }}
+  OPTGEOM
+  {{ opt_type }}
+  MAXCYCLE
+  {{ max_opt_cycles }}
+  TOLDEG
+  {{ grad_threshold }}
+  TOLDEX
+  {{ disp_threshold }}
+  ENDOPT
+  END

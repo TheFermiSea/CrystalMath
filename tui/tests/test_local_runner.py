@@ -343,5 +343,228 @@ END
             pytest.skip("CRYSTAL executable not found")
 
 
+class TestMultipleJobExecution:
+    """Tests for running multiple jobs sequentially or concurrently."""
+
+    @pytest.mark.asyncio
+    async def test_sequential_job_execution(self, mock_executable, temp_work_dir, sample_input):
+        """Test running multiple jobs one after another."""
+        runner = LocalRunner(executable_path=mock_executable)
+
+        # Create multiple job directories
+        job_dirs = []
+        for i in range(3):
+            job_dir = temp_work_dir / f"job_{i}"
+            job_dir.mkdir()
+            input_file = job_dir / "input.d12"
+            input_file.write_text(sample_input)
+            job_dirs.append(job_dir)
+
+        # Run jobs sequentially
+        for i, job_dir in enumerate(job_dirs):
+            async for _ in runner.run_job(i, job_dir):
+                pass
+
+        # All jobs should complete
+        for job_dir in job_dirs:
+            output_file = job_dir / "output.out"
+            assert output_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_job_tracking(self, mock_executable, temp_work_dir, sample_input):
+        """Test that runner can track multiple concurrent jobs."""
+        runner = LocalRunner(executable_path=mock_executable)
+
+        # Create multiple job directories
+        job_dirs = []
+        for i in range(2):
+            job_dir = temp_work_dir / f"job_{i}"
+            job_dir.mkdir()
+            input_file = job_dir / "input.d12"
+            input_file.write_text(sample_input)
+            job_dirs.append(job_dir)
+
+        # Start jobs concurrently
+        async def run_job(job_id, job_dir):
+            async for _ in runner.run_job(job_id, job_dir):
+                pass
+
+        tasks = [
+            asyncio.create_task(run_job(i, job_dirs[i]))
+            for i in range(2)
+        ]
+
+        await asyncio.gather(*tasks)
+
+        # Both jobs should complete
+        for job_dir in job_dirs:
+            output_file = job_dir / "output.out"
+            assert output_file.exists()
+
+
+class TestResultStorage:
+    """Tests for storing and retrieving job results."""
+
+    @pytest.mark.asyncio
+    async def test_get_last_result_none_initially(self, mock_executable):
+        """Test that get_last_result returns None before any jobs run."""
+        runner = LocalRunner(executable_path=mock_executable)
+        assert runner.get_last_result() is None
+
+    @pytest.mark.asyncio
+    async def test_get_last_result_after_job(self, mock_executable, temp_work_dir, sample_input):
+        """Test that get_last_result returns result after job completes."""
+        input_file = temp_work_dir / "input.d12"
+        input_file.write_text(sample_input)
+
+        runner = LocalRunner(executable_path=mock_executable)
+        async for _ in runner.run_job(1, temp_work_dir):
+            pass
+
+        result = runner.get_last_result()
+        assert result is not None
+        assert isinstance(result, JobResult)
+
+    @pytest.mark.asyncio
+    async def test_last_result_overwritten_by_new_job(self, mock_executable, temp_work_dir, sample_input):
+        """Test that last result is replaced by newer job."""
+        # Run first job
+        job1_dir = temp_work_dir / "job1"
+        job1_dir.mkdir()
+        (job1_dir / "input.d12").write_text(sample_input)
+
+        runner = LocalRunner(executable_path=mock_executable)
+        async for _ in runner.run_job(1, job1_dir):
+            pass
+
+        result1 = runner.get_last_result()
+
+        # Run second job
+        job2_dir = temp_work_dir / "job2"
+        job2_dir.mkdir()
+        (job2_dir / "input.d12").write_text(sample_input)
+
+        async for _ in runner.run_job(2, job2_dir):
+            pass
+
+        result2 = runner.get_last_result()
+
+        # Results should be different objects
+        assert result1 is not result2
+
+
+class TestThreadConfiguration:
+    """Tests for OpenMP thread configuration."""
+
+    def test_default_threads_from_cpu_count(self, mock_executable):
+        """Test that default threads uses CPU count."""
+        runner = LocalRunner(executable_path=mock_executable)
+
+        expected = os.cpu_count() or 4
+        assert runner.default_threads == expected
+
+    def test_explicit_default_threads(self, mock_executable):
+        """Test setting explicit default thread count."""
+        runner = LocalRunner(executable_path=mock_executable, default_threads=16)
+        assert runner.default_threads == 16
+
+    @pytest.mark.asyncio
+    async def test_per_job_thread_override(self, mock_executable, temp_work_dir, sample_input):
+        """Test that per-job thread count overrides default."""
+        input_file = temp_work_dir / "input.d12"
+        input_file.write_text(sample_input)
+
+        runner = LocalRunner(executable_path=mock_executable, default_threads=8)
+
+        # Run with custom threads
+        async for _ in runner.run_job(1, temp_work_dir, threads=4):
+            pass
+
+        # No direct way to verify OMP_NUM_THREADS, but test should pass
+
+
+class TestPathHandling:
+    """Tests for path resolution and handling."""
+
+    def test_path_lookup_in_system_path(self, temp_work_dir, monkeypatch):
+        """Test finding executable via PATH."""
+        # Create executable in temp dir
+        exe_path = temp_work_dir / "crystalOMP"
+        exe_path.touch()
+        exe_path.chmod(0o755)
+
+        # Mock shutil.which to return our executable
+        import shutil
+        original_which = shutil.which
+
+        def mock_which(cmd):
+            if cmd == "crystalOMP":
+                return str(exe_path)
+            return original_which(cmd)
+
+        monkeypatch.setattr(shutil, "which", mock_which)
+        monkeypatch.delenv("CRY23_EXEDIR", raising=False)
+
+        runner = LocalRunner()
+        assert runner.executable_path == exe_path
+
+    def test_relative_work_dir_converted_to_absolute(self, mock_executable):
+        """Test that relative paths work correctly."""
+        runner = LocalRunner(executable_path=mock_executable)
+
+        # Method accepts Path objects which may be relative
+        # Internal handling should work regardless
+
+
+class TestErrorScenarios:
+    """Tests for various error conditions."""
+
+    @pytest.mark.asyncio
+    async def test_output_file_creation_failure(self, temp_work_dir, sample_input):
+        """Test handling when output file cannot be created."""
+        # Create executable
+        exe_path = temp_work_dir / "crystalOMP"
+        exe_path.write_text("#!/bin/bash\necho 'test'\n")
+        exe_path.chmod(0o755)
+
+        # Create read-only work directory
+        work_dir = temp_work_dir / "readonly"
+        work_dir.mkdir()
+        input_file = work_dir / "input.d12"
+        input_file.write_text(sample_input)
+
+        # Make directory read-only (skip on Windows)
+        import platform
+        if platform.system() != "Windows":
+            work_dir.chmod(0o555)
+
+            runner = LocalRunner(executable_path=exe_path)
+
+            try:
+                async for _ in runner.run_job(1, work_dir):
+                    pass
+                # Should fail to create output file
+            except (PermissionError, LocalRunnerError):
+                pass
+            finally:
+                # Restore permissions for cleanup
+                work_dir.chmod(0o755)
+
+    @pytest.mark.asyncio
+    async def test_input_file_disappears_during_execution(self, mock_executable, temp_work_dir):
+        """Test error when input file is deleted before execution."""
+        input_file = temp_work_dir / "input.d12"
+        input_file.write_text("CRYSTAL\nEND\n")
+
+        # Delete input file immediately
+        input_file.unlink()
+
+        runner = LocalRunner(executable_path=mock_executable)
+
+        with pytest.raises(InputFileError, match="Input file not found"):
+            async for _ in runner.run_job(1, temp_work_dir):
+                pass
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

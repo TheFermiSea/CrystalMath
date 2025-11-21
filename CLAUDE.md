@@ -1,207 +1,204 @@
-# CLAUDE.md - CRYSTAL-TOOLS Monorepo
+# CLAUDE.md
 
-This file provides guidance to Claude Code when working with the CRYSTAL-TOOLS monorepo.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Monorepo Overview
+## Project Overview
 
-This is a **unified repository** containing two complementary tools for CRYSTAL23 DFT calculations:
+CRYSTAL-TOOLS is a unified monorepo containing complementary tools for CRYSTAL23 quantum chemistry DFT calculations:
 
-1. **CLI** (`cli/`) - Production-ready Bash tool for executing calculations
-2. **TUI** (`tui/`) - Python terminal UI for interactive job management
+1. **CLI** (`cli/`) - Production-ready Bash tool for executing calculations (89% complete)
+2. **TUI** (`tui/`) - Python terminal UI for interactive job management (Phase 1 MVP in progress)
 
-**Design Philosophy:** CLI for execution, TUI for management. Both tools work independently but share common resources.
+**Design Philosophy:** CLI for execution, TUI for management. Both tools work independently but share CRYSTAL23 environment.
 
-## Quick Navigation
+## Core Commands
 
-- **CLI Details:** See `cli/CLAUDE.md` for complete CLI documentation
-- **TUI Details:** See `tui/docs/PROJECT_STATUS.md` for TUI roadmap
-- **Installation:** See `docs/installation.md`
-- **Integration:** See `docs/integration.md`
-- **Architecture:** See `docs/architecture.md`
-
-## Directory Structure
-
-```
-crystalmath/                    # Monorepo root
-├── cli/                        # Bash CLI tool (production-ready)
-│   ├── bin/runcrystal         # Main executable
-│   ├── lib/                   # 9 modular libraries
-│   ├── tests/                 # Unit & integration tests
-│   ├── docs/                  # CLI documentation
-│   └── CLAUDE.md              # Detailed CLI guidance
-│
-├── tui/                       # Python TUI (Phase 1 MVP)
-│   ├── src/                   # Application source
-│   │   ├── core/             # Business logic
-│   │   ├── tui/              # Textual UI components
-│   │   └── runners/          # Job execution backends
-│   ├── tests/                 # Test suite
-│   ├── pyproject.toml         # Python package config
-│   └── docs/                  # TUI documentation
-│
-├── docs/                      # Shared documentation
-│   ├── installation.md
-│   ├── integration.md
-│   ├── architecture.md
-│   └── CONTRIBUTING.md
-│
-├── .beads/                    # Unified issue tracker
-│   └── beads.db              # 34 issues (24 closed)
-│
-├── examples/                  # Example calculations
-└── README.md                  # Project overview
-```
-
-## Working with the Monorepo
-
-### When Working on CLI
+### CLI Tool (Execution)
 
 ```bash
-cd ~/CRYSTAL23/crystalmath/cli
+cd cli/
 
-# Read detailed CLI guidance
-cat CLAUDE.md
+# Run calculation (serial mode with auto-threading)
+bin/runcrystal my_calculation
 
-# Run tests
+# Run with MPI parallelism (14 ranks)
+bin/runcrystal my_calculation 14
+
+# Educational mode (show execution plan without running)
+bin/runcrystal --explain my_calculation
+
+# Run unit tests
 bats tests/unit/*.bats
 
-# Test execution
-bin/runcrystal --explain test_job
-
-# Key files:
-# - bin/runcrystal (main script)
-# - lib/*.sh (9 modules)
-# - tests/ (bats tests)
+# Run integration tests
+bats tests/integration/*.bats
 ```
 
-**Important:** CLI is a modular bash system. Read `cli/CLAUDE.md` for module architecture, testing patterns, and development guidelines.
-
-### When Working on TUI
+### TUI Tool (Interactive Management)
 
 ```bash
-cd ~/CRYSTAL23/crystalmath/tui
+cd tui/
 
-# Install development environment
-python3 -m venv venv
-source venv/bin/activate
+# Setup development environment
+python3 -m venv .venv
+source .venv/bin/activate  # or: .venv/bin/activate.fish (fish shell)
 pip install -e ".[dev]"
 
-# Run TUI
+# Launch interactive interface
 crystal-tui
 
 # Run tests (when implemented)
 pytest
 
-# Key files:
-# - src/tui/app.py (main application)
-# - src/core/ (database, environment)
-# - src/runners/ (job execution)
-# - pyproject.toml (package config)
+# Code quality checks
+black src/ tests/           # Format code
+ruff check src/ tests/      # Lint
+mypy src/                   # Type check
+
+# With coverage
+pytest --cov=src --cov-report=html
 ```
 
-**Important:** TUI uses Textual framework with async/await. See `tui/docs/PROJECT_STATUS.md` for MVP roadmap.
+### Issue Tracking (bd/beads)
+
+```bash
+# From monorepo root
+bd list                     # Show open issues
+bd list --all              # Show all issues (34 total)
+bd list --status=closed    # Show completed (24)
+bd show <issue-id>         # Show details
+bd create "Issue title"    # Create new issue
+```
+
+## Architecture
+
+### CLI Architecture (Bash, Modular)
+
+**Main Script:** `bin/runcrystal` (130 lines, thin orchestrator)
+
+**9 Library Modules:**
+- `cry-config.sh` - Configuration & environment
+- `cry-logging.sh` - Logging infrastructure
+- `core.sh` - Module loader system
+- `cry-ui.sh` - Visual components (gum wrappers)
+- `cry-parallel.sh` - MPI/OpenMP parallelism logic
+- `cry-scratch.sh` - Scratch space management
+- `cry-stage.sh` - File staging utilities
+- `cry-exec.sh` - Calculation execution
+- `cry-help.sh` - Help system
+
+**Key Patterns:**
+- State via `CRY_JOB` associative array (Bash 4.0+ required)
+- Trap-based cleanup guarantee (`trap 'scratch_cleanup' EXIT`)
+- Module return exit codes (0 = success)
+- Mock external commands in tests
+
+**See `cli/CLAUDE.md` for detailed module architecture and development patterns.**
+
+### TUI Architecture (Python, Async)
+
+**Entry Point:** `src/main.py` → `src/tui/app.py`
+
+**Package Structure:**
+- `src/core/` - Business logic (database, environment)
+- `src/tui/` - Textual UI components (app, screens, widgets)
+- `src/runners/` - Job execution backends (local, future: remote)
+
+**Key Technologies:**
+- Textual framework (async TUI)
+- SQLite for job history
+- CRYSTALpytools for output parsing
+- Async/await architecture
+
+**Data Model:**
+```python
+Job {
+    id: int
+    name: str
+    status: pending|running|completed|failed
+    input_content: str (d12 file)
+    results_json: str (parsed results)
+    work_dir: Path
+}
+```
 
 ## Development Guidelines
 
-### CLI Development
+### CLI Development (Bash)
 
-**Language:** Bash 4.0+ (modular architecture)
-
-**Key Principles:**
-- Modules return exit codes (0 = success)
-- State managed via CRY_JOB associative array
-- Trap-based cleanup guarantees resource cleanup
-- Mock external commands in tests
-
-**Adding Features:**
+**When adding features:**
 1. Identify which module to modify (see `cli/CLAUDE.md` Module Responsibilities)
-2. Follow module template pattern
-3. Write unit tests in `cli/tests/unit/`
+2. Follow module template pattern (source modules explicitly, use `local`, return exit codes)
+3. Write unit tests in `cli/tests/unit/<module>_test.bats`
 4. Ensure >80% test coverage
 
 **Testing:**
 ```bash
 cd cli/
 bats tests/unit/cry-parallel_test.bats  # Test specific module
-bats tests/unit/*.bats                  # Run all unit tests
+bats tests/unit/*.bats                  # All unit tests
 ```
 
-### TUI Development
+**Module dependency rules:**
+- Never create circular dependencies
+- `cry-config.sh` and `cry-logging.sh` have no dependencies
+- `core.sh` depends only on config and logging
+- All other modules can depend on config, logging, core
 
-**Language:** Python 3.10+ (Textual framework)
+### TUI Development (Python)
 
-**Key Principles:**
-- Async-first architecture (asyncio)
-- Message-driven UI (Textual messages)
-- SQLite for persistent job history
-- CRYSTALpytools for output parsing
-
-**Adding Features:**
-1. UI components → `src/tui/widgets/` or `src/tui/screens/`
+**When adding features:**
+1. UI components → `src/tui/screens/` or `src/tui/widgets/`
 2. Business logic → `src/core/`
 3. Execution backends → `src/runners/`
 4. Update database schema if needed
 5. Write tests in `tests/`
+
+**Code style (from pyproject.toml):**
+- Black (100 char line length)
+- Ruff (E, F, W, I, N, UP, B, A, C4, SIM)
+- MyPy type checking enabled
+- Python 3.10+ required
 
 **Testing:**
 ```bash
 cd tui/
 pytest                              # Run all tests
 pytest --cov=src --cov-report=html  # With coverage
-black src/ tests/                   # Format code
-ruff check src/ tests/              # Lint
-mypy src/                           # Type check
 ```
 
-### Shared Resources
+## Environment Setup
 
-**Environment Configuration:**
-- Both tools source `~/CRYSTAL23/cry23.bashrc`
-- Common variables: `CRY23_ROOT`, `CRY23_EXEDIR`, `CRY23_SCRDIR`
+Both tools share the CRYSTAL23 environment:
 
-**Scratch Directory:**
+```bash
+# Required environment variables (typically in ~/CRYSTAL23/cry23.bashrc)
+export CRY23_ROOT=~/CRYSTAL23
+export CRY23_EXEDIR=$CRY23_ROOT/bin/Linux-ifort_i64_omp/v1.0.1
+export CRY_SCRATCH_BASE=~/tmp_crystal
+
+# Optional: Add CLI to PATH
+export PATH="$HOME/CRYSTAL23/crystalmath/cli/bin:$PATH"
+```
+
+**Scratch Directory Convention:**
 - Shared location: `~/tmp_crystal/`
 - CLI: `cry_<job>_<pid>/`
 - TUI: `crystal_tui_<job>_<pid>/`
 
-**Issue Tracking:**
-```bash
-# From monorepo root
-bd list                  # Show open issues
-bd list --all           # Show all issues (34 total)
-bd list --status=closed # Show completed issues (24)
-bd show <issue-id>      # Show issue details
-bd create "New issue"   # Create issue
-```
-
 ## Project Status
 
 ### CLI: Production Ready ✅
-
-- **Completion:** 24/27 issues closed (89%)
+- **Completion:** 24/27 beads issues closed (89%)
 - **Architecture:** Modular (9 library modules)
 - **Testing:** 76 tests, 74% pass rate
-- **Features:**
-  - ✅ Serial/parallel execution
-  - ✅ Scratch space management
-  - ✅ Auto file staging
-  - ✅ Educational --explain mode
-  - ⏳ Integration tests
-  - ⏳ Documentation polish
+- **Features:** Serial/parallel execution, scratch management, auto file staging, --explain mode
 
 ### TUI: Phase 1 MVP ⏳
-
-- **Completion:** 0/7 issues closed
+- **Completion:** 0/7 beads issues closed
 - **Architecture:** Textual + SQLite
-- **Testing:** Framework ready, tests pending
-- **Features:**
-  - ✅ Three-panel UI layout
-  - ✅ Job database schema
-  - ✅ Async execution framework
-  - ⏳ Real job runner
-  - ⏳ CRYSTALpytools integration
-  - ⏳ New job modal
-  - ⏳ Environment integration
+- **Implemented:** Three-panel UI, job database, async framework
+- **Planned:** Real job runner, CRYSTALpytools integration, new job modal
 
 ## Common Development Tasks
 
@@ -213,10 +210,10 @@ cd cli/
 # Educational mode (dry run)
 bin/runcrystal --explain my_job
 
-# Serial execution
+# Serial execution (uses all cores with OpenMP)
 bin/runcrystal my_job
 
-# Parallel execution (14 MPI ranks)
+# Parallel execution (14 MPI ranks × auto threads)
 bin/runcrystal my_job 14
 ```
 
@@ -225,13 +222,11 @@ bin/runcrystal my_job 14
 ```bash
 cd tui/
 
-# Test database
-python3 -c "from src.core.database import Database; print('✅ Database imports')"
+# Test imports
+python3 -c "from src.core.database import Database; print('✅ Database')"
+python3 -c "from src.core.environment import load_crystal_environment; print('✅ Environment')"
 
-# Test environment
-python3 -c "from src.core.environment import load_crystal_environment; print('✅ Environment imports')"
-
-# Launch TUI (when ready)
+# Launch TUI
 crystal-tui
 ```
 
@@ -248,7 +243,7 @@ git checkout -b feature/my-feature
 cd cli/ && bats tests/unit/*.bats     # CLI tests
 cd tui/ && pytest                     # TUI tests
 
-# Commit
+# Commit (reference beads issue IDs)
 git add .
 git commit -m "feat: Add feature description
 
@@ -256,114 +251,110 @@ Detailed explanation of changes.
 
 Closes: crystalmath-xyz
 "
-
-# Push
-git push origin feature/my-feature
 ```
 
 ## Key Technical Details
 
-### CLI Architecture
+### CLI Parallelism
 
-**Modular Design:**
-- **Main script:** 130 lines (orchestrator only)
-- **9 Modules:** config, logging, core, ui, parallel, scratch, stage, exec, help
-- **State:** CRY_JOB associative array passed by reference
-- **Cleanup:** Trap-based guarantee (`trap 'scratch_cleanup' EXIT`)
+**System Support:** Intel Xeon w9-3495X (56 cores)
 
-**Parallelism:**
-- Serial: 1 process × N threads (OpenMP only)
-- Hybrid: N ranks × (cores/N) threads (MPI + OpenMP)
-- Auto-configured based on system cores
+**Modes:**
+- **Serial:** 1 process × 56 threads (OpenMP), uses `crystalOMP`
+- **Hybrid:** N ranks × (56/N) threads (MPI+OpenMP), uses `PcrystalOMP`
 
-**See `cli/CLAUDE.md` for:**
-- Module responsibilities
-- Design patterns
-- Testing strategies
-- Development templates
+**Auto-configuration:**
+- Detects system cores via `nproc` or `sysctl`
+- Sets `OMP_NUM_THREADS`, `I_MPI_PIN_DOMAIN`, `KMP_AFFINITY`
+- Selects appropriate binary
+- Populates `CRY_JOB` associative array
 
-### TUI Architecture
+### TUI Job Database
 
-**Async-First Design:**
-- Built on Textual (modern TUI framework)
-- Message-driven communication
+**Schema:**
+```sql
+CREATE TABLE jobs (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    input_content TEXT,
+    results_json TEXT,
+    work_dir TEXT,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+```
+
+**Async architecture:**
 - Worker system for background tasks
-- SQLite for persistence
+- Message-driven UI updates
+- Real-time log streaming (planned)
 
-**Data Model:**
-```python
-Job {
-    id: int
-    name: str
-    status: pending|running|completed|failed
-    input_content: str (d12 file)
-    results_json: str (parsed results)
-    work_dir: Path
-}
-```
+## Troubleshooting
 
-**See `tui/docs/PROJECT_STATUS.md` for:**
-- MVP features
-- Implementation plan
-- Phase 2/3 roadmap
+### CLI Issues
 
-## Testing Strategy
+**"associative array: bad array subscript"**
+- Cause: Bash < 4.0
+- Fix: `brew install bash` (macOS) or use system bash 4.0+
 
-### CLI Testing (bats-core)
+**"crystalOMP: not found"**
+- Cause: `CRY23_ROOT` not set
+- Fix: `export CRY23_ROOT=~/CRYSTAL23` or source `cry23.bashrc`
 
-**Unit Tests:**
-- Mock external commands (gum, mpirun, crystalOMP)
-- Test modules in isolation
-- Coverage: 76 tests, 74% pass rate
+### TUI Issues
 
-**Integration Tests:**
-- Full workflow with mock binaries
-- Verify scratch cleanup
-- Test error handling
+**"ModuleNotFoundError: No module named 'textual'"**
+- Cause: Dependencies not installed
+- Fix: `pip install -e ".[dev]"` from `tui/` directory
 
-### TUI Testing (pytest)
-
-**Unit Tests (planned):**
-- Mock database operations
-- Test job state transitions
-- Test CRYSTALpytools integration
-
-**UI Tests (planned):**
-- Textual snapshot testing
-- Event handling verification
-- Message flow testing
-
-## Environment Setup
-
-```bash
-# Required environment variables
-export CRY23_ROOT=~/CRYSTAL23
-export CRY23_EXEDIR=$CRY23_ROOT/bin/Linux-ifort_i64_omp/v1.0.1
-export CRY_SCRATCH_BASE=~/tmp_crystal
-
-# Optional: Add to PATH
-export PATH="$HOME/CRYSTAL23/crystalmath/cli/bin:$PATH"
-```
-
-## Contributing
-
-See `docs/CONTRIBUTING.md` for:
-- Code style guidelines (Bash and Python)
-- Testing requirements
-- Pull request process
-- Issue tracking workflow
+**Path calculation errors**
+- Cause: Monorepo structure changed
+- Fix: Check `src/core/environment.py` has correct `.parent` levels (6 levels to monorepo root)
 
 ## Documentation
 
 **Quick Links:**
 - CLI Architecture: `cli/docs/ARCHITECTURE.md`
-- TUI Status: `tui/docs/PROJECT_STATUS.md`
-- Integration Guide: `docs/integration.md`
+- CLI Module Details: `cli/CLAUDE.md`
+- TUI Roadmap: `tui/docs/PROJECT_STATUS.md`
+- Integration: `docs/integration.md`
 - Installation: `docs/installation.md`
+- Contributing: `docs/CONTRIBUTING.md`
+
+## Testing Strategy
+
+### CLI Testing (bats-core)
+
+**Unit tests** mock external commands (gum, mpirun, crystalOMP) to test modules in isolation.
+
+**Integration tests** use mock binaries in `tests/mocks/` for full workflow validation.
+
+**Run tests:**
+```bash
+cd cli/
+bats tests/unit/*.bats              # All unit tests
+bats tests/integration/*.bats       # Integration tests
+bats tests/unit/cry-parallel_test.bats  # Specific module
+```
+
+### TUI Testing (pytest)
+
+**Unit tests** (planned) will mock database operations and test state transitions.
+
+**UI tests** (planned) will use Textual snapshot testing for UI components.
+
+**Run tests:**
+```bash
+cd tui/
+pytest                              # All tests
+pytest --cov=src --cov-report=html  # With coverage
+pytest tests/test_environment.py    # Specific test
+```
 
 ## Common Patterns
 
-### CLI: Adding a New Module
+### CLI: Adding a Module
 
 ```bash
 # 1. Create module file
@@ -393,13 +384,13 @@ load helpers
 EOF
 
 # 3. Load in main script
-# Add: cry_require cry-newmodule
+# Add to bin/runcrystal: cry_require cry-newmodule
 ```
 
-### TUI: Adding a New Screen
+### TUI: Adding a Screen
 
 ```python
-# 1. Create screen file: src/tui/screens/my_screen.py
+# 1. Create screen: src/tui/screens/my_screen.py
 from textual.screen import Screen
 from textual.widgets import Button
 
@@ -415,49 +406,12 @@ async def action_show_my_screen(self):
     await self.push_screen(MyScreen())
 ```
 
-## Troubleshooting
+## Additional Resources
 
-### CLI Issues
-
-**Problem:** "associative array: bad array subscript"
-- **Cause:** Bash < 4.0
-- **Fix:** Install bash 4.0+ (`brew install bash` on macOS)
-
-**Problem:** "crystalOMP: not found"
-- **Cause:** CRY23_ROOT not set
-- **Fix:** `export CRY23_ROOT=~/CRYSTAL23`
-
-### TUI Issues
-
-**Problem:** "ModuleNotFoundError: No module named 'textual'"
-- **Cause:** Dependencies not installed
-- **Fix:** `pip install -e ".[dev]"`
-
-**Problem:** Path calculation errors
-- **Cause:** Monorepo structure change
-- **Fix:** Check environment.py has 6 `.parent` levels
-
-## Next Steps
-
-**For CLI:**
-1. Complete remaining 3 issues
-2. Write integration tests
-3. Polish documentation
-4. Consider cry-docs implementation
-
-**For TUI:**
-1. Implement real job runner (Phase 1)
-2. Integrate CRYSTALpytools
-3. Create new job modal
-4. Environment integration
-5. Write comprehensive tests
-
-**For Monorepo:**
-1. Set up GitHub repository
-2. Configure CI/CD workflows
-3. Implement CLI → TUI integration
-4. Create example calculations
+- **Monorepo migration complete:** See `MONOREPO_MIGRATION_COMPLETE.md`
+- **Agent workflows:** See `AGENTS.md` for bd/beads integration patterns
+- **Tutorial mirror:** `cli/share/tutorials/` (CRYSTAL Solutions documentation)
 
 ---
 
-**Remember:** CLI is production-ready bash tool, TUI is Python MVP in progress. Both are independent but can integrate via subprocess or shared library patterns. See `docs/integration.md` for integration strategies.
+**Remember:** This is a monorepo with two independent tools. CLI is production-ready Bash (89% complete), TUI is Python MVP in progress (Phase 1). Both share CRYSTAL23 environment but can operate standalone.

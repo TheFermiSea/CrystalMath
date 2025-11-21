@@ -181,7 +181,8 @@ exec_crystal_run() {
     local cmd
     if [[ "${job_ref[MODE]}" == "Serial/OpenMP" ]]; then
         # Serial/OpenMP mode: direct execution
-        cmd="${job_ref[EXE_PATH]} < INPUT > ${job_ref[file_prefix]}.out"
+        # Note: OUTPUT to staging directory, stage_retrieve will rename to ${file_prefix}.out
+        cmd="${job_ref[EXE_PATH]} < INPUT > OUTPUT"
     else
         # Parallel/MPI mode: use mpirun
         if [[ -z "${job_ref[MPI_RANKS]:-}" ]]; then
@@ -197,7 +198,7 @@ exec_crystal_run() {
             mpi_bin="mpirun"
         fi
 
-        cmd="$mpi_bin -np ${job_ref[MPI_RANKS]} ${job_ref[EXE_PATH]} < INPUT > ${job_ref[file_prefix]}.out"
+        cmd="$mpi_bin -np ${job_ref[MPI_RANKS]} ${job_ref[EXE_PATH]} < INPUT > OUTPUT"
     fi
 
     # Check if gum is available for spinner
@@ -226,7 +227,7 @@ exec_crystal_run() {
     if $has_gum; then
         # Use gum spinner with PID monitoring
         # Note: macOS tail doesn't support --pid, so we use a bash while loop
-        gum spin --spinner globe --title "Computing... (Tail: ${job_ref[file_prefix]}.out)" -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 0.1; done"
+        gum spin --spinner globe --title "Computing... (Tail: OUTPUT)" -- bash -c "while kill -0 $pid 2>/dev/null; do sleep 0.1; done"
     fi
 
     # Wait for background process to complete
@@ -241,7 +242,7 @@ exec_crystal_run() {
         cry_log error "Calculation failed with exit code: $exit_code"
 
         # Run error analysis
-        local output_file="${job_ref[file_prefix]}.out"
+        local output_file="OUTPUT"
         if [[ -f "$output_file" ]]; then
             analyze_failure "$output_file"
 

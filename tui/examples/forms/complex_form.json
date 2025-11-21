@@ -1,0 +1,128 @@
+{
+  "fields": [
+    {
+      "name": "basis_set",
+      "type": "select",
+      "label": "Basis Set",
+      "options": ["sto-3g", "6-21g", "6-31g", "6-31g*", "6-311g**", "pob-tzvp", "pob-dzvp"],
+      "default": "sto-3g",
+      "required": true,
+      "help": "Atomic basis set for the calculation",
+      "group": "Electronic Structure"
+    },
+    {
+      "name": "functional",
+      "type": "select",
+      "label": "Exchange-Correlation Functional",
+      "options": ["LDA", "PBE", "PBEsol", "B3LYP", "HSE06", "PBE0"],
+      "default": "PBE",
+      "required": true,
+      "help": "DFT functional for electron correlation",
+      "group": "Electronic Structure"
+    },
+    {
+      "name": "shrink",
+      "type": "integer",
+      "label": "Shrink Factor (k-mesh)",
+      "default": 8,
+      "min": 2,
+      "max": 32,
+      "required": true,
+      "help": "Monkhorst-Pack k-point mesh density (higher = more accurate)",
+      "group": "Sampling"
+    },
+    {
+      "name": "tolinteg",
+      "type": "string",
+      "label": "Integral Tolerances",
+      "default": "7 7 7 7 14",
+      "required": true,
+      "help": "Five tolerance values for integral evaluation",
+      "pattern": "^\\d+\\s+\\d+\\s+\\d+\\s+\\d+\\s+\\d+$",
+      "group": "Convergence"
+    },
+    {
+      "name": "scf_tolerance",
+      "type": "float",
+      "label": "SCF Convergence Threshold",
+      "default": 1e-7,
+      "min": 1e-12,
+      "max": 1e-3,
+      "help": "Energy convergence criterion for SCF cycles",
+      "group": "Convergence"
+    },
+    {
+      "name": "max_scf_cycles",
+      "type": "integer",
+      "label": "Max SCF Cycles",
+      "default": 50,
+      "min": 10,
+      "max": 500,
+      "help": "Maximum number of SCF iterations",
+      "group": "Convergence"
+    },
+    {
+      "name": "spin_polarized",
+      "type": "boolean",
+      "label": "Spin Polarized",
+      "default": false,
+      "help": "Enable spin polarization (UHF/UKS)",
+      "group": "Advanced Options"
+    },
+    {
+      "name": "charge",
+      "type": "integer",
+      "label": "Net Charge",
+      "default": 0,
+      "min": -10,
+      "max": 10,
+      "help": "Total charge of the system",
+      "group": "Advanced Options"
+    },
+    {
+      "name": "properties",
+      "type": "multiselect",
+      "label": "Post-SCF Properties",
+      "options": ["BAND", "DOSS", "ECHG", "POTM", "ECHI"],
+      "default": [],
+      "help": "Properties to calculate after SCF convergence",
+      "group": "Properties"
+    },
+    {
+      "name": "input_geometry",
+      "type": "file",
+      "label": "Input Geometry File",
+      "help": "CIF, XYZ, or d12 file with crystal structure",
+      "group": "Files"
+    },
+    {
+      "name": "scratch_dir",
+      "type": "string",
+      "label": "Scratch Directory",
+      "default": "/tmp/crystal",
+      "help": "Directory for temporary files",
+      "placeholder": "/path/to/scratch",
+      "group": "Files"
+    },
+    {
+      "name": "memory_mb",
+      "type": "integer",
+      "label": "Memory (MB)",
+      "default": 2048,
+      "min": 512,
+      "max": 131072,
+      "help": "Memory allocation per process",
+      "group": "Resources"
+    },
+    {
+      "name": "walltime_hours",
+      "type": "float",
+      "label": "Walltime (hours)",
+      "default": 24.0,
+      "min": 0.5,
+      "max": 168.0,
+      "help": "Maximum runtime for the job",
+      "group": "Resources"
+    }
+  ]
+}

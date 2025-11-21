@@ -1,0 +1,30 @@
+{
+  "fields": [
+    {
+      "name": "job_name",
+      "type": "string",
+      "label": "Job Name",
+      "required": true,
+      "help": "Unique identifier for this calculation",
+      "placeholder": "my_calculation",
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    {
+      "name": "num_cores",
+      "type": "integer",
+      "label": "Number of Cores",
+      "default": 4,
+      "min": 1,
+      "max": 64,
+      "required": true,
+      "help": "Number of CPU cores to use"
+    },
+    {
+      "name": "enable_logging",
+      "type": "boolean",
+      "label": "Enable Debug Logging",
+      "default": false,
+      "help": "Save detailed execution logs"
+    }
+  ]
+}

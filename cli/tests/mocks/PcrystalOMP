@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Mock PcrystalOMP binary for testing
+# Simulates CRYSTAL17 MPI+OMP parallel execution
+
+# Log that PcrystalOMP was called
+MOCK_LOG="${TEST_TEMP_DIR:-/tmp}/PcrystalOMP.called"
+echo "PcrystalOMP called with args: $*" >> "${MOCK_LOG}"
+
+# Parse arguments
+INPUT_FILE=""
+OUTPUT_FILE="out.out"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -i|--input)
+            INPUT_FILE="$2"
+            shift 2
+            ;;
+        -o|--output)
+            OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        *)
+            # Positional argument is input file
+            if [[ -z "${INPUT_FILE}" ]]; then
+                INPUT_FILE="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate input file exists
+if [[ -n "${INPUT_FILE}" && ! -f "${INPUT_FILE}" ]]; then
+    echo "Error: Input file not found: ${INPUT_FILE}" >&2
+    exit 1
+fi
+
+# Determine output file name
+if [[ -z "${OUTPUT_FILE}" ]]; then
+    OUTPUT_FILE="OUTPUT"
+fi
+
+# Generate mock output (similar to crystalOMP but with MPI info)
+cat > "${OUTPUT_FILE}" <<'EOF'
+ *******************************************************************************
+ *                                                                             *
+ *                      CRYSTAL17 (Mock Parallel Output)                       *
+ *                                                                             *
+ *******************************************************************************
+
+ INFORMATION **** CRYSTAL17 MOCK - PARALLEL EXECUTION ****
+
+ MPI CONFIGURATION
+ =================
+
+ NUMBER OF MPI RANKS:     4
+ THREADS PER RANK:        4
+
+ GEOMETRY INPUT
+ ==============
+
+ Mock parallel calculation starting...
+
+ SCF ITERATIONS (DISTRIBUTED)
+ =============================
+
+ ITERATION     1
+ TOTAL ENERGY (AU): -123.456789
+
+ ITERATION     2
+ TOTAL ENERGY (AU): -123.456790
+
+ CONVERGENCE REACHED
+
+ FINAL RESULTS
+ =============
+
+ TOTAL ENERGY (AU):        -123.456790
+ TOTAL ENERGY (EV):       -3360.12345
+
+ PARALLEL EFFICIENCY:      98.5%
+
+ CALCULATION COMPLETED SUCCESSFULLY
+
+ EEEEEEEEEE TERMINATION  DATE 19 11 2025 TIME 20:00:00.0
+
+EOF
+
+# Create mock result files (fort.9, fort.98)
+cat > "fort.9" <<'FORT9'
+MOCK PARALLEL WAVEFUNCTION DATA
+FORT.9 BINARY FILE CONTENT (MPI)
+FORT9
+
+cat > "fort.98" <<'FORT98'
+MOCK PARALLEL FORMATTED WAVEFUNCTION
+FORT.98 TEXT FILE CONTENT (MPI)
+FORT98
+
+# Create HESSOPT.DAT if this looks like a frequency calculation
+if grep -qi "FREQCALC\|HESSIAN" INPUT 2>/dev/null; then
+    cat > "HESSOPT.DAT" <<'HESS'
+MOCK PARALLEL HESSIAN MATRIX DATA
+HESS
+fi
+
+echo "Mock PcrystalOMP execution completed" >&2
+echo "Input: ${INPUT_FILE:-stdin}" >&2
+echo "Output: ${OUTPUT_FILE}" >&2
+echo "MPI Mode: Enabled" >&2
+
+# Exit with success or TEST_PCRYSTALOMP_EXIT if set
+exit "${TEST_PCRYSTALOMP_EXIT:-0}"

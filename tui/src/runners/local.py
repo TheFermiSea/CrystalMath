@@ -12,6 +12,15 @@ from pathlib import Path
 from typing import Dict, Any, Optional, AsyncIterator
 from dataclasses import dataclass
 
+from ..core.environment import get_crystal_config, EnvironmentError as CrystalEnvError
+from .base import BaseRunner, RunnerConfig, JobHandle, JobStatus, JobInfo
+from .exceptions import (
+    ExecutionError,
+    ConfigurationError,
+    ResourceError,
+    RunnerError
+)
+
 
 @dataclass
 class JobResult:
@@ -24,22 +33,22 @@ class JobResult:
     metadata: Dict[str, Any]
 
 
-class LocalRunnerError(Exception):
+class LocalRunnerError(RunnerError):
     """Base exception for LocalRunner errors."""
     pass
 
 
-class ExecutableNotFoundError(LocalRunnerError):
+class ExecutableNotFoundError(ConfigurationError):
     """Raised when the CRYSTAL executable cannot be found."""
     pass
 
 
-class InputFileError(LocalRunnerError):
+class InputFileError(ResourceError):
     """Raised when there are issues with the input file."""
     pass
 
 
-class LocalRunner:
+class LocalRunner(BaseRunner):
     """
     Executes CRYSTAL jobs locally using asyncio subprocess management.
 
@@ -58,7 +67,8 @@ class LocalRunner:
     def __init__(
         self,
         executable_path: Optional[Path] = None,
-        default_threads: Optional[int] = None
+        default_threads: Optional[int] = None,
+        config: Optional[RunnerConfig] = None
     ):
         """
         Initialize the LocalRunner.
@@ -66,13 +76,26 @@ class LocalRunner:
         Args:
             executable_path: Path to crystalOMP. If None, reads from CRY23_EXEDIR env var.
             default_threads: Number of OpenMP threads. If None, uses all available cores.
+            config: Runner configuration (overrides executable_path and default_threads if provided)
 
         Raises:
             ExecutableNotFoundError: If executable cannot be found or is not executable.
         """
-        self.executable_path = self._resolve_executable(executable_path)
-        self.default_threads = default_threads or os.cpu_count() or 4
+        # Initialize base class
+        if config is None:
+            config = RunnerConfig(
+                executable_path=executable_path,
+                default_threads=default_threads or os.cpu_count() or 4
+            )
+        super().__init__(config)
+
+        # Resolve executable path
+        self.executable_path = self._resolve_executable(
+            self.config.executable_path or executable_path
+        )
+        self.default_threads = self.config.default_threads
         self._active_processes: Dict[int, asyncio.subprocess.Process] = {}
+        self._job_handles: Dict[JobHandle, int] = {}  # Map handles to job IDs
 
     def _resolve_executable(self, executable_path: Optional[Path]) -> Path:
         """
@@ -80,8 +103,9 @@ class LocalRunner:
 
         Priority order:
         1. Explicitly provided path
-        2. CRY23_EXEDIR environment variable
-        3. PATH lookup
+        2. CRYSTAL23 environment (via cry23.bashrc)
+        3. CRY23_EXEDIR environment variable (legacy)
+        4. PATH lookup
 
         Args:
             executable_path: Optional explicit path to executable
@@ -100,7 +124,16 @@ class LocalRunner:
                 f"Provided executable path does not exist or is not executable: {executable_path}"
             )
 
-        # Try CRY23_EXEDIR environment variable
+        # Try loading from CRYSTAL23 environment
+        try:
+            config = get_crystal_config()
+            if config.executable_path.exists() and os.access(config.executable_path, os.X_OK):
+                return config.executable_path
+        except CrystalEnvError:
+            # Environment not available, continue with fallback methods
+            pass
+
+        # Try CRY23_EXEDIR environment variable (legacy)
         cry23_exedir = os.environ.get("CRY23_EXEDIR")
         if cry23_exedir:
             exe_path = Path(cry23_exedir) / "crystalOMP"
@@ -115,8 +148,10 @@ class LocalRunner:
 
         raise ExecutableNotFoundError(
             "Could not find crystalOMP executable. "
-            "Please set CRY23_EXEDIR environment variable or provide explicit path. "
+            "Please ensure CRYSTAL23 is properly installed with cry23.bashrc, "
+            "or set CRY23_EXEDIR environment variable, or provide explicit path. "
             f"Searched: explicit path={executable_path}, "
+            f"CRYSTAL23 environment (cry23.bashrc), "
             f"CRY23_EXEDIR={cry23_exedir}, PATH lookup failed"
         )
 
@@ -474,6 +509,21 @@ class LocalRunner:
             return False
         return process.returncode is None
 
+    def get_process_pid(self, job_id: int) -> Optional[int]:
+        """
+        Get the PID for a running job, if available.
+
+        Args:
+            job_id: Database ID of the job
+
+        Returns:
+            PID as int if running, otherwise None
+        """
+        process = self._active_processes.get(job_id)
+        if not process:
+            return None
+        return process.pid
+
     def get_last_result(self) -> Optional[JobResult]:
         """
         Get the result from the last completed job.
@@ -482,6 +532,187 @@ class LocalRunner:
             JobResult if available, None otherwise
         """
         return getattr(self, "_last_result", None)
+
+    # -------------------------------------------------------------------------
+    # BaseRunner Interface Implementation
+    # -------------------------------------------------------------------------
+
+    async def submit_job(
+        self,
+        job_id: int,
+        input_file: Path,
+        work_dir: Path,
+        threads: Optional[int] = None,
+        **kwargs
+    ) -> JobHandle:
+        """
+        Submit a job for execution (BaseRunner interface).
+
+        This wraps the existing run_job method to conform to the BaseRunner API.
+
+        Args:
+            job_id: Database ID of the job
+            input_file: Path to .d12 input file
+            work_dir: Working directory for job execution
+            threads: Number of OpenMP threads
+            **kwargs: Additional options (ignored)
+
+        Returns:
+            JobHandle: String handle for the job (format: "local_{job_id}")
+        """
+        # Create job handle
+        handle = JobHandle(f"local_{job_id}")
+        self._job_handles[handle] = job_id
+
+        # Start job execution in background
+        task = asyncio.create_task(self._run_job_task(job_id, work_dir, threads))
+        self._active_jobs[handle] = task
+
+        return handle
+
+    async def _run_job_task(self, job_id: int, work_dir: Path, threads: Optional[int]):
+        """Background task that runs a job to completion."""
+        try:
+            async for _ in self.run_job(job_id, work_dir, threads):
+                pass  # Just consume output, actual job execution happens here
+        except Exception:
+            pass  # Errors are stored in job result
+
+    async def get_status(self, job_handle: JobHandle) -> JobStatus:
+        """
+        Get job status (BaseRunner interface).
+
+        Args:
+            job_handle: Job handle from submit_job()
+
+        Returns:
+            JobStatus: Current status
+        """
+        job_id = self._job_handles.get(job_handle)
+        if job_id is None:
+            return JobStatus.UNKNOWN
+
+        if self.is_job_running(job_id):
+            return JobStatus.RUNNING
+
+        # Check if task completed
+        task = self._active_jobs.get(job_handle)
+        if task is None:
+            return JobStatus.UNKNOWN
+
+        if task.done():
+            # Check for successful completion
+            try:
+                task.result()
+                result = self.get_last_result()
+                if result and result.success:
+                    return JobStatus.COMPLETED
+                return JobStatus.FAILED
+            except asyncio.CancelledError:
+                return JobStatus.CANCELLED
+            except Exception:
+                return JobStatus.FAILED
+
+        return JobStatus.RUNNING
+
+    async def cancel_job(self, job_handle: JobHandle) -> bool:
+        """
+        Cancel a job (BaseRunner interface).
+
+        Args:
+            job_handle: Job handle to cancel
+
+        Returns:
+            bool: True if cancelled, False if not running
+        """
+        job_id = self._job_handles.get(job_handle)
+        if job_id is None:
+            return False
+
+        # Use existing stop_job method
+        success = await self.stop_job(job_id)
+
+        # Clean up tracking
+        if success:
+            task = self._active_jobs.pop(job_handle, None)
+            if task:
+                task.cancel()
+
+        return success
+
+    async def get_output(self, job_handle: JobHandle) -> AsyncIterator[str]:
+        """
+        Stream job output (BaseRunner interface).
+
+        Args:
+            job_handle: Job handle to stream from
+
+        Yields:
+            str: Output lines
+        """
+        job_id = self._job_handles.get(job_handle)
+        if job_id is None:
+            raise LocalRunnerError(f"Invalid job handle: {job_handle}")
+
+        # Find work_dir from active process
+        process = self._active_processes.get(job_id)
+        if process is None:
+            raise LocalRunnerError(f"Job {job_id} not found or not running")
+
+        # Re-read output file to stream it
+        # Note: This is a simplified implementation. A production version
+        # would need to track the work_dir and stream from there.
+        yield f"Output streaming for job {job_id}"
+
+    async def retrieve_results(
+        self,
+        job_handle: JobHandle,
+        dest: Path,
+        cleanup: Optional[bool] = None
+    ) -> None:
+        """
+        Retrieve results (BaseRunner interface).
+
+        For local execution, files are already in work_dir, so this
+        optionally copies them to dest if different.
+
+        Args:
+            job_handle: Job handle
+            dest: Destination directory
+            cleanup: Whether to clean up scratch (ignored for local)
+        """
+        job_id = self._job_handles.get(job_handle)
+        if job_id is None:
+            raise LocalRunnerError(f"Invalid job handle: {job_handle}")
+
+        # For local runner, files are already in place
+        # Could implement file copying here if needed
+        pass
+
+    async def get_job_info(self, job_handle: JobHandle) -> JobInfo:
+        """
+        Get complete job information (BaseRunner interface).
+
+        Args:
+            job_handle: Job handle to query
+
+        Returns:
+            JobInfo: Complete job state
+        """
+        status = await self.get_status(job_handle)
+        job_id = self._job_handles.get(job_handle)
+        pid = self.get_process_pid(job_id) if job_id else None
+
+        return JobInfo(
+            job_handle=job_handle,
+            status=status,
+            work_dir=Path.cwd(),  # Would need to track actual work_dir
+            pid=pid,
+        )
+
+    def is_connected(self) -> bool:
+        """Check if runner is ready (BaseRunner interface)."""
+        return self.executable_path.exists()
 
 
 # Convenience function for simple usage

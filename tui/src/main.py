@@ -4,7 +4,7 @@ Entry point for the CRYSTAL-TUI application.
 
 import sys
 from pathlib import Path
-from .tui.app import CrystalTUI
+from .tui.app_enhanced import CrystalTUI
 from .core.environment import load_crystal_environment, EnvironmentError
 
 
@@ -39,7 +39,7 @@ def main() -> None:
         sys.exit(1)
 
     print("Initializing TUI...")
-    app = CrystalTUI(project_dir)
+    app = CrystalTUI(project_dir, config=config)
     app.run()
 
 

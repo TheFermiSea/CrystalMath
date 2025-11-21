@@ -36,6 +36,15 @@ if [[ -n "${INPUT_FILE}" && ! -f "${INPUT_FILE}" ]]; then
     exit 1
 fi
 
+# Determine output file name (read from stdin redirect or args)
+# CRYSTAL reads from stdin (INPUT file) and writes to stdout
+# The runcrystal script redirects: crystalOMP < INPUT > output.out
+
+# If no explicit output file specified, use default
+if [[ -z "${OUTPUT_FILE}" ]]; then
+    OUTPUT_FILE="OUTPUT"
+fi
+
 # Generate mock output
 cat > "${OUTPUT_FILE}" <<'EOF'
  *******************************************************************************
@@ -74,9 +83,27 @@ cat > "${OUTPUT_FILE}" <<'EOF'
 
 EOF
 
-echo "Mock crystalOMP execution completed"
-echo "Input: ${INPUT_FILE:-stdin}"
-echo "Output: ${OUTPUT_FILE}"
+# Create mock result files (fort.9, fort.98)
+cat > "fort.9" <<'FORT9'
+MOCK WAVEFUNCTION DATA
+FORT.9 BINARY FILE CONTENT
+FORT9
+
+cat > "fort.98" <<'FORT98'
+MOCK FORMATTED WAVEFUNCTION
+FORT.98 TEXT FILE CONTENT
+FORT98
+
+# Create HESSOPT.DAT if this looks like a frequency calculation
+if grep -qi "FREQCALC\|HESSIAN" INPUT 2>/dev/null; then
+    cat > "HESSOPT.DAT" <<'HESS'
+MOCK HESSIAN MATRIX DATA
+HESS
+fi
+
+echo "Mock crystalOMP execution completed" >&2
+echo "Input: ${INPUT_FILE:-stdin}" >&2
+echo "Output: ${OUTPUT_FILE}" >&2
 
 # Exit with success or TEST_CRYSTALOMP_EXIT if set
 exit "${TEST_CRYSTALOMP_EXIT:-0}"

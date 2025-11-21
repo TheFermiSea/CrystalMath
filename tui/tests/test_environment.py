@@ -32,28 +32,39 @@ class TestCrystalConfig:
     def test_config_creation(self):
         """Test creating a CrystalConfig object."""
         config = CrystalConfig(
+            root_dir=Path("/path/to/CRYSTAL23"),
             executable_dir=Path("/path/to/bin"),
             scratch_dir=Path("/tmp/crystal"),
+            utils_dir=Path("/path/to/utils23"),
+            architecture="MacOsx_ARM-gfortran_omp",
             version="v1.0.1",
             executable_path=Path("/path/to/bin/crystalOMP")
         )
 
+        assert config.root_dir == Path("/path/to/CRYSTAL23")
         assert config.executable_dir == Path("/path/to/bin")
         assert config.scratch_dir == Path("/tmp/crystal")
+        assert config.utils_dir == Path("/path/to/utils23")
+        assert config.architecture == "MacOsx_ARM-gfortran_omp"
         assert config.version == "v1.0.1"
         assert config.executable_path == Path("/path/to/bin/crystalOMP")
 
     def test_config_path_conversion(self):
         """Test that strings are converted to Path objects."""
         config = CrystalConfig(
+            root_dir="/path/to/CRYSTAL23",
             executable_dir="/path/to/bin",
             scratch_dir="/tmp/crystal",
+            utils_dir="/path/to/utils23",
+            architecture="MacOsx_ARM-gfortran_omp",
             version="v1.0.1",
             executable_path="/path/to/bin/crystalOMP"
         )
 
+        assert isinstance(config.root_dir, Path)
         assert isinstance(config.executable_dir, Path)
         assert isinstance(config.scratch_dir, Path)
+        assert isinstance(config.utils_dir, Path)
         assert isinstance(config.executable_path, Path)
 
 
@@ -64,26 +75,12 @@ class TestSourceBashrc:
     def test_source_bashrc_success(self, mock_run):
         """Test successful bashrc sourcing."""
         mock_run.return_value = MagicMock(
-            stdout="CRY23_EXEDIR=/path/to/bin\nCRY23_SCRDIR=/tmp\nVERSION=v1.0.1\n",
-            returncode=0
-        )
-
-        result = _source_bashrc(Path("/path/to/cry23.bashrc"))
-
-        assert result == {
-            'CRY23_EXEDIR': '/path/to/bin',
-            'CRY23_SCRDIR': '/tmp',
-            'VERSION': 'v1.0.1'
-        }
-
-    @patch('subprocess.run')
-    def test_source_bashrc_with_echo_output(self, mock_run):
-        """Test bashrc sourcing ignores echo messages."""
-        mock_run.return_value = MagicMock(
             stdout=(
-                "CRY23_SCRDIR - scratch folder: /tmp\n"
+                "CRY23_ROOT=/path/to/CRYSTAL23\n"
                 "CRY23_EXEDIR=/path/to/bin\n"
                 "CRY23_SCRDIR=/tmp\n"
+                "CRY23_UTILS=/path/to/utils23\n"
+                "CRY23_ARCH=MacOsx_ARM-gfortran_omp\n"
                 "VERSION=v1.0.1\n"
             ),
             returncode=0
@@ -92,8 +89,38 @@ class TestSourceBashrc:
         result = _source_bashrc(Path("/path/to/cry23.bashrc"))
 
         assert result == {
+            'CRY23_ROOT': '/path/to/CRYSTAL23',
             'CRY23_EXEDIR': '/path/to/bin',
             'CRY23_SCRDIR': '/tmp',
+            'CRY23_UTILS': '/path/to/utils23',
+            'CRY23_ARCH': 'MacOsx_ARM-gfortran_omp',
+            'VERSION': 'v1.0.1'
+        }
+
+    @patch('subprocess.run')
+    def test_source_bashrc_with_empty_lines(self, mock_run):
+        """Test bashrc sourcing handles empty lines."""
+        mock_run.return_value = MagicMock(
+            stdout=(
+                "CRY23_ROOT=/path/to/CRYSTAL23\n"
+                "\n"
+                "CRY23_EXEDIR=/path/to/bin\n"
+                "CRY23_SCRDIR=/tmp\n"
+                "CRY23_UTILS=/path/to/utils23\n"
+                "CRY23_ARCH=MacOsx_ARM-gfortran_omp\n"
+                "VERSION=v1.0.1\n"
+            ),
+            returncode=0
+        )
+
+        result = _source_bashrc(Path("/path/to/cry23.bashrc"))
+
+        assert result == {
+            'CRY23_ROOT': '/path/to/CRYSTAL23',
+            'CRY23_EXEDIR': '/path/to/bin',
+            'CRY23_SCRDIR': '/tmp',
+            'CRY23_UTILS': '/path/to/utils23',
+            'CRY23_ARCH': 'MacOsx_ARM-gfortran_omp',
             'VERSION': 'v1.0.1'
         }
 
@@ -101,7 +128,7 @@ class TestSourceBashrc:
     def test_source_bashrc_missing_variables(self, mock_run):
         """Test error when required variables are missing."""
         mock_run.return_value = MagicMock(
-            stdout="CRY23_EXEDIR=/path/to/bin\n",
+            stdout="CRY23_EXEDIR=/path/to/bin\nCRY23_SCRDIR=/tmp\n",
             returncode=0
         )
 
@@ -198,16 +225,22 @@ class TestLoadCrystalEnvironment:
         bashrc_path.touch()
 
         mock_source.return_value = {
+            'CRY23_ROOT': str(tmp_path),
             'CRY23_EXEDIR': str(tmp_path / "bin"),
             'CRY23_SCRDIR': str(tmp_path / "scratch"),
+            'CRY23_UTILS': str(tmp_path / "utils23"),
+            'CRY23_ARCH': 'MacOsx_ARM-gfortran_omp',
             'VERSION': 'v1.0.1'
         }
 
         config = load_crystal_environment(bashrc_path=bashrc_path)
 
         assert isinstance(config, CrystalConfig)
+        assert config.root_dir == tmp_path
         assert config.executable_dir == tmp_path / "bin"
         assert config.scratch_dir == tmp_path / "scratch"
+        assert config.utils_dir == tmp_path / "utils23"
+        assert config.architecture == "MacOsx_ARM-gfortran_omp"
         assert config.version == "v1.0.1"
         assert config.executable_path == tmp_path / "bin" / "crystalOMP"
 
@@ -219,8 +252,11 @@ class TestLoadCrystalEnvironment:
         bashrc_path.touch()
 
         mock_source.return_value = {
+            'CRY23_ROOT': str(tmp_path),
             'CRY23_EXEDIR': str(tmp_path / "bin"),
             'CRY23_SCRDIR': str(tmp_path / "scratch"),
+            'CRY23_UTILS': str(tmp_path / "utils23"),
+            'CRY23_ARCH': 'MacOsx_ARM-gfortran_omp',
             'VERSION': 'v1.0.1'
         }
 
@@ -241,8 +277,11 @@ class TestLoadCrystalEnvironment:
         bashrc_path.touch()
 
         mock_source.return_value = {
+            'CRY23_ROOT': str(tmp_path),
             'CRY23_EXEDIR': str(tmp_path / "bin"),
             'CRY23_SCRDIR': str(tmp_path / "scratch"),
+            'CRY23_UTILS': str(tmp_path / "utils23"),
+            'CRY23_ARCH': 'MacOsx_ARM-gfortran_omp',
             'VERSION': 'v1.0.1'
         }
 
@@ -271,6 +310,56 @@ class TestGetCrystalConfig:
         mock_load.assert_called_once()
 
 
+class TestCrossPlatform:
+    """Tests for cross-platform compatibility."""
+
+    @patch('subprocess.run')
+    def test_linux_environment(self, mock_run, tmp_path):
+        """Test loading environment with Linux-style paths."""
+        bashrc_path = tmp_path / "cry23.bashrc"
+        bashrc_path.touch()
+
+        mock_run.return_value = MagicMock(
+            stdout=(
+                "CRY23_ROOT=/home/user/CRYSTAL23\n"
+                "CRY23_EXEDIR=/home/user/CRYSTAL23/bin/Linux-ifort_i64_omp/v1.0.1\n"
+                "CRY23_SCRDIR=/tmp/crystal\n"
+                "CRY23_UTILS=/home/user/CRYSTAL23/utils23\n"
+                "CRY23_ARCH=Linux-ifort_i64_omp\n"
+                "VERSION=v1.0.1\n"
+            ),
+            returncode=0
+        )
+
+        with patch('src.core.environment._validate_environment'):
+            config = load_crystal_environment(bashrc_path=bashrc_path)
+            assert config.architecture == "Linux-ifort_i64_omp"
+            assert str(config.root_dir) == "/home/user/CRYSTAL23"
+
+    @patch('subprocess.run')
+    def test_macos_environment(self, mock_run, tmp_path):
+        """Test loading environment with macOS-style paths."""
+        bashrc_path = tmp_path / "cry23.bashrc"
+        bashrc_path.touch()
+
+        mock_run.return_value = MagicMock(
+            stdout=(
+                "CRY23_ROOT=/Users/user/CRYSTAL23\n"
+                "CRY23_EXEDIR=/Users/user/CRYSTAL23/bin/MacOsx_ARM-gfortran_omp/v1.0.1\n"
+                "CRY23_SCRDIR=/Users/user/tmp\n"
+                "CRY23_UTILS=/Users/user/CRYSTAL23/utils23\n"
+                "CRY23_ARCH=MacOsx_ARM-gfortran_omp\n"
+                "VERSION=v1.0.1\n"
+            ),
+            returncode=0
+        )
+
+        with patch('src.core.environment._validate_environment'):
+            config = load_crystal_environment(bashrc_path=bashrc_path)
+            assert config.architecture == "MacOsx_ARM-gfortran_omp"
+            assert str(config.root_dir) == "/Users/user/CRYSTAL23"
+
+
 class TestIntegration:
     """Integration tests with real CRYSTAL23 installation."""
 
@@ -282,14 +371,19 @@ class TestIntegration:
 
             # Basic validation
             assert config.version == "v1.0.1"
+            assert config.root_dir.exists()
             assert config.executable_dir.exists()
             assert config.executable_path.exists()
             assert config.scratch_dir.exists()
+            assert config.utils_dir.exists()
             assert os.access(config.executable_path, os.X_OK)
 
-            print(f"Successfully loaded CRYSTAL23 environment:")
+            print(f"\nSuccessfully loaded CRYSTAL23 environment:")
+            print(f"  Root: {config.root_dir}")
+            print(f"  Architecture: {config.architecture}")
             print(f"  Version: {config.version}")
             print(f"  Executable: {config.executable_path}")
+            print(f"  Utils: {config.utils_dir}")
             print(f"  Scratch dir: {config.scratch_dir}")
 
         except EnvironmentError as e:
