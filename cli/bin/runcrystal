@@ -1,91 +1,73 @@
 #!/usr/bin/env bash
 # ==============================================================================
 #  CRYSTAL23 Unified Run Script - Modular Architecture
-#  Author: Brian Squires / Gemini / Codex
-#  System: Intel Xeon w9-3495X (Sapphire Rapids)
-#  Version: 2.0 (Refactored)
-#  Requires: Bash 4.0+ (for associative arrays)
+#  Version: 2.1 (Refactored Thin Orchestrator)
+#  Requires: Bash 4.0+
 # ==============================================================================
 
-# --- SSH Color Fix ---
-# Fix terminal colors when running over SSH
-if [[ "$TERM" == "xterm" || -z "$TERM" ]]; then
-    export TERM=xterm-256color
-fi
+# SSH Color Fix
+[[ "$TERM" == "xterm" || -z "$TERM" ]] && export TERM=xterm-256color
 
 set -euo pipefail
 
-# Check bash version (need 4.0+ for associative arrays)
+# Bash version check (need 4.0+ for associative arrays)
 if ((BASH_VERSINFO[0] < 4)); then
-    echo "Error: This script requires Bash 4.0 or higher (found ${BASH_VERSION})" >&2
-    echo "On macOS: brew install bash" >&2
+    echo "Error: Requires Bash 4.0+ (found ${BASH_VERSION})" >&2
+    echo "Install: brew install bash" >&2
     exit 1
 fi
 
-# --- Determine script directory (for relative module loading) ---
+# Determine script directory for module loading
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 
-# --- 1. Bootstrap: Load Configuration (sets paths, theme, gum) ---
-# shellcheck source=../lib/cry-config.sh
-source "${LIB_DIR}/cry-config.sh"
+# Bootstrap core modules
+source "${LIB_DIR}/cry-config.sh" || { echo "FATAL: Failed to load cry-config.sh" >&2; exit 1; }
 cry_config_init
 
-# --- 2. Load Logging Infrastructure ---
-# shellcheck source=../lib/cry-logging.sh
-source "${LIB_DIR}/cry-logging.sh"
+source "${LIB_DIR}/cry-logging.sh" || { echo "FATAL: Failed to load cry-logging.sh" >&2; exit 1; }
+source "${LIB_DIR}/core.sh" || { echo "FATAL: Failed to load core.sh" >&2; exit 1; }
 
-# --- 3. Load Core Module Loader ---
-# shellcheck source=../lib/core.sh
-source "${LIB_DIR}/core.sh"
+# Load remaining modules
+cry_require cry-ui || exit 1
+cry_require cry-parallel || exit 1
+cry_require cry-scratch || exit 1
+cry_require cry-stage || exit 1
+cry_require cry-exec || exit 1
+cry_require cry-help || exit 1
 
-# --- 4. Load Remaining Modules via cry_require ---
-cry_require cry-ui
-cry_require cry-parallel
-cry_require cry-scratch
-cry_require cry-stage
-cry_require cry-exec
-cry_require cry-help
-
-# --- 5. Main Control Flow ---
+# Main workflow orchestrator
 main() {
-    # Initialize UI
     ui_init
 
-    # Handle help request
-    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-        help_show_main
-        exit 0
-    fi
+    # Early exit for help
+    [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { help_show_main; exit 0; }
 
-    # Parse explain/dry-run flag EARLY (before input validation)
+    # Parse explain mode flag
     local EXPLAIN_MODE=false
     if [[ "${1:-}" == "--explain" || "${1:-}" == "--dry-run" ]]; then
         EXPLAIN_MODE=true
-        shift  # Remove flag from args
+        shift
     fi
 
-    # Parse and validate arguments
+    # Validate arguments
     local INPUT_ARG="${1:-}"
-    local NPROCS="${2:-1}"  # Default to 1 for serial mode (not 0)
+    local NPROCS="${2:-1}"
 
-    if [ -z "$INPUT_ARG" ]; then
+    if [[ -z "$INPUT_ARG" ]]; then
         ui_banner
         ui_error "No input file provided"
         echo "Usage: $(basename "$0") [--explain|--dry-run] <input> [ranks]"
         exit 1
     fi
 
-    local FILE_PREFIX
-    FILE_PREFIX=$(basename "$INPUT_ARG" .d12)
+    # Prepare file paths
+    local FILE_PREFIX=$(basename "$INPUT_ARG" .d12)
     local INPUT_D12="${FILE_PREFIX}.d12"
 
-    if [ ! -f "$INPUT_D12" ]; then
-        ui_error "Input file '${INPUT_D12}' not found"
-        exit 1
-    fi
+    [[ ! -f "$INPUT_D12" ]] && { ui_error "Input file '${INPUT_D12}' not found"; exit 1; }
 
-    # Initialize job state (associative array)
+    # Initialize job state
     declare -A CRY_JOB
     CRY_JOB[input_d12]="$INPUT_D12"
     CRY_JOB[file_prefix]="$FILE_PREFIX"
@@ -93,53 +75,18 @@ main() {
     # Setup cleanup trap
     trap 'scratch_cleanup' EXIT
 
-    # Display banner
-    ui_banner
+    # Configure parallelism
+    parallel_setup "$NPROCS" CRY_JOB || { ui_error "Parallelism setup failed"; exit 1; }
 
-    # Setup parallelism and populate CRY_JOB
-    parallel_setup "$NPROCS" CRY_JOB
-
-    # EXPLAIN MODE: Display educational breakdown and exit
+    # Explain mode: educational output and exit
     if $EXPLAIN_MODE; then
-        # Build execution command preview
-        local exec_command
-        if [[ "${CRY_JOB[MODE]}" == "Serial/OpenMP" ]]; then
-            exec_command="${CRY_JOB[EXE_PATH]} < INPUT > ${FILE_PREFIX}.out"
-        else
-            local mpi_bin="mpirun"
-            if [[ -n "${I_MPI_ROOT:-}" ]]; then
-                mpi_bin="${I_MPI_ROOT}/bin/mpirun"
-            fi
-            exec_command="$mpi_bin -np ${CRY_JOB[MPI_RANKS]} ${CRY_JOB[EXE_PATH]} < INPUT > ${FILE_PREFIX}.out"
-        fi
-
-        # Display 5-section educational breakdown
-        ui_card "Dry Run / Explanation Mode" \
-            "$(ui_section_header "1. Hardware Detection")" \
-            "   - Physical Cores: ${CRY_JOB[TOTAL_CORES]}" \
-            "   - Requested Ranks: ${NPROCS} (1 = Serial/OpenMP)" \
-            "" \
-            "$(ui_section_header "2. Parallel Strategy")" \
-            "   - Mode: ${CRY_JOB[MODE]}" \
-            "   - Threads per Rank: ${CRY_JOB[THREADS_PER_RANK]}" \
-            "   - Why? This balances memory usage (MPI) with raw speed (OpenMP)" \
-            "" \
-            "$(ui_section_header "3. Intel Optimizations")" \
-            "   - Pinning: ${I_MPI_PIN_DOMAIN:-Disabled (Serial)}" \
-            "   - Affinity: ${KMP_AFFINITY:-Default}" \
-            "   - Stack Size: ${OMP_STACKSIZE:-256M} (Prevents stack overflow)" \
-            "" \
-            "$(ui_section_header "4. File Staging")" \
-            "   - Scratch Directory: ${SCRATCH_BASE}/cry_${FILE_PREFIX}_<PID>" \
-            "   - Files to copy: ${INPUT_D12} + auxiliary files (.gui, .f9, .hessopt, .born)" \
-            "" \
-            "$(ui_section_header "5. Execution Command")" \
-            "   - $exec_command"
-
+        ui_banner
+        _show_explain_mode CRY_JOB "$FILE_PREFIX" "$NPROCS"
         exit 0
     fi
 
     # Display job configuration
+    ui_banner
     ui_card "Job Configuration" \
         "$(ui_status_line "Execution Mode" "${CRY_JOB[MODE]}")" \
         "$(ui_status_line "MPI Ranks" "${CRY_JOB[MPI_RANKS]:-1}")" \
@@ -148,29 +95,24 @@ main() {
         "$(ui_status_line "Input" "$INPUT_D12")"
 
     # Create scratch workspace
-    scratch_create "$FILE_PREFIX"
+    scratch_create "$FILE_PREFIX" || { ui_error "Failed to create scratch directory"; exit 1; }
 
-    # Stage input files to scratch
-    local ORIGINAL_DIR
-    ORIGINAL_DIR=$(pwd)
-    stage_inputs "$FILE_PREFIX" "$WORK_DIR" "$ORIGINAL_DIR"
+    # Stage input files
+    local ORIGINAL_DIR=$(pwd)
+    stage_inputs "$FILE_PREFIX" "$WORK_DIR" "$ORIGINAL_DIR" || { ui_error "Failed to stage input files"; exit 1; }
 
-    # Change to scratch directory for execution
-    cd "$WORK_DIR"
-
-    # Execute CRYSTAL calculation
+    # Execute in scratch directory
+    cd "$WORK_DIR" || { ui_error "Failed to change to scratch directory"; exit 1; }
     exec_crystal_run CRY_JOB
     local EXIT_CODE=$?
 
-    # Return to original directory
-    cd "$ORIGINAL_DIR"
+    # Return and retrieve results
+    cd "$ORIGINAL_DIR" || cry_warn "Failed to return to original directory"
+    stage_retrieve_results "$FILE_PREFIX" "$WORK_DIR" "$ORIGINAL_DIR" || ui_warning "Some result files may not have been retrieved"
 
-    # Retrieve results from scratch
-    stage_retrieve_results "$FILE_PREFIX" "$WORK_DIR" "$ORIGINAL_DIR"
-
-    # Report final status
+    # Report status
     echo ""
-    if [ "$EXIT_CODE" -eq 0 ]; then
+    if [[ "$EXIT_CODE" -eq 0 ]]; then
         ui_success "Calculation completed successfully"
     else
         ui_error "Calculation failed (exit code: $EXIT_CODE)"
@@ -179,5 +121,45 @@ main() {
     exit "$EXIT_CODE"
 }
 
-# --- 6. Entry Point ---
+# Explain mode display helper
+_show_explain_mode() {
+    local -n job=$1
+    local file_prefix="$2"
+    local nprocs="$3"
+
+    # Build execution command
+    local exec_command
+    if [[ "${job[MODE]}" == "Serial/OpenMP" ]]; then
+        exec_command="${job[EXE_PATH]} < INPUT > ${file_prefix}.out"
+    else
+        local mpi_bin="mpirun"
+        [[ -n "${I_MPI_ROOT:-}" ]] && mpi_bin="${I_MPI_ROOT}/bin/mpirun"
+        exec_command="$mpi_bin -np ${job[MPI_RANKS]} ${job[EXE_PATH]} < INPUT > ${file_prefix}.out"
+    fi
+
+    # Display educational breakdown
+    ui_card "Dry Run / Explanation Mode" \
+        "$(ui_section_header "1. Hardware Detection")" \
+        "   - Physical Cores: ${job[TOTAL_CORES]}" \
+        "   - Requested Ranks: ${nprocs} (1 = Serial/OpenMP)" \
+        "" \
+        "$(ui_section_header "2. Parallel Strategy")" \
+        "   - Mode: ${job[MODE]}" \
+        "   - Threads per Rank: ${job[THREADS_PER_RANK]}" \
+        "   - Why? This balances memory usage (MPI) with raw speed (OpenMP)" \
+        "" \
+        "$(ui_section_header "3. Intel Optimizations")" \
+        "   - Pinning: ${I_MPI_PIN_DOMAIN:-Disabled (Serial)}" \
+        "   - Affinity: ${KMP_AFFINITY:-Default}" \
+        "   - Stack Size: ${OMP_STACKSIZE:-256M} (Prevents stack overflow)" \
+        "" \
+        "$(ui_section_header "4. File Staging")" \
+        "   - Scratch Directory: ${SCRATCH_BASE}/cry_${file_prefix}_<PID>" \
+        "   - Files to copy: ${INPUT_D12} + auxiliary files (.gui, .f9, .hessopt, .born)" \
+        "" \
+        "$(ui_section_header "5. Execution Command")" \
+        "   - $exec_command"
+}
+
+# Entry point
 main "$@"
