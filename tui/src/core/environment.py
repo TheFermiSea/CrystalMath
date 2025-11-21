@@ -70,9 +70,9 @@ def load_crystal_environment(
     # Determine bashrc path
     if bashrc_path is None:
         # Try to auto-detect from current file location
-        # This file is in: CRYSTAL23/bin/crystal-tui/src/core/
+        # This file is in: CRYSTAL23/crystalmath/tui/src/core/
         # bashrc is in: CRYSTAL23/utils23/
-        project_root = Path(__file__).parent.parent.parent.parent.parent
+        project_root = Path(__file__).parent.parent.parent.parent.parent.parent
         bashrc_path = project_root / "utils23" / "cry23.bashrc"
 
     if not bashrc_path.exists():
