@@ -13,6 +13,7 @@ This module provides a sophisticated queue management system for CRYSTAL calcula
 
 import asyncio
 import logging
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,6 +23,8 @@ from typing import Dict, List, Optional, Set, Tuple, Any
 import json
 
 from .database import Database
+from .dependency_utils import assert_acyclic, CircularDependencyError as DependencyUtilsCircularError
+from .constants import JobStatus
 
 
 logger = logging.getLogger(__name__)
@@ -244,7 +247,7 @@ class QueueManager:
         """Restore queue state from database after restart."""
         cursor = self.db.conn.execute(
             "SELECT * FROM queue_state WHERE job_id IN "
-            "(SELECT id FROM jobs WHERE status IN ('PENDING', 'QUEUED'))"
+            f"(SELECT id FROM jobs WHERE status IN ('{JobStatus.PENDING}', '{JobStatus.QUEUED}'))"
         )
 
         for row in cursor.fetchall():
@@ -288,7 +291,7 @@ class QueueManager:
 
             # Get running jobs for this cluster
             running_cursor = self.db.conn.execute(
-                "SELECT id FROM jobs WHERE status = 'RUNNING' AND id IN "
+                f"SELECT id FROM jobs WHERE status = '{JobStatus.RUNNING}' AND id IN "
                 "(SELECT job_id FROM queue_state WHERE cluster_id = ?)",
                 (cluster_id,)
             )
@@ -408,7 +411,7 @@ class QueueManager:
                 self._dependents[dep_id].add(job_id)
 
             # Update database status
-            self.db.update_status(job_id, "QUEUED")
+            self.db.update_status(job_id, JobStatus.QUEUED)
             # Invalidate cache since status changed
             self._invalidate_status_cache(job_id)
 
@@ -424,6 +427,9 @@ class QueueManager:
         """
         Validate that dependencies don't form cycles.
 
+        This is the enforcement point for all callers - ensures no circular
+        dependencies are introduced when adding new job dependencies.
+
         Args:
             job_id: Job being validated
             dependencies: Set of dependency job IDs
@@ -438,41 +444,32 @@ class QueueManager:
                 f"Job {job_id} cannot depend on itself"
             )
 
-        # Check all dependencies exist
+        # Check all dependencies exist (OPTIMIZATION: single batch query)
+        # This is DB-specific validation that dependency_utils doesn't handle
+        job_statuses = self.db.get_job_statuses_batch(dependencies)
         for dep_id in dependencies:
-            if not self.db.get_job(dep_id):
+            if dep_id not in job_statuses:
                 raise InvalidJobError(f"Dependency job {dep_id} not found")
 
-        # Check for circular dependencies using DFS
-        # If we make job_id depend on dep_id, we need to check:
-        # Can job_id reach dep_id through the DEPENDENT chain?
-        # If yes, adding this dependency creates a cycle.
+        # Build temporary graph including proposed dependencies for cycle detection
+        # Graph format: {job_id: [list of jobs this job depends on]}
+        graph = {}
 
-        def can_reach_through_dependents(start: int, target: int, visited: Set[int]) -> bool:
-            """Check if 'start' can reach 'target' by following dependent relationships."""
-            if start == target:
-                return True
+        # Add existing dependencies from all jobs in queue
+        for jid, queued_job in self._jobs.items():
+            graph[jid] = list(queued_job.dependencies) if queued_job.dependencies else []
 
-            if start in visited:
-                return False
+        # Add the proposed dependencies for this job
+        graph[job_id] = list(dependencies)
 
-            visited.add(start)
-
-            # Check all jobs that depend on 'start' (i.e., jobs that list 'start' as dependency)
-            for dependent_id in self._dependents.get(start, set()):
-                if can_reach_through_dependents(dependent_id, target, visited):
-                    return True
-
-            return False
-
-        # For each proposed dependency, check if job_id can reach it
-        # If job_id -> ... -> dep_id exists, then adding dep_id -> job_id creates a cycle
-        for dep_id in dependencies:
-            if can_reach_through_dependents(job_id, dep_id, set()):
-                raise CircularDependencyError(
-                    f"Adding dependency {dep_id} to job {job_id} "
-                    "would create a circular dependency"
-                )
+        # Use shared cycle detection utility (raises CircularDependencyError if cycle found)
+        try:
+            assert_acyclic(graph)
+        except DependencyUtilsCircularError as e:
+            # Re-raise with queue_manager's CircularDependencyError type for consistency
+            raise CircularDependencyError(
+                f"Adding dependencies {dependencies} to job {job_id} would create a cycle: {e}"
+            ) from e
 
     def _get_job_statuses_batch(self, job_ids: List[int]) -> Dict[int, str]:
         """
@@ -570,53 +567,87 @@ class QueueManager:
 
         Optimized to use batch query instead of N+1 individual queries.
 
+        Thread-safe: Acquires lock before reading shared state.
+
         Returns:
             List of job IDs ready to be scheduled (in priority order)
         """
-        schedulable: List[Tuple[QueuedJob, float]] = []
+        async with self._lock:
+            schedulable: List[Tuple[QueuedJob, float]] = []
 
-        # OPTIMIZATION: Batch query all job statuses instead of individual queries
-        job_ids = list(self._jobs.keys())
-        job_statuses = self._get_job_statuses_batch(job_ids)
+            # OPTIMIZATION: Batch query all job statuses instead of individual queries
+            job_ids = list(self._jobs.keys())
+            job_statuses = self._get_job_statuses_batch(job_ids)
 
-        for job_id, queued_job in self._jobs.items():
-            # Check job status from batch query cache (O(1) lookup)
-            status = job_statuses.get(job_id)
-            if not status or status not in ("PENDING", "QUEUED"):
-                continue
-
-            # Check if dependencies are satisfied
-            if not self._dependencies_satisfied(job_id):
-                continue
-
-            # Check cluster capacity
-            cluster = self._get_cluster(queued_job.cluster_id)
-            if not cluster.can_accept_job:
-                continue
-
-            # Check resources available (if resource-aware scheduling)
-            if queued_job.resource_requirements:
-                if not self._resources_available(cluster, queued_job.resource_requirements):
+            for job_id, queued_job in self._jobs.items():
+                # Check job status from batch query cache (O(1) lookup)
+                status = job_statuses.get(job_id)
+                if not status or status not in ("PENDING", "QUEUED"):
                     continue
 
-            # Calculate scheduling score
-            score = self._calculate_scheduling_score(queued_job)
-            schedulable.append((queued_job, score))
+                # Check if dependencies are satisfied (using locked helper)
+                if not self._dependencies_satisfied_locked(job_id):
+                    continue
 
-        # Sort by score (higher = better)
-        schedulable.sort(key=lambda x: x[1], reverse=True)
+                # Check cluster capacity
+                cluster = self._get_cluster(queued_job.cluster_id)
+                if not cluster.can_accept_job:
+                    continue
 
-        return [job.job_id for job, _ in schedulable]
+                # Check resources available (if resource-aware scheduling)
+                if queued_job.resource_requirements:
+                    if not self._resources_available(cluster, queued_job.resource_requirements):
+                        continue
+
+                # Calculate scheduling score
+                score = self._calculate_scheduling_score(queued_job)
+                schedulable.append((queued_job, score))
+
+            # Sort by score (higher = better)
+            schedulable.sort(key=lambda x: x[1], reverse=True)
+
+            return [job.job_id for job, _ in schedulable]
 
     def _dependencies_satisfied(self, job_id: int) -> bool:
-        """Check if all dependencies for a job are satisfied."""
+        """
+        Check if all dependencies for a job are satisfied.
+
+        WARNING: This method does NOT acquire the lock. If you need thread-safe
+        dependency checking, use _dependencies_satisfied_locked() and ensure you
+        hold the lock before calling.
+
+        This method is kept for backward compatibility but should generally not
+        be called directly - use the locked version instead.
+        """
+        return self._dependencies_satisfied_locked(job_id)
+
+    def _dependencies_satisfied_locked(self, job_id: int) -> bool:
+        """
+        Check if all dependencies for a job are satisfied.
+
+        IMPORTANT: Caller MUST hold self._lock before calling this method.
+        This is an internal helper used by methods that already hold the lock.
+
+        Args:
+            job_id: Job to check dependencies for
+
+        Returns:
+            True if all dependencies are satisfied, False otherwise
+        """
         queued_job = self._jobs.get(job_id)
         if not queued_job:
             return False
 
+        if not queued_job.dependencies:
+            return True
+
+        # OPTIMIZATION: Batch query for all dependency statuses (single DB query)
+        dep_statuses = self._get_job_statuses_batch(list(queued_job.dependencies))
+
+        # Check if all dependencies are completed
         for dep_id in queued_job.dependencies:
-            dep_job = self.db.get_job(dep_id)
-            if not dep_job or dep_job.status != "COMPLETED":
+            status = dep_statuses.get(dep_id)
+            if status != "COMPLETED":
                 return False
 
         return True
@@ -896,39 +927,71 @@ class QueueManager:
         2. Updates queue state
         3. Updates metrics
         4. Persists state periodically
+
+        Thread-safe: All shared state access is properly synchronized.
         """
-        logger.info("Scheduler worker started")
+        logger.info("Scheduler worker started", extra={
+            "component": "queue_manager",
+            "interval_seconds": self.scheduling_interval
+        })
+
+        loop_iteration = 0
 
         while self._running:
+            loop_iteration += 1
+            start_time = time.time()
+
             try:
-                # Schedule jobs
+                # Schedule jobs (acquires lock internally)
                 schedulable = await self.schedule_jobs()
 
                 if schedulable:
-                    logger.debug(f"Scheduler found {len(schedulable)} schedulable jobs")
+                    logger.debug("Scheduler found schedulable jobs", extra={
+                        "job_count": len(schedulable),
+                        "job_ids": schedulable[:10]  # Log first 10 to avoid spam
+                    })
 
-                # Update queue depth metrics
-                for cluster_id, cluster in self._clusters.items():
-                    queue_depth = sum(
-                        1 for job in self._jobs.values()
-                        if job.cluster_id == cluster_id
-                    )
-                    self.metrics.queue_depth_by_cluster[cluster_id] = queue_depth
+                # Update queue depth metrics (with lock)
+                total_queued = 0
+                async with self._lock:
+                    for cluster_id, cluster in self._clusters.items():
+                        queue_depth = sum(
+                            1 for job in self._jobs.values()
+                            if job.cluster_id == cluster_id
+                        )
+                        self.metrics.queue_depth_by_cluster[cluster_id] = queue_depth
+                        total_queued += queue_depth
 
-                # Update and persist metrics
-                self._update_metrics()
-                self._persist_to_database()
+                    # Update and persist metrics
+                    self._update_metrics()
+                    self._persist_to_database()
 
-                # Sleep until next cycle
+                # Log iteration completion
+                elapsed = time.time() - start_time
+                logger.debug("Scheduler iteration completed", extra={
+                    "iteration": loop_iteration,
+                    "elapsed_seconds": round(elapsed, 3),
+                    "total_queued": total_queued,
+                    "schedulable_count": len(schedulable),
+                    "total_jobs_scheduled": self.metrics.total_jobs_scheduled,
+                    "total_jobs_completed": self.metrics.total_jobs_completed,
+                    "total_jobs_failed": self.metrics.total_jobs_failed
+                })
+
+                # Sleep until next cycle (lock-free, don't hold during sleep)
                 await asyncio.sleep(self.scheduling_interval)
 
             except asyncio.CancelledError:
+                logger.info("Scheduler worker stopped")
                 break
             except Exception as e:
-                logger.error(f"Scheduler worker error: {e}", exc_info=True)
+                elapsed = time.time() - start_time
+                logger.error("Scheduler worker error", extra={
+                    "iteration": loop_iteration,
+                    "elapsed_seconds": round(elapsed, 3),
+                    "error": str(e)
+                }, exc_info=True)
                 await asyncio.sleep(self.scheduling_interval)
-
-        logger.info("Scheduler worker stopped")
 
     def _update_metrics(self) -> None:
         """Update scheduler metrics."""

@@ -2,6 +2,9 @@
 # cry-logging.sh - Logging infrastructure for CRY_CLI
 # Provides structured logging with levels, timestamps, and color output
 
+# Enable strict mode for better error handling
+set -euo pipefail
+
 # Default log level (can be overridden by CRY_LOG_LEVEL env var)
 : "${CRY_LOG_LEVEL:=info}"
 

@@ -2,6 +2,9 @@
 # cry-config.sh - Central configuration module for CRY_CLI
 # Provides path exports, color themes, and configuration management
 
+# Enable strict mode for better error handling
+set -euo pipefail
+
 # Prevent multiple sourcing
 [[ -n "${CRY_CONFIG_LOADED:-}" ]] && return 0
 if [[ -n "${ZSH_VERSION:-}" ]]; then
@@ -32,7 +35,7 @@ cry_config_init() {
 
     # Tutorial paths - default to share/tutorials in project root
     # cry-config.sh is in lib/, so go up one level to project root
-    PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
     : "${CRY_TUTORIAL_DIR:="$PROJECT_ROOT/share/tutorials"}"
     TUTORIAL_DIR="$CRY_TUTORIAL_DIR"  # Backward compatibility alias
 

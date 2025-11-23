@@ -2,6 +2,9 @@
 # cry-scratch.sh - Scratch space management module for CRY_CLI
 # Provides scratch directory creation, cleanup, and file staging
 
+# Enable strict mode for better error handling
+set -euo pipefail
+
 # Prevent multiple sourcing
 [[ -n "${CRY_SCRATCH_LOADED:-}" ]] && return 0
 if [[ -n "${ZSH_VERSION:-}" ]]; then

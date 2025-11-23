@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CRYSTAL-TOOLS is a unified monorepo containing complementary tools for CRYSTAL23 quantum chemistry DFT calculations:
 
-1. **CLI** (`cli/`) - Production-ready Bash tool for executing calculations (89% complete)
-2. **TUI** (`tui/`) - Python terminal UI for interactive job management (Phase 1 MVP in progress)
+1. **CLI** (`cli/`) - Production-ready Bash tool for executing calculations
+2. **TUI** (`tui/`) - Python terminal UI for interactive job management with remote execution
 
 **Design Philosophy:** CLI for execution, TUI for management. Both tools work independently but share CRYSTAL23 environment.
 
@@ -39,15 +39,18 @@ bats tests/integration/*.bats
 ```bash
 cd tui/
 
-# Setup development environment
-python3 -m venv .venv
+# Setup development environment with uv (recommended)
+uv venv
 source .venv/bin/activate  # or: .venv/bin/activate.fish (fish shell)
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
+
+# Or use pip if uv not available
+# python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
 
 # Launch interactive interface
 crystal-tui
 
-# Run tests (when implemented)
+# Run tests
 pytest
 
 # Code quality checks
@@ -64,11 +67,13 @@ pytest --cov=src --cov-report=html
 ```bash
 # From monorepo root
 bd list                     # Show open issues
-bd list --all              # Show all issues (34 total)
-bd list --status=closed    # Show completed (24)
+bd list --all              # Show all issues
+bd list --status=closed    # Show completed issues
 bd show <issue-id>         # Show details
 bd create "Issue title"    # Create new issue
 ```
+
+**Current Status:** 66 total issues (3 open, 63 closed)
 
 ## Architecture
 
@@ -100,15 +105,28 @@ bd create "Issue title"    # Create new issue
 **Entry Point:** `src/main.py` → `src/tui/app.py`
 
 **Package Structure:**
-- `src/core/` - Business logic (database, environment)
+- `src/core/` - Business logic (database, environment, orchestration, templates, workflows, connection management, queue management)
 - `src/tui/` - Textual UI components (app, screens, widgets)
-- `src/runners/` - Job execution backends (local, future: remote)
+- `src/runners/` - Job execution backends (local, SSH, SLURM)
 
 **Key Technologies:**
 - Textual framework (async TUI)
 - SQLite for job history
-- CRYSTALpytools for output parsing
+- asyncssh for remote execution
+- Jinja2 for input templates
 - Async/await architecture
+
+**Runners (Phase 2 Complete):**
+- `local.py` - Local subprocess execution
+- `ssh_runner.py` - Remote SSH execution
+- `slurm_runner.py` - HPC batch scheduling
+
+**Core Components (Phase 2 Complete):**
+- `orchestrator.py` - Multi-job workflow coordination
+- `queue_manager.py` - Job queue with priority scheduling
+- `connection_manager.py` - Connection pooling for remote clusters
+- `templates.py` - Input file template system
+- `workflow.py` - DAG-based workflow engine
 
 **Data Model:**
 ```python
@@ -116,9 +134,20 @@ Job {
     id: int
     name: str
     status: pending|running|completed|failed
+    runner_type: local|ssh|slurm
+    cluster_id: int (optional)
     input_content: str (d12 file)
     results_json: str (parsed results)
     work_dir: Path
+}
+
+Cluster {
+    id: int
+    name: str
+    hostname: str
+    username: str
+    queue_type: slurm|pbs|sge
+    max_concurrent: int
 }
 ```
 
@@ -151,7 +180,7 @@ bats tests/unit/*.bats                  # All unit tests
 1. UI components → `src/tui/screens/` or `src/tui/widgets/`
 2. Business logic → `src/core/`
 3. Execution backends → `src/runners/`
-4. Update database schema if needed
+4. Update database schema if needed (see `src/core/database.py:migrate_*` methods)
 5. Write tests in `tests/`
 
 **Code style (from pyproject.toml):**
@@ -166,6 +195,12 @@ cd tui/
 pytest                              # Run all tests
 pytest --cov=src --cov-report=html  # With coverage
 ```
+
+**Security considerations:**
+- Always sandbox Jinja2 templates (use `jinja2.sandbox.SandboxedEnvironment`)
+- Enable SSH host key verification (never use `known_hosts=None`)
+- Escape shell commands when building SLURM scripts or remote commands
+- Use parameterized SQL queries (already enforced by ORM)
 
 ## Environment Setup
 
@@ -189,16 +224,23 @@ export PATH="$HOME/CRYSTAL23/crystalmath/cli/bin:$PATH"
 ## Project Status
 
 ### CLI: Production Ready ✅
-- **Completion:** 24/27 beads issues closed (89%)
+- **Completion:** 27/27 beads issues closed (100%)
 - **Architecture:** Modular (9 library modules)
 - **Testing:** 76 tests, 74% pass rate
 - **Features:** Serial/parallel execution, scratch management, auto file staging, --explain mode
 
-### TUI: Phase 1 MVP ⏳
-- **Completion:** 0/7 beads issues closed
-- **Architecture:** Textual + SQLite
-- **Implemented:** Three-panel UI, job database, async framework
-- **Planned:** Real job runner, CRYSTALpytools integration, new job modal
+### TUI: Phase 2 Complete ⚠️
+- **Completion:** 63/66 beads issues closed (95%)
+- **Architecture:** Textual + SQLite + asyncssh
+- **Implemented:** Three-panel UI, job database, local/SSH/SLURM runners, orchestration, templates, workflows
+- **Known Issues:** 3 critical security/functional issues require immediate attention before production use
+
+**⚠️ IMPORTANT:** Phase 2 implementation is complete but **NOT production-ready**. See `CODE_REVIEW_FINDINGS.md` for critical security issues that must be fixed:
+1. SSH host key verification disabled (MITM vulnerability)
+2. Unsandboxed Jinja2 templates (code execution vulnerability)
+3. Command injection in SSH/SLURM runners
+4. Orchestrator workflow submission not functional
+5. Database migration and concurrency issues
 
 ## Common Development Tasks
 
@@ -225,6 +267,7 @@ cd tui/
 # Test imports
 python3 -c "from src.core.database import Database; print('✅ Database')"
 python3 -c "from src.core.environment import load_crystal_environment; print('✅ Environment')"
+python3 -c "from src.runners.local import LocalRunner; print('✅ LocalRunner')"
 
 # Launch TUI
 crystal-tui
@@ -269,26 +312,68 @@ Closes: crystalmath-xyz
 - Selects appropriate binary
 - Populates `CRY_JOB` associative array
 
-### TUI Job Database
+### TUI Database Schema
 
-**Schema:**
+**Core Tables:**
 ```sql
 CREATE TABLE jobs (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     status TEXT NOT NULL,
+    runner_type TEXT DEFAULT 'local',
+    cluster_id INTEGER,
     input_content TEXT,
     results_json TEXT,
     work_dir TEXT,
     created_at TIMESTAMP,
-    updated_at TIMESTAMP
+    updated_at TIMESTAMP,
+    FOREIGN KEY (cluster_id) REFERENCES clusters (id)
+);
+
+CREATE TABLE clusters (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    hostname TEXT NOT NULL,
+    username TEXT NOT NULL,
+    queue_type TEXT,
+    max_concurrent INTEGER DEFAULT 10,
+    created_at TIMESTAMP
+);
+
+CREATE TABLE workflows (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    dag_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TIMESTAMP
 );
 ```
 
 **Async architecture:**
 - Worker system for background tasks
 - Message-driven UI updates
-- Real-time log streaming (planned)
+- Connection pooling for remote clusters
+- Priority-based job queue
+
+### TUI Remote Execution
+
+**SSH Runner:**
+- Direct SSH connection to remote hosts
+- Real-time output streaming via SFTP
+- Automatic scratch directory creation
+- Environment preservation
+
+**SLURM Runner:**
+- Batch job script generation
+- Queue status monitoring (squeue)
+- Job array support
+- Configurable queue/partition/time limits
+
+**Connection Manager:**
+- Connection pooling (max 5 concurrent per cluster)
+- Automatic cleanup on shutdown
+- Credential caching via keyring
+- Health checking and reconnection
 
 ## Troubleshooting
 
@@ -308,6 +393,14 @@ CREATE TABLE jobs (
 - Cause: Dependencies not installed
 - Fix: `pip install -e ".[dev]"` from `tui/` directory
 
+**"Connection refused" when using SSH runner**
+- Cause: SSH host key not in known_hosts OR asyncssh version mismatch
+- Fix: Manually SSH to host first, OR check asyncssh>=2.14.0 installed
+
+**"No module named 'CRYSTALpytools'"**
+- Cause: Optional analysis dependencies not installed
+- Fix: `pip install -e ".[analysis]"` from `tui/` directory (optional - has fallback)
+
 **Path calculation errors**
 - Cause: Monorepo structure changed
 - Fix: Check `src/core/environment.py` has correct `.parent` levels (6 levels to monorepo root)
@@ -317,7 +410,8 @@ CREATE TABLE jobs (
 **Quick Links:**
 - CLI Architecture: `cli/docs/ARCHITECTURE.md`
 - CLI Module Details: `cli/CLAUDE.md`
-- TUI Roadmap: `tui/docs/PROJECT_STATUS.md`
+- TUI Project Status: `tui/docs/PROJECT_STATUS.md`
+- Security Review: `CODE_REVIEW_FINDINGS.md`
 - Integration: `docs/integration.md`
 - Installation: `docs/installation.md`
 - Contributing: `docs/CONTRIBUTING.md`
@@ -340,9 +434,9 @@ bats tests/unit/cry-parallel_test.bats  # Specific module
 
 ### TUI Testing (pytest)
 
-**Unit tests** (planned) will mock database operations and test state transitions.
+**Unit tests** mock database operations and test state transitions.
 
-**UI tests** (planned) will use Textual snapshot testing for UI components.
+**Integration tests** test full workflows with mock runners.
 
 **Run tests:**
 ```bash
@@ -406,12 +500,36 @@ async def action_show_my_screen(self):
     await self.push_screen(MyScreen())
 ```
 
+### TUI: Adding a Runner
+
+```python
+# 1. Create runner: src/runners/my_runner.py
+from src.runners.base import BaseRunner, JobStatus
+
+class MyRunner(BaseRunner):
+    async def submit(self, job_id: int, input_file: str, work_dir: Path) -> str:
+        # Submit job and return job handle
+        return "job_handle"
+
+    async def get_status(self, job_handle: str) -> JobStatus:
+        # Query job status
+        return JobStatus.RUNNING
+
+    async def get_output(self, job_handle: str) -> str:
+        # Retrieve job output
+        return "output content"
+
+# 2. Register in database.py runner_types
+# 3. Add UI selection in new job modal
+```
+
 ## Additional Resources
 
 - **Monorepo migration complete:** See `MONOREPO_MIGRATION_COMPLETE.md`
 - **Agent workflows:** See `AGENTS.md` for bd/beads integration patterns
 - **Tutorial mirror:** `cli/share/tutorials/` (CRYSTAL Solutions documentation)
+- **Phase 2 implementation:** See `tui/docs/PHASE2_*.md` for design documents
 
 ---
 
-**Remember:** This is a monorepo with two independent tools. CLI is production-ready Bash (89% complete), TUI is Python MVP in progress (Phase 1). Both share CRYSTAL23 environment but can operate standalone.
+**Remember:** This is a monorepo with two independent tools. CLI is production-ready (100% complete), TUI Phase 2 is feature-complete but has critical security issues that must be addressed before production use. Both share CRYSTAL23 environment but can operate standalone.

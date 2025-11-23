@@ -2,7 +2,11 @@
 Security tests for SSH runner command injection vulnerabilities.
 
 Tests verify that all shell commands are properly escaped to prevent
-command injection attacks through path interpolation and PID validation.
+command injection attacks through:
+- Path interpolation (work_dir, input_file, remote paths)
+- PID validation (process IDs must be positive integers)
+- Parameter validation (threads, mpi_ranks must be positive integers)
+- Filename validation (prevent path traversal in downloads)
 """
 
 import pytest
@@ -433,3 +437,193 @@ class TestEdgeCases:
         cmd = f"cd {quoted} && echo ok"
         # Empty path quoted is just two quotes
         assert "''" in cmd or '""' in cmd
+
+
+class TestParameterValidation:
+    """Test validation of numeric parameters to prevent injection."""
+
+    @pytest.fixture
+    def mock_connection_manager(self):
+        """Create a mock connection manager."""
+        manager = Mock()
+        manager._configs = {1: {"host": "localhost"}}
+        return manager
+
+    def test_invalid_mpi_ranks_rejected(self, mock_connection_manager):
+        """Invalid mpi_ranks values should be rejected."""
+        runner = SSHRunner(mock_connection_manager, cluster_id=1)
+
+        invalid_values = [
+            -1,
+            0,
+            "4; rm -rf /",
+            [1, 2, 3],
+            {"ranks": 4},
+            3.14,  # Float
+        ]
+
+        for invalid_value in invalid_values:
+            with pytest.raises((ValueError, TypeError)):
+                runner._generate_execution_script(
+                    remote_work_dir=PurePosixPath("/tmp/test"),
+                    input_file="test.d12",
+                    threads=4,
+                    mpi_ranks=invalid_value
+                )
+
+    def test_valid_mpi_ranks_accepted(self, mock_connection_manager):
+        """Valid mpi_ranks values should be accepted."""
+        runner = SSHRunner(mock_connection_manager, cluster_id=1)
+
+        valid_values = [1, 2, 4, 8, 16, 32]
+
+        for valid_value in valid_values:
+            script = runner._generate_execution_script(
+                remote_work_dir=PurePosixPath("/tmp/test"),
+                input_file="test.d12",
+                threads=4,
+                mpi_ranks=valid_value
+            )
+            assert script is not None
+            if valid_value > 1:
+                assert f"mpirun -np {valid_value}" in script
+            else:
+                assert "crystalOMP" in script
+
+    def test_invalid_threads_rejected(self, mock_connection_manager):
+        """Invalid thread values should be rejected."""
+        runner = SSHRunner(mock_connection_manager, cluster_id=1)
+
+        invalid_values = [
+            -1,
+            0,
+            "4; export MALICIOUS=1",
+            [1, 2, 3],
+            {"threads": 4},
+        ]
+
+        for invalid_value in invalid_values:
+            with pytest.raises((ValueError, TypeError)):
+                runner._generate_execution_script(
+                    remote_work_dir=PurePosixPath("/tmp/test"),
+                    input_file="test.d12",
+                    threads=invalid_value,
+                    mpi_ranks=None
+                )
+
+    def test_valid_threads_accepted(self, mock_connection_manager):
+        """Valid thread values should be accepted."""
+        runner = SSHRunner(mock_connection_manager, cluster_id=1)
+
+        valid_values = [1, 2, 4, 8, 16, 32, 64]
+
+        for valid_value in valid_values:
+            script = runner._generate_execution_script(
+                remote_work_dir=PurePosixPath("/tmp/test"),
+                input_file="test.d12",
+                threads=valid_value,
+                mpi_ranks=None
+            )
+            assert f"OMP_NUM_THREADS={valid_value}" in script
+
+
+class TestDownloadPathTraversal:
+    """Test protection against path traversal in file downloads."""
+
+    @pytest.fixture
+    def mock_connection_manager(self):
+        """Create a mock connection manager."""
+        manager = Mock()
+        manager._configs = {1: {"host": "localhost"}}
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_path_traversal_filenames_rejected(self, mock_connection_manager, tmp_path):
+        """Filenames with path traversal should be rejected."""
+        runner = SSHRunner(mock_connection_manager, cluster_id=1)
+
+        malicious_filenames = [
+            "../../../etc/passwd",
+            "..\\..\\..\\windows\\system32\\config\\sam",
+            "./../../sensitive.dat",
+            "../../etc/shadow",
+            "..",
+            ".",
+        ]
+
+        # Mock SFTP connection
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.listdir = AsyncMock(return_value=malicious_filenames)
+        mock_sftp.get = AsyncMock()
+
+        # Setup async context manager correctly
+        class SftpContext:
+            async def __aenter__(self):
+                return mock_sftp
+            async def __aexit__(self, *args):
+                pass
+
+        mock_conn.start_sftp_client = lambda: SftpContext()
+
+        # Attempt download
+        local_dir = tmp_path / "downloads"
+        local_dir.mkdir()
+
+        await runner._download_files(
+            conn=mock_conn,
+            remote_dir="/tmp/test",
+            local_dir=local_dir
+        )
+
+        # Verify that malicious filenames were NOT downloaded
+        # (mock_sftp.get should not have been called for any of them)
+        if mock_sftp.get.called:
+            get_calls = mock_sftp.get.call_args_list
+            for call in get_calls:
+                remote_file = call[0][0]
+                # Should not contain unescaped path traversal
+                assert not any(malicious in remote_file for malicious in malicious_filenames)
+
+    @pytest.mark.asyncio
+    async def test_valid_filenames_accepted(self, mock_connection_manager, tmp_path):
+        """Valid filenames should be accepted."""
+        runner = SSHRunner(mock_connection_manager, cluster_id=1)
+
+        valid_filenames = [
+            "output.log",
+            "fort.9",
+            "fort.98",
+            "structure.xyz",
+            "result.cif",
+        ]
+
+        # Mock SFTP connection
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.listdir = AsyncMock(return_value=valid_filenames)
+        mock_sftp.get = AsyncMock()
+
+        # Setup async context manager correctly
+        class SftpContext:
+            async def __aenter__(self):
+                return mock_sftp
+            async def __aexit__(self, *args):
+                pass
+
+        mock_conn.start_sftp_client = lambda: SftpContext()
+
+        # Attempt download
+        local_dir = tmp_path / "downloads"
+        local_dir.mkdir()
+
+        await runner._download_files(
+            conn=mock_conn,
+            remote_dir="/tmp/test",
+            local_dir=local_dir
+        )
+
+        # Verify that valid files were downloaded
+        assert mock_sftp.get.called
+        # Should have attempted to download at least some files
+        assert mock_sftp.get.call_count >= len(valid_filenames)

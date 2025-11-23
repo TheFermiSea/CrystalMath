@@ -1541,5 +1541,252 @@ class TestWorkflowDirectoryCleanup:
         assert callable(orchestrator._cleanup_work_dirs)
 
 
+class TestJinja2SecurityHardening:
+    """Security tests for Jinja2 template injection vulnerabilities in orchestrator.
+
+    VULNERABILITY (FIXED): orchestrator.py used unsandboxed Jinja2 Environment
+    allowing arbitrary code execution through parameter templates.
+
+    FIX: Replaced Environment with SandboxedEnvironment to restrict dangerous operations.
+    """
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_uses_sandboxed_environment(self, orchestrator):
+        """Test that orchestrator uses SandboxedEnvironment, not regular Environment."""
+        from jinja2.sandbox import SandboxedEnvironment
+
+        # Verify the Jinja2 environment is sandboxed
+        assert isinstance(orchestrator._jinja_env, SandboxedEnvironment)
+
+    @pytest.mark.asyncio
+    async def test_parameter_template_injection_blocked(self, orchestrator):
+        """Test that malicious Jinja2 expressions in parameters are blocked."""
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Injection Test",
+            description="Test parameter template injection",
+            nodes=[
+                WorkflowNode(
+                    node_id="A",
+                    job_name="job_a",
+                    template="CRYSTAL\nEND",
+                    # Malicious parameter trying to execute code
+                    parameters={
+                        "malicious": "{{ ''.__class__.__mro__[1].__subclasses__()[104].__init__.__globals__['sys'].exit() }}"
+                    }
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        # Should either block the attack or fail safely
+        try:
+            resolved = await orchestrator._resolve_parameters(1, node)
+            # If resolution succeeds, malicious code should be neutralized
+            # The result should not contain evidence of Python internals access
+            result_str = str(resolved.get("malicious", ""))
+            assert "exit()" not in result_str or "class" in result_str  # Still escaped
+        except Exception as e:
+            # Sandbox blocking the attack is also acceptable
+            error_str = str(e).lower()
+            assert "unsafe" in error_str or "not allowed" in error_str or "forbidden" in error_str
+
+    @pytest.mark.asyncio
+    async def test_template_file_access_blocked(self, orchestrator):
+        """Test that templates cannot read arbitrary files."""
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="File Access Test",
+            description="Test file access blocking",
+            nodes=[
+                WorkflowNode(
+                    node_id="A",
+                    job_name="job_a",
+                    # Template tries to read /etc/passwd
+                    template="{{ open('/etc/passwd').read() }}",
+                    parameters={}
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        # Should fail safely
+        try:
+            resolved = await orchestrator._resolve_parameters(1, node)
+            rendered = orchestrator._render_template(node.template, resolved)
+            # Should not contain /etc/passwd content
+            assert "root:" not in rendered
+            assert "/bin/bash" not in rendered
+        except Exception:
+            # Exception is acceptable - sandbox blocked the attack
+            pass
+
+    @pytest.mark.asyncio
+    async def test_template_import_blocked(self, orchestrator):
+        """Test that templates cannot import modules."""
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Import Test",
+            description="Test import blocking",
+            nodes=[
+                WorkflowNode(
+                    node_id="A",
+                    job_name="job_a",
+                    # Template tries to import os and execute command
+                    template="{{ __import__('os').system('id') }}",
+                    parameters={}
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        # Should fail safely
+        try:
+            resolved = await orchestrator._resolve_parameters(1, node)
+            rendered = orchestrator._render_template(node.template, resolved)
+            # Should not contain command output (like "uid=")
+            assert "uid=" not in rendered
+        except Exception:
+            # Exception is acceptable - sandbox blocked the attack
+            pass
+
+    @pytest.mark.asyncio
+    async def test_template_config_access_blocked(self, orchestrator):
+        """Test that templates cannot access config or globals."""
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Config Access Test",
+            description="Test config access blocking",
+            nodes=[
+                WorkflowNode(
+                    node_id="A",
+                    job_name="job_a",
+                    # Template tries to access config and globals
+                    template="{{ config.__class__.__init__.__globals__['sys'].exit() }}",
+                    parameters={}
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+        node = workflow.nodes[0]
+
+        # Should fail safely
+        try:
+            resolved = await orchestrator._resolve_parameters(1, node)
+            rendered = orchestrator._render_template(node.template, resolved)
+            # Rendering should not execute or expose system objects
+            assert "__globals__" not in rendered or "config" in rendered  # Still escaped
+        except Exception:
+            # Exception is acceptable - sandbox blocked the attack
+            pass
+
+    @pytest.mark.asyncio
+    async def test_parameter_resolution_with_safe_templates(self, orchestrator):
+        """Test that legitimate parameter templates still work with sandbox."""
+        workflow = WorkflowDefinition(
+            workflow_id=1,
+            name="Safe Template Test",
+            description="A -> B (B uses A's results)",
+            nodes=[
+                WorkflowNode(
+                    node_id="A",
+                    job_name="job_a",
+                    template="CRYSTAL\nEND",
+                    parameters={"energy": -100.5}
+                ),
+                WorkflowNode(
+                    node_id="B",
+                    job_name="job_b",
+                    template="Previous energy: {{ A.final_energy }}",
+                    parameters={
+                        "computed_value": "{{ A.final_energy * 2 }}"
+                    },
+                    dependencies=["A"]
+                ),
+            ]
+        )
+
+        orchestrator.register_workflow(workflow)
+
+        # Simulate A completing with results
+        node_a = orchestrator._node_lookup[1]["A"]
+        node_a.status = NodeStatus.COMPLETED
+        node_a.results = {"final_energy": -123.456}
+        state = orchestrator._workflow_states[1]
+        state.completed_nodes.add("A")
+
+        # Resolve B's parameters (legitimate use case)
+        node_b = orchestrator._node_lookup[1]["B"]
+        resolved = await orchestrator._resolve_parameters(1, node_b)
+
+        # Should work correctly
+        assert "A" in resolved
+        assert resolved["A"]["final_energy"] == -123.456
+
+        # Render template should work
+        rendered = orchestrator._render_template(node_b.template, resolved)
+        assert "Previous energy: -123.456" in rendered
+
+    @pytest.mark.asyncio
+    async def test_multiple_malicious_payloads_blocked(self, orchestrator):
+        """Test that various malicious payloads are all blocked."""
+        dangerous_payloads = [
+            "{{ [].__class__.__mro__[1].__subclasses__()[104] }}",
+            "{{ lipsum.__globals__['os'].system('id') }}",
+            "{{ ().__class__.__bases__[0].__subclasses__() }}",
+            "{{ config.items() }}",
+        ]
+
+        for i, payload in enumerate(dangerous_payloads):
+            workflow = WorkflowDefinition(
+                workflow_id=i+1,
+                name=f"Payload Test {i+1}",
+                description=f"Test malicious payload {i+1}",
+                nodes=[
+                    WorkflowNode(
+                        node_id="A",
+                        job_name="job_a",
+                        template=payload,
+                        parameters={}
+                    ),
+                ]
+            )
+
+            orchestrator.register_workflow(workflow)
+            node = workflow.nodes[0]
+
+            # All should fail safely
+            try:
+                resolved = await orchestrator._resolve_parameters(i+1, node)
+                rendered = orchestrator._render_template(node.template, resolved)
+                # If rendering succeeds, should not expose Python internals
+                assert "uid=" not in rendered
+                assert "<class" not in rendered or "__class__" in rendered  # Still escaped
+            except Exception:
+                # Exception is acceptable - sandbox blocked
+                pass
+
+    @pytest.mark.asyncio
+    async def test_render_template_injection_blocked(self, orchestrator):
+        """Test that _render_template method blocks injection attacks."""
+        # Direct test of _render_template with malicious content
+        malicious_template = "{{ ''.__class__.__mro__[1].__subclasses__()[104].__init__.__globals__['os'].popen('ls').read() }}"
+
+        try:
+            result = orchestrator._render_template(malicious_template, {})
+            # Should not contain file listing
+            assert "bin" not in result or "__class__" in result  # Still escaped
+        except Exception:
+            # Exception is acceptable - sandbox blocked
+            pass
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

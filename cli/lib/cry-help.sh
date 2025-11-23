@@ -3,6 +3,9 @@
 # Extracted from runcrystal.monolithic lines 120-224
 # Dependencies: cry-ui.sh (for ui_banner), cry-config.sh (for theme colors)
 
+# Enable strict mode for better error handling
+set -euo pipefail
+
 # Show tutorial file with soft-wrap
 show_tutorial() {
     local TOPIC="$1"

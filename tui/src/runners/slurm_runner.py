@@ -184,7 +184,7 @@ class SLURMRunner(BaseRunner):
             yield "Transferring files to cluster..."
             async with self.connection_manager.get_connection(self.cluster_id) as conn:
                 # Create remote directory
-                await conn.run(f"mkdir -p {remote_work_dir}")
+                await conn.run(f"mkdir -p {shlex.quote(remote_work_dir)}")
 
                 # Transfer files using SFTP
                 async with conn.start_sftp_client() as sftp:
@@ -208,7 +208,7 @@ class SLURMRunner(BaseRunner):
                 # Submit job
                 yield "Submitting job to SLURM..."
                 result = await conn.run(
-                    f"cd {remote_work_dir} && sbatch job.slurm",
+                    f"cd {shlex.quote(remote_work_dir)} && sbatch job.slurm",
                     check=False
                 )
 
@@ -280,7 +280,7 @@ class SLURMRunner(BaseRunner):
 
         try:
             async with self.connection_manager.get_connection(self.cluster_id) as conn:
-                result = await conn.run(f"scancel {slurm_job_id}", check=False)
+                result = await conn.run(f"scancel {shlex.quote(slurm_job_id)}", check=False)
 
                 if result.exit_status == 0:
                     self._job_states[job_id] = SLURMJobState.CANCELLED
@@ -620,12 +620,12 @@ class SLURMRunner(BaseRunner):
 
         lines = ["#!/bin/bash"]
 
-        # Required directives - use validated values directly
-        lines.append(f"#SBATCH --job-name={config.job_name}")
+        # Required directives - escape all user-supplied values for defense in depth
+        lines.append(f"#SBATCH --job-name={shlex.quote(config.job_name)}")
         lines.append(f"#SBATCH --nodes={config.nodes}")
         lines.append(f"#SBATCH --ntasks={config.ntasks}")
         lines.append(f"#SBATCH --cpus-per-task={config.cpus_per_task}")
-        lines.append(f"#SBATCH --time={config.time_limit}")
+        lines.append(f"#SBATCH --time={shlex.quote(config.time_limit)}")
 
         # Output/error files
         lines.append("#SBATCH --output=slurm-%j.out")
@@ -663,50 +663,58 @@ class SLURMRunner(BaseRunner):
             dep_str = ":".join(config.dependencies)
             lines.append(f"#SBATCH --dependency=afterok:{dep_str}")
         if config.array:
-            # Array spec already validated
-            lines.append(f"#SBATCH --array={config.array}")
+            # Array spec already validated but still escape
+            lines.append(f"#SBATCH --array={shlex.quote(config.array)}")
 
         lines.append("")
 
         # Environment setup
         lines.append("# Environment setup")
 
-        # Load modules - already validated
+        # Load modules - already validated but still escape for defense in depth
         if config.modules:
             for module in config.modules:
-                lines.append(f"module load {module}")
+                lines.append(f"module load {shlex.quote(module)}")
 
         # Custom environment setup - IMPORTANT: Validate to prevent injection
         if config.environment_setup:
             # Split by newlines and validate each line
             for line in config.environment_setup.strip().split("\n"):
                 if line.strip():
+                    line_stripped = line.strip()
+
+                    # Only allow safe commands: export, source, or dot-source
+                    is_safe_command = (
+                        line_stripped.startswith("export ") or
+                        line_stripped.startswith("source ") or
+                        line_stripped.startswith(". ")
+                    )
+
+                    if not is_safe_command:
+                        # Reject any command that's not export/source/.
+                        raise SLURMValidationError(
+                            f"Dangerous command in environment setup: {line}\n"
+                            "Only 'export', 'source', and '.' commands are allowed"
+                        )
+
                     # Check for obviously dangerous patterns
-                    dangerous_patterns = [";", "|", "&", ">", "<", "$("]
+                    dangerous_patterns = [";", "|", "&", ">", "<", "$(", "`"]
                     has_dangerous = any(pattern in line for pattern in dangerous_patterns)
 
                     if has_dangerous:
-                        # Only allow these in safe contexts (assignments, source commands)
-                        line_stripped = line.strip()
-                        is_safe_command = (
-                            line_stripped.startswith("export ") or
-                            line_stripped.startswith("source ") or
-                            line_stripped.startswith(".")
-                        )
-
-                        if is_safe_command:
-                            # For export statements, ensure they're simple assignments
-                            # Pattern: export NAME=value (no special chars in value)
-                            if line_stripped.startswith("export "):
-                                after_export = line_stripped[7:]  # Remove "export "
-                                # Must be NAME=value format, no pipes, redirects, command subs, or chaining
-                                if any(p in after_export for p in ["|", "&", ">", "<", "$(", "`", ";"]):
-                                    raise SLURMValidationError(
-                                        f"Dangerous command in environment setup: {line}"
-                                    )
+                        # For export statements, ensure they're simple assignments
+                        # Pattern: export NAME=value (no special chars in value)
+                        if line_stripped.startswith("export "):
+                            after_export = line_stripped[7:]  # Remove "export "
+                            # Must be NAME=value format, no pipes, redirects, command subs, or chaining
+                            if any(p in after_export for p in ["|", "&", ">", "<", "$(", "`", ";"]):
+                                raise SLURMValidationError(
+                                    f"Dangerous command in environment setup: {line}"
+                                )
                         else:
+                            # For source/. commands, reject if they have dangerous patterns
                             raise SLURMValidationError(
-                                f"Dangerous command in environment setup: {line}"
+                                f"Dangerous pattern in environment setup: {line}"
                             )
 
                     lines.append(line)
@@ -716,9 +724,9 @@ class SLURMRunner(BaseRunner):
 
         lines.append("")
 
-        # Change to work directory - path already validated
+        # Change to work directory - path already validated but still escape
         lines.append("# Change to working directory")
-        lines.append(f"cd {work_dir}")
+        lines.append(f"cd {shlex.quote(work_dir)}")
 
         lines.append("")
 
@@ -830,14 +838,14 @@ class SLURMRunner(BaseRunner):
         try:
             # Query job status with state and reason
             result = await connection.run(
-                f"squeue -j {slurm_job_id} -h -o '%T|%r'",
+                f"squeue -j {shlex.quote(slurm_job_id)} -h -o '%T|%r'",
                 check=False
             )
 
             if result.exit_status != 0 or not result.stdout.strip():
                 # Job not in queue - check if completed or failed
                 sacct_result = await connection.run(
-                    f"sacct -j {slurm_job_id} -n -o State -P | head -n1",
+                    f"sacct -j {shlex.quote(slurm_job_id)} -n -o State -P | head -n1",
                     check=False
                 )
 

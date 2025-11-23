@@ -466,15 +466,33 @@ class ConnectionManager:
             return False
 
     async def _health_check_loop(self) -> None:
-        """Background task to periodically check connection health."""
+        """
+        Background task to periodically check connection health.
+
+        Uses lock-free parallel health checks to avoid stop-the-world freezing.
+        Lock is held only for microseconds during state reads/writes, not during
+        network I/O operations.
+        """
+        logger.info("Health check loop started", extra={
+            "component": "connection_manager",
+            "interval_seconds": 60
+        })
+
+        loop_iteration = 0
+
         while True:
+            loop_iteration += 1
+            start_time = time.time()
+
             try:
                 await asyncio.sleep(60)  # Check every minute
 
+                # Step 1: Gather connections to check (fast, under lock)
+                connections_to_check = []
+                connections_to_remove_stale = []
+
                 async with self._lock:
                     for cluster_id, pool in list(self._pools.items()):
-                        connections_to_remove = []
-
                         for pooled_conn in pool:
                             if pooled_conn.in_use:
                                 continue
@@ -486,28 +504,105 @@ class ConnectionManager:
                                 logger.info(
                                     f"Removing stale/idle connection for cluster {cluster_id}"
                                 )
-                                connections_to_remove.append(pooled_conn)
-                                continue
+                                connections_to_remove_stale.append((cluster_id, pooled_conn))
+                            else:
+                                # Queue for health check
+                                connections_to_check.append((cluster_id, pooled_conn))
 
-                            # Health check
-                            if not await self._health_check(pooled_conn):
-                                if (
-                                    pooled_conn.health_check_failures
-                                    >= self.MAX_HEALTH_CHECK_FAILURES
-                                ):
-                                    logger.warning(
-                                        f"Removing unhealthy connection for cluster {cluster_id}"
-                                    )
-                                    connections_to_remove.append(pooled_conn)
-
-                        # Remove connections outside iteration
-                        for pooled_conn in connections_to_remove:
+                # Step 2: Remove stale connections (fast, under lock)
+                if connections_to_remove_stale:
+                    async with self._lock:
+                        for cluster_id, pooled_conn in connections_to_remove_stale:
                             await self._remove_connection(pooled_conn)
 
+                # Step 3: Perform health checks in parallel (slow, lock-free)
+                if connections_to_check:
+                    async def check_one(cluster_id: int, pooled_conn: PooledConnection):
+                        """Health check a single connection."""
+                        try:
+                            result = await asyncio.wait_for(
+                                pooled_conn.connection.run("true", check=False),
+                                timeout=5.0
+                            )
+                            is_healthy = result.exit_status == 0
+                            return (cluster_id, pooled_conn, is_healthy, None)
+                        except Exception as e:
+                            return (cluster_id, pooled_conn, False, e)
+
+                    # Run all health checks in parallel
+                    results = await asyncio.gather(
+                        *[check_one(cid, pc) for cid, pc in connections_to_check],
+                        return_exceptions=True
+                    )
+
+                    # Step 4: Update state based on results (fast, under lock)
+                    connections_to_remove_unhealthy = []
+                    healthy_count = 0
+                    unhealthy_count = 0
+
+                    async with self._lock:
+                        for result in results:
+                            # Skip exceptions from gather
+                            if isinstance(result, Exception):
+                                logger.error(f"Health check raised exception: {result}")
+                                unhealthy_count += 1
+                                continue
+
+                            cluster_id, pooled_conn, is_healthy, error = result
+
+                            if is_healthy:
+                                pooled_conn.health_check_failures = 0
+                                healthy_count += 1
+                            else:
+                                pooled_conn.health_check_failures += 1
+                                unhealthy_count += 1
+                                if error:
+                                    logger.warning(f"Health check failed for cluster {cluster_id}: {error}")
+
+                                if pooled_conn.health_check_failures >= self.MAX_HEALTH_CHECK_FAILURES:
+                                    logger.warning(
+                                        f"Removing unhealthy connection for cluster {cluster_id} "
+                                        f"after {pooled_conn.health_check_failures} failures"
+                                    )
+                                    connections_to_remove_unhealthy.append(pooled_conn)
+
+                    # Step 5: Remove unhealthy connections (under lock)
+                    if connections_to_remove_unhealthy:
+                        async with self._lock:
+                            for pooled_conn in connections_to_remove_unhealthy:
+                                await self._remove_connection(pooled_conn)
+
+                    # Log iteration completion
+                    elapsed = time.time() - start_time
+                    logger.debug("Health check iteration completed", extra={
+                        "iteration": loop_iteration,
+                        "elapsed_seconds": round(elapsed, 3),
+                        "connections_checked": len(connections_to_check),
+                        "stale_removed": len(connections_to_remove_stale),
+                        "healthy": healthy_count,
+                        "unhealthy": unhealthy_count,
+                        "unhealthy_removed": len(connections_to_remove_unhealthy)
+                    })
+                else:
+                    # No connections to check
+                    elapsed = time.time() - start_time
+                    logger.debug("Health check iteration completed", extra={
+                        "iteration": loop_iteration,
+                        "elapsed_seconds": round(elapsed, 3),
+                        "connections_checked": 0,
+                        "stale_removed": len(connections_to_remove_stale)
+                    })
+
             except asyncio.CancelledError:
+                logger.info("Health check loop stopped")
                 break
             except Exception as e:
-                logger.error(f"Error in health check loop: {e}")
+                elapsed = time.time() - start_time
+                logger.error("Health check loop error", extra={
+                    "iteration": loop_iteration,
+                    "elapsed_seconds": round(elapsed, 3),
+                    "error": str(e)
+                }, exc_info=True)
 
     async def _remove_connection(self, pooled_conn: PooledConnection) -> None:
         """Remove and close a connection from the pool."""

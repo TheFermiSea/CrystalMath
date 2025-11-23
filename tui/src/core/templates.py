@@ -271,7 +271,7 @@ class TemplateManager:
         to prevent path traversal attacks (e.g., ../../../etc/passwd).
 
         Args:
-            path: Path to template YAML file
+            path: Path to template YAML file (relative to template_dir)
 
         Returns:
             Loaded Template object
@@ -285,15 +285,18 @@ class TemplateManager:
         # Security: Validate path is within template directory
         self._validate_template_path(path)
 
-        if not path.exists():
+        # Construct full path relative to template_dir
+        full_path = self.template_dir / path
+
+        if not full_path.exists():
             raise FileNotFoundError(f"Template file not found: {path}")
 
-        # Check cache
-        cache_key = str(path.resolve())
+        # Check cache (use resolved full path as key)
+        cache_key = str(full_path.resolve())
         if cache_key in self._template_cache:
             return self._template_cache[cache_key]
 
-        with open(path, "r") as f:
+        with open(full_path, "r") as f:
             data = yaml.safe_load(f)
 
         if not data:
@@ -319,16 +322,41 @@ class TemplateManager:
         Uses Path.resolve() to canonicalize paths and detect escapes.
 
         Args:
-            path: Path to validate
+            path: Path to validate (should be relative to template_dir)
 
         Raises:
-            ValueError: If path is outside template directory or is absolute
+            ValueError: If path is outside template directory, is absolute,
+                       is a symlink, or has invalid extension
         """
-        # Resolve both paths to absolute canonical form
-        resolved_path = Path(path).resolve()
+        path_obj = Path(path)
+
+        # SECURITY: Reject absolute paths
+        if path_obj.is_absolute():
+            raise ValueError(
+                f"Absolute paths not allowed for security: {path}"
+            )
+
+        # SECURITY: Extension allowlist - only .yml and .yaml files
+        if path_obj.suffix.lower() not in ['.yml', '.yaml']:
+            raise ValueError(
+                f"Invalid file extension '{path_obj.suffix}': only .yml and .yaml allowed"
+            )
+
+        # Construct full path (but don't resolve yet - we need to check for symlinks first)
+        full_path = self.template_dir / path_obj
+
+        # SECURITY: Reject symlinks to prevent symlink attacks
+        # Must check BEFORE resolve() since resolve() dereferences symlinks
+        if full_path.is_symlink():
+            raise ValueError(
+                f"Symlinks not allowed for security: {path}"
+            )
+
+        # Now resolve to canonical form for traversal check
+        resolved_path = full_path.resolve()
         resolved_template_dir = self.template_dir.resolve()
 
-        # Check that the file is within the template directory
+        # Check that the resolved file is within the template directory
         try:
             # This will raise ValueError if resolved_path is not relative to template_dir
             resolved_path.relative_to(resolved_template_dir)
@@ -442,34 +470,46 @@ class TemplateManager:
         templates = []
 
         # Search for .yml and .yaml files in template directory
-        for template_path in self.template_dir.rglob("*.y*ml"):
-            try:
-                template = self.load_template(template_path)
+        # SECURITY: Use specific extensions to prevent matching unintended files
+        for pattern in ["*.yml", "*.yaml"]:
+            for template_path in self.template_dir.rglob(pattern):
+                try:
+                    # Convert absolute path from rglob() to relative path for validation
+                    relative_path = template_path.relative_to(self.template_dir)
+                    template = self.load_template(relative_path)
 
-                # Filter by tags if specified
-                if tags is None or any(tag in template.tags for tag in tags):
-                    templates.append(template)
+                    # Filter by tags if specified
+                    if tags is None or any(tag in template.tags for tag in tags):
+                        templates.append(template)
 
-            except Exception as e:
-                print(f"Warning: Failed to load template {template_path}: {e}")
+                except Exception as e:
+                    print(f"Warning: Failed to load template {template_path}: {e}")
 
         return templates
 
     def save_template(self, template: Template, path: Path) -> None:
         """Save a template to a YAML file.
 
+        SECURITY: Validates path to prevent writing outside template directory.
+
         Args:
             template: Template to save
-            path: Destination path for YAML file
+            path: Destination path for YAML file (relative to template_dir)
 
         Raises:
+            ValueError: If path is invalid or outside template directory
             OSError: If file cannot be written
         """
-        path.parent.mkdir(parents=True, exist_ok=True)
+        # Security: Validate path is within template directory
+        self._validate_template_path(path)
+
+        # Construct full path relative to template_dir
+        full_path = self.template_dir / path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
 
         data = template.to_dict()
 
-        with open(path, "w") as f:
+        with open(full_path, "w") as f:
             yaml.dump(
                 data,
                 f,
@@ -478,8 +518,8 @@ class TemplateManager:
                 allow_unicode=True,
             )
 
-        # Update cache
-        cache_key = str(path.resolve())
+        # Update cache (use resolved full path as key)
+        cache_key = str(full_path.resolve())
         self._template_cache[cache_key] = template
 
     def find_template(self, name: str) -> Optional[Template]:

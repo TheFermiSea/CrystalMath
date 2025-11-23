@@ -17,9 +17,11 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable, Set
-from jinja2 import Template, Environment, TemplateSyntaxError
+from jinja2 import Template, TemplateSyntaxError
+from jinja2.sandbox import SandboxedEnvironment
 
 from .database import Database, Job
+from .dependency_utils import assert_acyclic, CircularDependencyError as DependencyUtilsCircularError
 
 
 class NodeStatus(Enum):
@@ -280,8 +282,11 @@ class WorkflowOrchestrator:
         self._monitor_task: Optional[asyncio.Task] = None
         self._running = False
 
-        # Jinja2 environment for template rendering
-        self._jinja_env = Environment(autoescape=False)
+        # SECURITY: Use sandboxed Jinja2 environment to prevent code execution attacks
+        # SandboxedEnvironment restricts access to dangerous Python builtins and attributes
+        # This prevents template injection attacks like:
+        # {{ ''.__class__.__mro__[1].__subclasses__()[104].__init__.__globals__['os'].system('rm -rf /') }}
+        self._jinja_env = SandboxedEnvironment(autoescape=False)
 
     @staticmethod
     def _get_scratch_base() -> Path:
@@ -387,42 +392,23 @@ class WorkflowOrchestrator:
         """
         Validate that workflow DAG has no circular dependencies.
 
+        Preflight check for cycles - queue_manager is the enforcement point for dependencies.
+
         Args:
             workflow: Workflow to validate
 
         Raises:
             CircularDependencyError: If circular dependency detected
         """
-        # Build adjacency list
-        graph: Dict[str, List[str]] = {}
-        for node in workflow.nodes:
-            graph[node.node_id] = node.dependencies
+        # Build graph from workflow nodes
+        graph = {node.node_id: node.dependencies for node in workflow.nodes}
 
-        # Check for cycles using DFS
-        visited: Set[str] = set()
-        rec_stack: Set[str] = set()
-
-        def has_cycle(node_id: str) -> bool:
-            visited.add(node_id)
-            rec_stack.add(node_id)
-
-            for dep in graph.get(node_id, []):
-                if dep not in visited:
-                    if has_cycle(dep):
-                        return True
-                elif dep in rec_stack:
-                    return True
-
-            rec_stack.remove(node_id)
-            return False
-
-        for node_id in graph:
-            if node_id not in visited:
-                if has_cycle(node_id):
-                    raise CircularDependencyError(
-                        f"Circular dependency detected in workflow '{workflow.name}' "
-                        f"involving node '{node_id}'"
-                    )
+        # Delegate to shared dependency_utils module for cycle detection
+        try:
+            assert_acyclic(graph, error_context=f"workflow '{workflow.name}'")
+        except DependencyUtilsCircularError as e:
+            # Re-raise as orchestrator's CircularDependencyError for API compatibility
+            raise CircularDependencyError(str(e)) from e
 
     async def start_workflow(self, workflow_id: int) -> None:
         """
@@ -717,8 +703,15 @@ class WorkflowOrchestrator:
                 user_id=None
             )
 
-            # Register completion callback for this job
-            # The callback will be invoked when the job completes
+            # Register completion callback with queue manager
+            # This creates a callback that will be invoked when the job reaches terminal status
+            async def job_completion_callback(completed_job_id: int, status: str) -> None:
+                """Callback invoked by queue manager when job completes."""
+                await self._on_node_complete(workflow_id, node, status)
+
+            self.queue_manager.register_callback(job_id, job_completion_callback)
+
+            # Also store in local tracking dict for debugging/monitoring
             if not hasattr(self, '_node_callbacks'):
                 self._node_callbacks = {}
             self._node_callbacks[job_id] = (workflow_id, node.node_id)

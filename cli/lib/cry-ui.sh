@@ -3,12 +3,13 @@
 # Description: Visual components and terminal UI utilities with theme support
 # Dependencies: cry-config.sh (for theme colors)
 
+# Enable strict mode for better error handling
+set -euo pipefail
+
 # Prevent multiple sourcing
 if [[ -n "${CRY_UI_LOADED:-}" ]]; then
     return 0
 fi
-
-# Error handling
 
 # Mark as loaded
 if [[ -n "${ZSH_VERSION:-}" ]]; then

@@ -3,7 +3,8 @@
 # Description: CRYSTAL23 hybrid MPI/OpenMP execution configuration
 # Dependencies: core, cry-ui
 
-# Error handling
+# Enable strict mode for better error handling
+set -euo pipefail
 
 # Module-level constants
 MODULE_NAME="cry-parallel"

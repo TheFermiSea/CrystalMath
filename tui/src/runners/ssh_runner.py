@@ -208,15 +208,20 @@ class SSHRunner(BaseRunner):
 
     async def get_status(self, job_handle: str) -> str:
         """
-        Get the current status of a job.
+        Get the current status of a job using robust multi-signal detection.
 
-        Checks if the remote process is still running using ps.
+        Uses three layers of status detection in priority order:
+        1. Process status (ps command) - most reliable for running jobs
+        2. Exit code file (.exit_code) - reliable for completed jobs
+        3. Output file parsing - fallback only
+
+        This approach prevents race conditions and brittle string matching issues.
 
         Args:
             job_handle: Handle returned by submit_job()
 
         Returns:
-            Status string: "pending", "running", "completed", "failed", "cancelled"
+            Status string: "pending", "running", "completed", "failed", "cancelled", "unknown"
 
         Raises:
             JobNotFoundError: If job_handle is invalid
@@ -236,41 +241,94 @@ class SSHRunner(BaseRunner):
                 except (ValueError, TypeError):
                     raise JobNotFoundError(f"Invalid PID in job handle: {pid}")
 
-                # Check if process is running
-                check_cmd = f"ps -p {validated_pid} > /dev/null 2>&1 && echo running || echo stopped"
-                result = await conn.run(check_cmd, check=False)
+                if validated_pid <= 0:
+                    raise JobNotFoundError(f"Invalid PID (must be > 0): {validated_pid}")
 
-                if "running" in result.stdout:
-                    job_info["status"] = "running"
-                    return "running"
+                # Signal 1: Check if process is running (most reliable)
+                try:
+                    check_cmd = f"ps -p {validated_pid} -o pid= 2>/dev/null"
+                    result = await conn.run(check_cmd, check=False, timeout=5)
+                    if result.exit_status == 0 and result.stdout.strip():
+                        # Process exists and is running
+                        job_info["status"] = "running"
+                        return "running"
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout checking process status for PID {validated_pid}")
+                except Exception as e:
+                    logger.debug(f"Process check failed (expected if job finished): {e}")
 
-                # Process stopped, check output for completion status
+                # Signal 2: Check exit code file (reliable for completed jobs)
                 quoted_work_dir = shlex.quote(remote_work_dir)
-                check_output_cmd = f"test -f {quoted_work_dir}/output.log && echo exists"
-                result = await conn.run(check_output_cmd, check=False)
-
-                if "exists" in result.stdout:
-                    # Check for error indicators in output
-                    output_file = f"{quoted_work_dir}/output.log"
-                    error_check_cmd = (
-                        f"grep -i 'error\\|failed\\|abort' {output_file} "
-                        f"> /dev/null 2>&1 && echo failed || echo completed"
+                try:
+                    exit_code_cmd = (
+                        f"test -f {quoted_work_dir}/.exit_code && "
+                        f"cat {quoted_work_dir}/.exit_code"
                     )
-                    result = await conn.run(error_check_cmd, check=False)
+                    result = await conn.run(exit_code_cmd, check=False, timeout=5)
 
-                    if "failed" in result.stdout:
-                        job_info["status"] = "failed"
-                        return "failed"
-                    else:
-                        job_info["status"] = "completed"
-                        return "completed"
+                    if result.exit_status == 0 and result.stdout.strip():
+                        try:
+                            exit_code = int(result.stdout.strip())
+                            if exit_code == 0:
+                                job_info["status"] = "completed"
+                                return "completed"
+                            else:
+                                job_info["status"] = "failed"
+                                return "failed"
+                        except ValueError:
+                            logger.warning(f"Invalid exit code in .exit_code: {result.stdout.strip()}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout reading exit code file")
+                except Exception as e:
+                    logger.debug(f"Exit code check failed: {e}")
 
-                # No output file, job likely failed
-                job_info["status"] = "failed"
-                return "failed"
+                # Signal 3: Parse output file (fallback only)
+                try:
+                    output_file = f"{quoted_work_dir}/output.log"
+                    tail_cmd = f"tail -100 {output_file} 2>/dev/null"
+                    result = await conn.run(tail_cmd, check=False, timeout=5)
 
+                    if result.exit_status == 0 and result.stdout:
+                        output_lower = result.stdout.lower()
+
+                        # Check for error indicators FIRST (more specific)
+                        if any(marker in output_lower for marker in [
+                            "error termination",
+                            "abnormal termination",
+                            "segmentation fault",
+                            "killed by signal"
+                        ]):
+                            job_info["status"] = "failed"
+                            return "failed"
+
+                        # Check for completion indicators (less specific)
+                        if any(marker in output_lower for marker in [
+                            "scf ended",
+                            "eeeeeeeeee termination",
+                            "terminated - job complete",
+                            "normal termination"
+                        ]):
+                            job_info["status"] = "completed"
+                            return "completed"
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout reading output file")
+                except Exception as e:
+                    logger.debug(f"Output parsing failed: {e}")
+
+                # Unknown status - all detection methods failed
+                logger.warning(
+                    f"Could not determine status for job {validated_pid}. "
+                    f"Process not running, no exit code, and output parsing inconclusive."
+                )
+                job_info["status"] = "unknown"
+                return "unknown"
+
+        except JobNotFoundError:
+            # Re-raise JobNotFoundError without wrapping
+            raise
         except Exception as e:
             logger.error(f"Error checking job status: {e}")
+            job_info["status"] = "unknown"
             return "unknown"
 
     async def cancel_job(self, job_handle: str, timeout: float = 10.0) -> bool:
@@ -587,16 +645,35 @@ class SSHRunner(BaseRunner):
         Returns:
             Bash script content
         """
+        # Validate mpi_ranks BEFORE using it (security: prevent command injection)
+        if mpi_ranks is not None:
+            if not isinstance(mpi_ranks, int) or mpi_ranks <= 0:
+                raise ValueError(f"Invalid mpi_ranks: must be positive integer, got {mpi_ranks}")
+
         # Determine executable and parallelization
+        # Quote all paths and variables for security (convert Path objects to strings)
+        quoted_crystal_root = shlex.quote(str(self.remote_crystal_root))
         if mpi_ranks and mpi_ranks > 1:
-            executable = f"{self.remote_crystal_root}/bin/*/v*/Pcrystal"
+            # Use glob expansion in a safe way - the shell expands this after quoting the base path
+            executable = f"{quoted_crystal_root}/bin/*/v*/Pcrystal"
             run_cmd = f"mpirun -np {mpi_ranks} {executable}"
         else:
-            executable = f"{self.remote_crystal_root}/bin/*/v*/crystalOMP"
+            # Use glob expansion in a safe way
+            executable = f"{quoted_crystal_root}/bin/*/v*/crystalOMP"
             run_cmd = executable
 
-        # Set thread count
-        omp_threads = threads or 4
+        # Set thread count (validate to prevent command injection via environment variable)
+        if threads is not None:
+            if not isinstance(threads, int) or threads <= 0:
+                raise ValueError(f"Invalid threads: must be positive integer, got {threads}")
+            omp_threads = threads
+        else:
+            omp_threads = 4
+
+        # Quote all user-controlled strings to prevent command injection
+        quoted_work_dir = shlex.quote(str(remote_work_dir))
+        quoted_input_file = shlex.quote(str(input_file))
+        quoted_bashrc = shlex.quote(f"{self.remote_crystal_root}/cry23.bashrc")
 
         script = f"""#!/bin/bash
 # CRYSTAL23 job execution script
@@ -605,11 +682,11 @@ class SSHRunner(BaseRunner):
 set -e  # Exit on error
 
 # Change to work directory
-cd {remote_work_dir}
+cd {quoted_work_dir}
 
 # Source CRYSTAL environment (if exists)
-if [ -f {self.remote_crystal_root}/cry23.bashrc ]; then
-    source {self.remote_crystal_root}/cry23.bashrc
+if [ -f {quoted_bashrc} ]; then
+    source {quoted_bashrc}
 fi
 
 # Set OpenMP threads
@@ -625,11 +702,14 @@ echo "OMP_NUM_THREADS: $OMP_NUM_THREADS"
 echo "================================"
 echo ""
 
-# Run CRYSTAL
-{run_cmd} < {input_file}
+# Run CRYSTAL (don't exit on error to capture exit code)
+set +e
+{run_cmd} < {quoted_input_file}
 
-# Capture exit code
+# Capture exit code IMMEDIATELY after CRYSTAL execution
 EXIT_CODE=$?
+echo $EXIT_CODE > .exit_code
+set -e
 
 echo ""
 echo "=== CRYSTAL23 Job Finished ==="
@@ -729,7 +809,14 @@ exit $EXIT_CODE
                         break
 
                 if should_download:
-                    remote_file = f"{remote_dir}/{filename}"
+                    # Security: Validate filename to prevent path traversal attacks
+                    # Only allow filenames without path separators
+                    if "/" in filename or "\\" in filename or filename in (".", ".."):
+                        logger.warning(f"Skipping file with suspicious name: {filename}")
+                        continue
+
+                    # Use shlex.quote for remote path construction
+                    remote_file = f"{shlex.quote(remote_dir)}/{shlex.quote(filename)}"
                     local_file = local_dir / filename
                     try:
                         await sftp.get(remote_file, str(local_file))

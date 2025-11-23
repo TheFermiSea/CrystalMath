@@ -3,12 +3,13 @@
 # Description: File staging and preparation for crystallization operations
 # Dependencies: core, cry-ui, cry-scratch
 
+# Enable strict mode for better error handling
+set -euo pipefail
+
 # Prevent multiple sourcing
 if [[ -n "${CRY_STAGE_LOADED:-}" ]]; then
     return 0
 fi
-
-# Error handling
 
 # Mark as loaded
 if [[ -n "${ZSH_VERSION:-}" ]]; then

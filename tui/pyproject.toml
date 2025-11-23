@@ -1,3 +1,7 @@
+# Package Manager: uv (recommended)
+# Install with: uv pip install -e ".[dev]"
+# Or: uv sync (if using uv project management)
+
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
