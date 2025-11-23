@@ -27,6 +27,7 @@ from .base import (
     ConnectionError as RunnerConnectionError
 )
 from ..core.connection_manager import ConnectionManager
+from ..core.constants import JobStatus
 
 
 logger = logging.getLogger(__name__)
@@ -193,7 +194,7 @@ class SSHRunner(BaseRunner):
                     "remote_work_dir": str(remote_work_dir),
                     "local_work_dir": str(work_dir),
                     "submitted_at": time.time(),
-                    "status": "running",
+                    "status": JobStatus.RUNNING,
                 }
 
                 logger.info(
@@ -250,8 +251,8 @@ class SSHRunner(BaseRunner):
                     result = await conn.run(check_cmd, check=False, timeout=5)
                     if result.exit_status == 0 and result.stdout.strip():
                         # Process exists and is running
-                        job_info["status"] = "running"
-                        return "running"
+                        job_info["status"] = JobStatus.RUNNING
+                        return JobStatus.RUNNING
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout checking process status for PID {validated_pid}")
                 except Exception as e:
@@ -270,11 +271,11 @@ class SSHRunner(BaseRunner):
                         try:
                             exit_code = int(result.stdout.strip())
                             if exit_code == 0:
-                                job_info["status"] = "completed"
-                                return "completed"
+                                job_info["status"] = JobStatus.COMPLETED
+                                return JobStatus.COMPLETED
                             else:
-                                job_info["status"] = "failed"
-                                return "failed"
+                                job_info["status"] = JobStatus.FAILED
+                                return JobStatus.FAILED
                         except ValueError:
                             logger.warning(f"Invalid exit code in .exit_code: {result.stdout.strip()}")
                 except asyncio.TimeoutError:
@@ -298,8 +299,8 @@ class SSHRunner(BaseRunner):
                             "segmentation fault",
                             "killed by signal"
                         ]):
-                            job_info["status"] = "failed"
-                            return "failed"
+                            job_info["status"] = JobStatus.FAILED
+                            return JobStatus.FAILED
 
                         # Check for completion indicators (less specific)
                         if any(marker in output_lower for marker in [
@@ -308,8 +309,8 @@ class SSHRunner(BaseRunner):
                             "terminated - job complete",
                             "normal termination"
                         ]):
-                            job_info["status"] = "completed"
-                            return "completed"
+                            job_info["status"] = JobStatus.COMPLETED
+                            return JobStatus.COMPLETED
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout reading output file")
                 except Exception as e:
@@ -446,7 +447,7 @@ class SSHRunner(BaseRunner):
 
                             # Check if job has finished
                             status = await self.get_status(job_handle)
-                            if status in ("completed", "failed", "cancelled"):
+                            if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
                                 # Read any remaining output
                                 break
 

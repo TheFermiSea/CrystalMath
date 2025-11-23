@@ -71,8 +71,8 @@ class RunnerType:
         return [cls.LOCAL, cls.SSH, cls.SLURM]
 
 
-class NodeStatus:
-    """Workflow node status constants."""
+class NodeStatusLowercase:
+    """Workflow node status constants (lowercase)."""
     PENDING = "pending"
     READY = "ready"
     QUEUED = "queued"
@@ -95,8 +95,32 @@ class NodeStatus:
         ]
 
 
-class WorkflowStatus:
-    """Workflow execution status constants."""
+class NodeStatusUppercase:
+    """Workflow node status constants (uppercase, for workflow.py compatibility)."""
+    PENDING = "PENDING"
+    READY = "READY"
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+
+    @classmethod
+    def all(cls):
+        """Return all valid node status values."""
+        return [
+            cls.PENDING,
+            cls.READY,
+            cls.QUEUED,
+            cls.RUNNING,
+            cls.COMPLETED,
+            cls.FAILED,
+            cls.SKIPPED,
+        ]
+
+
+class WorkflowStatusLowercase:
+    """Workflow execution status constants (lowercase)."""
     PENDING = "pending"
     RUNNING = "running"
     PAUSED = "paused"
@@ -114,4 +138,30 @@ class WorkflowStatus:
             cls.COMPLETED,
             cls.FAILED,
             cls.CANCELLED,
+        ]
+
+
+class WorkflowStatusUppercase:
+    """Workflow execution status constants (uppercase, for workflow.py compatibility)."""
+    CREATED = "CREATED"
+    VALIDATING = "VALIDATING"
+    VALID = "VALID"
+    INVALID = "INVALID"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    PARTIAL = "PARTIAL"
+
+    @classmethod
+    def all(cls):
+        """Return all valid workflow status values."""
+        return [
+            cls.CREATED,
+            cls.VALIDATING,
+            cls.VALID,
+            cls.INVALID,
+            cls.RUNNING,
+            cls.COMPLETED,
+            cls.FAILED,
+            cls.PARTIAL,
         ]

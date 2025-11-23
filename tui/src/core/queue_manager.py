@@ -544,7 +544,7 @@ class QueueManager:
                         self._user_last_scheduled[queued_job.user_id] = datetime.now()
 
                     # Update database
-                    self.db.update_status(job_id, "RUNNING")
+                    self.db.update_status(job_id, JobStatus.RUNNING)
                     # Invalidate cache since status changed
                     self._invalidate_status_cache(job_id)
                     # DON'T remove from queue_state yet - keep for retry logic
@@ -582,7 +582,7 @@ class QueueManager:
             for job_id, queued_job in self._jobs.items():
                 # Check job status from batch query cache (O(1) lookup)
                 status = job_statuses.get(job_id)
-                if not status or status not in ("PENDING", "QUEUED"):
+                if not status or status not in (JobStatus.PENDING, JobStatus.QUEUED):
                     continue
 
                 # Check if dependencies are satisfied (using locked helper)
@@ -647,7 +647,7 @@ class QueueManager:
         # Check if all dependencies are completed
         for dep_id in queued_job.dependencies:
             status = dep_statuses.get(dep_id)
-            if status != "COMPLETED":
+            if status != JobStatus.COMPLETED:
                 return False
 
         return True
@@ -890,7 +890,7 @@ class QueueManager:
                 self.db.conn.commit()
 
                 # Reset job status to QUEUED
-                self.db.update_status(job_id, "QUEUED")
+                self.db.update_status(job_id, JobStatus.QUEUED)
 
                 logger.info(
                     f"Retrying job {job_id} (attempt {retry_count}/{max_retries})"
@@ -900,7 +900,7 @@ class QueueManager:
                     f"Job {job_id} failed after {max_retries} retries, giving up"
                 )
                 # Mark as permanently failed
-                self.db.update_status(job_id, "FAILED")
+                self.db.update_status(job_id, JobStatus.FAILED)
 
                 # Remove from queue_state on permanent failure
                 self._remove_job_from_database(job_id)
@@ -908,7 +908,7 @@ class QueueManager:
                 # Cancel dependent jobs
                 if job_id in self._dependents:
                     for dependent_id in self._dependents[job_id]:
-                        self.db.update_status(dependent_id, "FAILED")
+                        self.db.update_status(dependent_id, JobStatus.FAILED)
                         # Also remove dependent from queue
                         self._remove_job_from_database(dependent_id)
                         if dependent_id in self._jobs:
