@@ -208,20 +208,20 @@ class TestMigrationAtomicity:
         with TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.db"
 
-            # Create database (should be at v2)
+            # Create database (should be at v4)
             db = Database(db_path)
             try:
                 version = db.get_schema_version()
 
-                # Verify schema_version table has exactly one entry
+                # Verify schema_version table has all migration entries
                 with db.connection() as conn:
                     cursor = conn.execute("SELECT version FROM schema_version ORDER BY version")
                     versions = [row[0] for row in cursor.fetchall()]
 
-                    # Should have v1 and v2 entries
-                    assert versions == [1, 2], f"Unexpected version history: {versions}"
+                    # Should have v1, v2, v3, v4, v5 entries (all migrations applied)
+                    assert versions == [1, 2, 3, 4, 5], f"Unexpected version history: {versions}"
 
-                    # Verify v2 tables exist
+                    # Verify all tables exist
                     cursor = conn.execute(
                         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
                     )
@@ -229,7 +229,7 @@ class TestMigrationAtomicity:
 
                     expected_tables = {
                         'jobs', 'schema_version', 'clusters',
-                        'remote_jobs', 'job_dependencies'
+                        'remote_jobs', 'job_dependencies', 'job_results'
                     }
                     assert expected_tables.issubset(tables), \
                         f"Missing tables: {expected_tables - tables}"
@@ -295,14 +295,14 @@ class TestMigrationEdgeCases:
                     )
                     tables = {row[0] for row in cursor.fetchall()}
 
-                    required_tables = {'jobs', 'schema_version', 'clusters', 'remote_jobs', 'job_dependencies'}
+                    required_tables = {'jobs', 'schema_version', 'clusters', 'remote_jobs', 'job_dependencies', 'job_results'}
                     assert required_tables.issubset(tables), \
                         f"Missing tables: {required_tables - tables}"
             finally:
                 db.close()
 
     def test_existing_v1_database_upgrade(self):
-        """Test upgrading an existing v1 database to v2."""
+        """Test upgrading an existing v1 database to latest version."""
         with TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.db"
 
@@ -315,13 +315,13 @@ class TestMigrationEdgeCases:
             finally:
                 conn.close()
 
-            # Now open with Database class (should trigger migration)
+            # Now open with Database class (should trigger migration to v5)
             db = Database(db_path)
             try:
                 version = db.get_schema_version()
-                assert version == 2, f"Database not upgraded: version {version}"
+                assert version == 5, f"Database not upgraded to v5: version {version}"
 
-                # Verify v2 tables exist
+                # Verify all tables exist
                 with db.connection() as conn:
                     cursor = conn.execute(
                         "SELECT name FROM sqlite_master WHERE type='table'"
@@ -331,6 +331,7 @@ class TestMigrationEdgeCases:
                     assert 'clusters' in tables, "clusters table missing after migration"
                     assert 'remote_jobs' in tables, "remote_jobs table missing after migration"
                     assert 'job_dependencies' in tables, "job_dependencies table missing after migration"
+                    assert 'job_results' in tables, "job_results table missing after migration"
             finally:
                 db.close()
 

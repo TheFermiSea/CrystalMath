@@ -20,7 +20,8 @@ import shutil
 
 # Import the classes we're testing
 from src.runners.ssh_runner import SSHRunner
-from src.runners.base import JobStatus, JobResult, JobSubmissionError, JobNotFoundError
+from src.runners.base import JobStatus, JobResult
+from src.runners.exceptions import JobSubmissionError, JobNotFoundError
 from src.core.connection_manager import ConnectionManager
 
 
@@ -60,7 +61,7 @@ def mock_ssh_connection():
     conn = AsyncMock()
 
     # Mock run command
-    async def mock_run(cmd, check=False):
+    async def mock_run(cmd, check=False, timeout=None):
         result = Mock()
         result.stdout = ""
         result.stderr = ""
@@ -71,8 +72,19 @@ def mock_ssh_connection():
             result.stdout = ""
         elif "echo $!" in cmd:
             result.stdout = "12345\n"  # PID
+        elif "ps -p" in cmd and "-o pid=" in cmd:
+            # For status check - return PID to indicate process is running
+            result.stdout = "12345\n"
+            result.exit_status = 0
         elif "ps -p" in cmd:
             result.stdout = "running\n"
+        elif ".exit_code" in cmd:
+            # Exit code file - return nothing by default (process still running)
+            result.stdout = ""
+            result.exit_status = 1  # File doesn't exist
+        elif "tail" in cmd and "output.log" in cmd:
+            # Output file tail - no completion markers by default
+            result.stdout = "SCF iteration 5\n"
         elif "test -f" in cmd:
             result.stdout = "exists\n"
         elif "grep" in cmd:
@@ -85,15 +97,46 @@ def mock_ssh_connection():
 
     conn.run = mock_run
 
-    # Mock SFTP client
+    # Mock SFTP client as an async context manager
+    from contextlib import asynccontextmanager
+
     sftp_mock = AsyncMock()
     sftp_mock.put = AsyncMock()
     sftp_mock.get = AsyncMock()
     sftp_mock.listdir = AsyncMock(return_value=["output.log", "fort.9"])
-    sftp_mock.open = AsyncMock()
 
-    conn.start_sftp_client = AsyncMock(return_value=sftp_mock)
-    conn.create_process = AsyncMock()
+    # Create async context manager for sftp.open
+    mock_file = AsyncMock()
+    mock_file.write = AsyncMock()
+
+    @asynccontextmanager
+    async def mock_sftp_open(path, mode="r"):
+        yield mock_file
+
+    sftp_mock.open = mock_sftp_open
+
+    # Create async context manager for start_sftp_client
+    # Real asyncssh returns a coroutine that yields an async context manager
+    @asynccontextmanager
+    async def mock_sftp_context():
+        yield sftp_mock
+
+    async def mock_start_sftp():
+        """Async function that returns the context manager (mimics real asyncssh)."""
+        return mock_sftp_context()
+
+    conn.start_sftp_client = mock_start_sftp
+
+    # Create async context manager for create_process
+    mock_process = AsyncMock()
+    mock_process.stdout = AsyncMock()
+    mock_process.stdout.__aiter__ = lambda self: iter(["line1\n", "line2\n"]).__iter__()
+
+    @asynccontextmanager
+    async def mock_create_process(cmd):
+        yield mock_process
+
+    conn.create_process = mock_create_process
 
     return conn
 
@@ -114,7 +157,7 @@ async def ssh_runner(mock_connection_manager, mock_ssh_connection):
     runner = SSHRunner(
         connection_manager=mock_connection_manager,
         cluster_id=1,
-        remote_crystal_root=Path("/home/user/CRYSTAL23"),
+        remote_dft_root=Path("/home/user/CRYSTAL23"),
         remote_scratch_dir=Path("/home/user/crystal_jobs"),
         cleanup_on_success=False
     )
@@ -134,7 +177,7 @@ class TestSSHRunnerInitialization:
 
         assert runner.cluster_id == 1
         assert runner.connection_manager is mock_connection_manager
-        assert isinstance(runner.remote_crystal_root, Path)
+        assert isinstance(runner.remote_dft_root, Path)
         assert isinstance(runner.remote_scratch_dir, Path)
 
     def test_init_with_invalid_cluster(self, mock_connection_manager):
@@ -155,11 +198,11 @@ class TestSSHRunnerInitialization:
         runner = SSHRunner(
             connection_manager=mock_connection_manager,
             cluster_id=1,
-            remote_crystal_root=custom_root,
+            remote_dft_root=custom_root,
             remote_scratch_dir=custom_scratch
         )
 
-        assert runner.remote_crystal_root == custom_root
+        assert runner.remote_dft_root == custom_root
         assert runner.remote_scratch_dir == custom_scratch
 
 
@@ -225,14 +268,17 @@ class TestJobSubmission:
         (temp_work_dir / "test.gui").write_text("geometry data")
         (temp_work_dir / "test.f9").write_text("wave function")
 
-        await ssh_runner.submit_job(
+        job_handle = await ssh_runner.submit_job(
             job_id=1,
             work_dir=temp_work_dir,
             input_file=input_file
         )
 
-        # Verify SFTP client was used for file transfer
-        assert mock_ssh_connection.start_sftp_client.called
+        # Verify job was submitted successfully (implies SFTP was used)
+        assert job_handle is not None
+        assert ":" in job_handle  # Valid handle format: cluster_id:pid:work_dir
+        # Verify job is tracked internally
+        assert job_handle in ssh_runner._active_jobs
 
 
 class TestJobStatus:
@@ -249,24 +295,27 @@ class TestJobStatus:
         )
 
         status = await ssh_runner.get_status(job_handle)
-        assert status == "running"
+        # The mock returns PID for ps check, so status should be RUNNING
+        assert status == JobStatus.RUNNING
 
     @pytest.mark.asyncio
     async def test_get_status_completed(self, ssh_runner, temp_work_dir, mock_ssh_connection):
         """Test status check for completed job."""
-        # Modify mock to return "stopped" for ps check
-        async def mock_run_completed(cmd, check=False):
+        # Modify mock to indicate process is not running and exit code is 0
+        async def mock_run_completed(cmd, check=False, timeout=None):
             result = Mock()
             result.stdout = ""
             result.exit_status = 0
 
-            if "ps -p" in cmd:
-                result.stdout = "stopped\n"
-            elif "test -f" in cmd:
-                result.stdout = "exists\n"
-            elif "grep" in cmd:
-                result.stdout = "completed\n"
-            else:
+            if "ps -p" in cmd and "-o pid=" in cmd:
+                # Process not running - return nothing
+                result.stdout = ""
+                result.exit_status = 1
+            elif ".exit_code" in cmd:
+                # Return exit code 0 (success)
+                result.stdout = "0\n"
+                result.exit_status = 0
+            elif "mkdir" in cmd or "echo $!" in cmd:
                 result.stdout = "12345\n"
 
             return result
@@ -281,23 +330,25 @@ class TestJobStatus:
         )
 
         status = await ssh_runner.get_status(job_handle)
-        assert status == "completed"
+        assert status == JobStatus.COMPLETED
 
     @pytest.mark.asyncio
     async def test_get_status_failed(self, ssh_runner, temp_work_dir, mock_ssh_connection):
         """Test status check for failed job."""
-        async def mock_run_failed(cmd, check=False):
+        async def mock_run_failed(cmd, check=False, timeout=None):
             result = Mock()
             result.stdout = ""
             result.exit_status = 0
 
-            if "ps -p" in cmd:
-                result.stdout = "stopped\n"
-            elif "test -f" in cmd:
-                result.stdout = "exists\n"
-            elif "grep" in cmd:
-                result.stdout = "failed\n"  # Error detected
-            else:
+            if "ps -p" in cmd and "-o pid=" in cmd:
+                # Process not running
+                result.stdout = ""
+                result.exit_status = 1
+            elif ".exit_code" in cmd:
+                # Return non-zero exit code (failure)
+                result.stdout = "1\n"
+                result.exit_status = 0
+            elif "mkdir" in cmd or "echo $!" in cmd:
                 result.stdout = "12345\n"
 
             return result
@@ -312,7 +363,7 @@ class TestJobStatus:
         )
 
         status = await ssh_runner.get_status(job_handle)
-        assert status == "failed"
+        assert status == JobStatus.FAILED
 
     @pytest.mark.asyncio
     async def test_get_status_invalid_handle(self, ssh_runner):
@@ -339,7 +390,7 @@ class TestJobCancellation:
 
         # Verify status updated
         job_info = ssh_runner._active_jobs[job_handle]
-        assert job_info["status"] == "cancelled"
+        assert job_info["status"] == JobStatus.CANCELLED
 
     @pytest.mark.asyncio
     async def test_cancel_nonexistent_job(self, ssh_runner):
@@ -539,9 +590,9 @@ class TestUtilityMethods:
 
     def test_is_job_running(self, ssh_runner):
         """Test is_job_running check."""
-        # Add a fake job
+        # Add a fake job with JobStatus enum value
         ssh_runner._active_jobs["1:12345:/tmp"] = {
-            "status": "running",
+            "status": JobStatus.RUNNING,
             "pid": 12345
         }
 

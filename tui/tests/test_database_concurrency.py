@@ -55,7 +55,7 @@ class TestWALConfiguration:
         """Test that busy_timeout is configured."""
         cursor = temp_db.conn.execute("PRAGMA busy_timeout")
         timeout = cursor.fetchone()[0]
-        assert timeout == 5000  # 5 seconds in milliseconds
+        assert timeout == 10000  # 10 seconds in milliseconds
 
     def test_synchronous_normal(self, temp_db):
         """Test that synchronous is set to NORMAL."""
@@ -498,7 +498,7 @@ class TestPragmaSettings:
 
         cursor = temp_db.conn.execute("PRAGMA busy_timeout")
         busy_timeout = cursor.fetchone()[0]
-        assert busy_timeout == 5000
+        assert busy_timeout == 10000
 
         cursor = temp_db.conn.execute("PRAGMA synchronous")
         synchronous = cursor.fetchone()[0]

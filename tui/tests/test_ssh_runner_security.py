@@ -19,7 +19,7 @@ from unittest.mock import Mock, AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.runners.ssh_runner import SSHRunner
-from src.runners.base import JobSubmissionError, JobNotFoundError
+from src.runners.exceptions import JobSubmissionError, JobNotFoundError
 
 
 class TestPIDValidation:
@@ -557,14 +557,17 @@ class TestDownloadPathTraversal:
         mock_sftp.listdir = AsyncMock(return_value=malicious_filenames)
         mock_sftp.get = AsyncMock()
 
-        # Setup async context manager correctly
+        # Setup async context manager correctly - start_sftp_client returns awaitable
         class SftpContext:
             async def __aenter__(self):
                 return mock_sftp
             async def __aexit__(self, *args):
                 pass
 
-        mock_conn.start_sftp_client = lambda: SftpContext()
+        async def mock_start_sftp():
+            return SftpContext()
+
+        mock_conn.start_sftp_client = mock_start_sftp
 
         # Attempt download
         local_dir = tmp_path / "downloads"
@@ -604,14 +607,17 @@ class TestDownloadPathTraversal:
         mock_sftp.listdir = AsyncMock(return_value=valid_filenames)
         mock_sftp.get = AsyncMock()
 
-        # Setup async context manager correctly
+        # Setup async context manager correctly - start_sftp_client returns awaitable
         class SftpContext:
             async def __aenter__(self):
                 return mock_sftp
             async def __aexit__(self, *args):
                 pass
 
-        mock_conn.start_sftp_client = lambda: SftpContext()
+        async def mock_start_sftp():
+            return SftpContext()
+
+        mock_conn.start_sftp_client = mock_start_sftp
 
         # Attempt download
         local_dir = tmp_path / "downloads"

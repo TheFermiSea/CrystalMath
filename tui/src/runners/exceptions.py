@@ -1,8 +1,22 @@
 """
-Runner-specific exceptions for CRYSTAL job execution.
+Runner-specific exceptions for DFT job execution.
 
 This module defines a hierarchy of exceptions for handling errors
 during job execution across different runner backends (local, SSH, SLURM).
+
+Exception Hierarchy:
+    RunnerError (base)
+    ├── ConnectionError - Remote connection failures
+    ├── ExecutionError - Job execution failures
+    ├── TimeoutError - Timeout exceeded
+    ├── ConfigurationError - Invalid configuration
+    ├── ResourceError - Resource unavailable
+    ├── CancellationError - Job cancellation failures
+    ├── JobSubmissionError - Job submission failures
+    ├── JobNotFoundError - Job handle not found
+    ├── LocalRunnerError - Local execution failures
+    ├── SSHRunnerError - SSH connection/execution failures
+    └── SLURMRunnerError - SLURM scheduler failures
 """
 
 
@@ -153,3 +167,112 @@ class CancellationError(RunnerError):
         super().__init__(message)
         self.job_handle = job_handle
         self.reason = reason
+
+
+class JobSubmissionError(RunnerError):
+    """
+    Raised when job submission fails.
+
+    This can occur when:
+    - Input file is invalid or missing
+    - Work directory cannot be created
+    - Executable is not found
+    - Resource limits prevent submission
+
+    Attributes:
+        job_name: Name of the job that failed to submit
+        reason: Specific reason for submission failure
+    """
+
+    def __init__(self, message: str, job_name: str = "", reason: str = ""):
+        super().__init__(message)
+        self.job_name = job_name
+        self.reason = reason
+
+
+class JobNotFoundError(RunnerError):
+    """
+    Raised when a job handle is not found or invalid.
+
+    This can occur when:
+    - Job was never submitted
+    - Job has been cleaned up
+    - Invalid job handle format
+    - Job exists in different runner instance
+
+    Attributes:
+        job_handle: The job handle that was not found
+    """
+
+    def __init__(self, message: str, job_handle: str = ""):
+        super().__init__(message)
+        self.job_handle = job_handle
+
+
+# -------------------------------------------------------------------------
+# Runner-Specific Exceptions
+# -------------------------------------------------------------------------
+
+
+class LocalRunnerError(RunnerError):
+    """
+    Raised for local runner-specific errors.
+
+    This includes:
+    - Process spawn failures
+    - Local file system errors
+    - Environment variable issues
+
+    Attributes:
+        pid: Process ID if available
+    """
+
+    def __init__(self, message: str, pid: int | None = None):
+        super().__init__(message)
+        self.pid = pid
+
+
+class SSHRunnerError(RunnerError):
+    """
+    Raised for SSH runner-specific errors.
+
+    This includes:
+    - SSH authentication failures
+    - SFTP transfer errors
+    - Remote command execution failures
+
+    Attributes:
+        host: Remote host that caused the error
+        command: Remote command that failed (if applicable)
+    """
+
+    def __init__(self, message: str, host: str = "", command: str = ""):
+        super().__init__(message)
+        self.host = host
+        self.command = command
+
+
+class SLURMRunnerError(RunnerError):
+    """
+    Raised for SLURM runner-specific errors.
+
+    This includes:
+    - sbatch submission failures
+    - squeue query failures
+    - scancel failures
+    - Partition or QOS issues
+
+    Attributes:
+        slurm_job_id: SLURM job ID if available
+        slurm_error_code: SLURM error code if available
+    """
+
+    def __init__(
+        self,
+        message: str,
+        slurm_job_id: str = "",
+        slurm_error_code: int | None = None
+    ):
+        super().__init__(message)
+        self.slurm_job_id = slurm_job_id
+        self.slurm_error_code = slurm_error_code

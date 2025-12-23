@@ -48,6 +48,7 @@ def mock_queue_manager():
     queue_manager = Mock()
     queue_manager.enqueue = AsyncMock()
     queue_manager.stop_job = AsyncMock()
+    queue_manager.cancel_job = AsyncMock()
     return queue_manager
 
 
@@ -1522,6 +1523,9 @@ class TestWorkflowDirectoryCleanup:
         # Verify directory exists
         assert work_dir.exists()
 
+        # Mark workflow as completed (cleanup only removes terminal state directories)
+        orchestrator._workflow_states[1].status = WorkflowStatus.COMPLETED
+
         # Manually call cleanup
         orchestrator._cleanup_work_dirs()
 
@@ -1786,6 +1790,243 @@ class TestJinja2SecurityHardening:
         except Exception:
             # Exception is acceptable - sandbox blocked
             pass
+
+
+class TestOutputParsers:
+    """Tests for custom output parser functionality."""
+
+    @pytest.mark.asyncio
+    async def test_register_custom_parser(self, orchestrator):
+        """Test registering a custom output parser."""
+        # Define a custom parser
+        async def custom_parser(work_dir: Path):
+            return {"custom_value": 42}
+
+        # Register it
+        orchestrator.register_parser("custom", custom_parser)
+
+        # Verify it's registered
+        parser = orchestrator._get_output_parser("custom")
+        assert parser is not None
+        assert parser == custom_parser
+
+    @pytest.mark.asyncio
+    async def test_builtin_parsers_registered(self, orchestrator):
+        """Test that built-in parsers are automatically registered."""
+        assert orchestrator._get_output_parser("energy") is not None
+        assert orchestrator._get_output_parser("bandgap") is not None
+        assert orchestrator._get_output_parser("lattice") is not None
+
+    @pytest.mark.asyncio
+    async def test_parse_energy(self, orchestrator, tmp_path):
+        """Test energy parser extracts final energy."""
+        # Create mock output file
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        output_file = work_dir / "job.out"
+
+        output_content = """
+ SOME PREVIOUS OUTPUT
+ == SCF ENDED - CONVERGENCE ON ENERGY      E(AU) =    -274.12345678
+ MORE OUTPUT HERE
+"""
+        output_file.write_text(output_content)
+
+        # Parse energy
+        parser = orchestrator._get_output_parser("energy")
+        results = await parser(work_dir)
+
+        assert "final_energy" in results
+        assert results["final_energy"] == -274.12345678
+
+    @pytest.mark.asyncio
+    async def test_parse_energy_missing_file(self, orchestrator, tmp_path):
+        """Test energy parser handles missing output file gracefully."""
+        work_dir = tmp_path / "empty_work"
+        work_dir.mkdir()
+
+        # Parse should return empty dict, not raise
+        parser = orchestrator._get_output_parser("energy")
+        results = await parser(work_dir)
+
+        assert results == {}
+
+    @pytest.mark.asyncio
+    async def test_parse_bandgap(self, orchestrator, tmp_path):
+        """Test band gap parser extracts gap value."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        output_file = work_dir / "job.out"
+
+        output_content = """
+ BAND STRUCTURE ANALYSIS
+ ENERGY BAND GAP:     1.234 eV
+ MORE OUTPUT
+"""
+        output_file.write_text(output_content)
+
+        parser = orchestrator._get_output_parser("bandgap")
+        results = await parser(work_dir)
+
+        assert "bandgap" in results
+        assert results["bandgap"] == 1.234
+
+    @pytest.mark.asyncio
+    async def test_parse_bandgap_direct(self, orchestrator, tmp_path):
+        """Test band gap parser handles direct/indirect gap."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        output_file = work_dir / "job.out"
+
+        output_content = """
+ BAND STRUCTURE
+ DIRECT ENERGY BAND GAP:     2.456 eV
+ END
+"""
+        output_file.write_text(output_content)
+
+        parser = orchestrator._get_output_parser("bandgap")
+        results = await parser(work_dir)
+
+        assert "bandgap" in results
+        assert results["bandgap"] == 2.456
+        assert results["bandgap_type"] == "direct"
+
+    @pytest.mark.asyncio
+    async def test_parse_lattice(self, orchestrator, tmp_path):
+        """Test lattice parser extracts cell parameters."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        output_file = work_dir / "job.out"
+
+        output_content = """
+ PRIMITIVE CELL - CENTRING CODE 1/0 VOLUME=   123.456 - DENSITY  2.345 g/cm^3
+      A              B              C           ALPHA      BETA       GAMMA
+   4.123000     4.123000     4.123000    90.000000  90.000000  90.000000
+"""
+        output_file.write_text(output_content)
+
+        parser = orchestrator._get_output_parser("lattice")
+        results = await parser(work_dir)
+
+        assert "lattice_a" in results
+        assert "lattice_b" in results
+        assert "lattice_c" in results
+        assert results["lattice_a"] == 4.123
+        assert results["lattice_b"] == 4.123
+        assert results["lattice_c"] == 4.123
+        assert results["lattice_alpha"] == 90.0
+        assert results["lattice_beta"] == 90.0
+        assert results["lattice_gamma"] == 90.0
+
+    @pytest.mark.asyncio
+    async def test_extract_node_results_with_parsers(self, orchestrator, temp_db, tmp_path):
+        """Test _extract_node_results applies registered parsers."""
+        # Create mock job with work directory
+        work_dir = tmp_path / "job_work"
+        work_dir.mkdir()
+        output_file = work_dir / "job.out"
+
+        output_content = """
+ == SCF ENDED - CONVERGENCE ON ENERGY      E(AU) =    -100.5
+ ENERGY BAND GAP:     1.5 eV
+"""
+        output_file.write_text(output_content)
+
+        # Create job in database
+        job_id = temp_db.create_job(
+            name="test_job",
+            work_dir=str(work_dir),
+            input_content="TEST INPUT"
+        )
+        temp_db.update_status(job_id, "COMPLETED")
+        job = temp_db.get_job(job_id)
+
+        # Create node with parsers
+        node = WorkflowNode(
+            node_id="test_node",
+            job_name="test_job",
+            template="TEST",
+            parameters={},
+            output_parsers=["energy", "bandgap"]
+        )
+
+        # Extract results
+        results = await orchestrator._extract_node_results(node, job)
+
+        # Should have results from both parsers
+        assert "final_energy" in results
+        assert results["final_energy"] == -100.5
+        assert "bandgap" in results
+        assert results["bandgap"] == 1.5
+
+    @pytest.mark.asyncio
+    async def test_extract_node_results_missing_parser(self, orchestrator, temp_db, tmp_path, capsys):
+        """Test _extract_node_results handles missing parser gracefully."""
+        work_dir = tmp_path / "job_work"
+        work_dir.mkdir()
+
+        job_id = temp_db.create_job(
+            name="test_job",
+            work_dir=str(work_dir),
+            input_content="TEST"
+        )
+        job = temp_db.get_job(job_id)
+
+        # Create node with non-existent parser
+        node = WorkflowNode(
+            node_id="test_node",
+            job_name="test_job",
+            template="TEST",
+            parameters={},
+            output_parsers=["nonexistent_parser"]
+        )
+
+        # Should not raise, just log warning
+        results = await orchestrator._extract_node_results(node, job)
+
+        # Check warning was printed
+        captured = capsys.readouterr()
+        assert "Parser 'nonexistent_parser' not found" in captured.out
+
+        # Results should be empty but not None
+        assert results == {}
+
+    @pytest.mark.asyncio
+    async def test_extract_node_results_parser_exception(self, orchestrator, temp_db, tmp_path, capsys):
+        """Test _extract_node_results handles parser exceptions gracefully."""
+        # Register a parser that raises an exception
+        async def broken_parser(work_dir: Path):
+            raise ValueError("Simulated parser error")
+
+        orchestrator.register_parser("broken", broken_parser)
+
+        work_dir = tmp_path / "job_work"
+        work_dir.mkdir()
+
+        job_id = temp_db.create_job(
+            name="test_job",
+            work_dir=str(work_dir),
+            input_content="TEST"
+        )
+        job = temp_db.get_job(job_id)
+
+        node = WorkflowNode(
+            node_id="test_node",
+            job_name="test_job",
+            template="TEST",
+            parameters={},
+            output_parsers=["broken"]
+        )
+
+        # Should not raise, just log warning
+        results = await orchestrator._extract_node_results(node, job)
+
+        # Check warning was printed
+        captured = capsys.readouterr()
+        assert "Parser 'broken' failed" in captured.out
+
+        assert results == {}
 
 
 if __name__ == "__main__":

@@ -1,9 +1,10 @@
 """
-SSH-based remote job execution backend for CRYSTAL calculations.
+SSH-based remote job execution backend for DFT calculations.
 
-This module implements the SSHRunner class which executes CRYSTAL jobs on
-remote machines via SSH, with features including file transfer, remote
-process monitoring, and output streaming.
+This module implements the SSHRunner class which executes DFT jobs
+(CRYSTAL, Quantum Espresso, VASP, etc.) on remote machines via SSH,
+with features including file transfer, remote process monitoring,
+and output streaming.
 
 Security:
     All remote commands are properly escaped to prevent shell injection attacks.
@@ -19,34 +20,39 @@ from pathlib import Path, PurePosixPath
 from typing import Dict, Optional, Any, AsyncIterator
 from datetime import datetime
 
-from .base import (
-    BaseRunner,
-    JobResult,
+from .base import RemoteBaseRunner, RunnerConfig, JobResult, JobStatus
+from .exceptions import (
     JobSubmissionError,
     JobNotFoundError,
-    ConnectionError as RunnerConnectionError
+    ConnectionError as RunnerConnectionError,
+    SSHRunnerError,
 )
+from ..core.codes import DFTCode, get_code_config, get_parser, InvocationStyle
 from ..core.connection_manager import ConnectionManager
-from ..core.constants import JobStatus
 
 
 logger = logging.getLogger(__name__)
 
 
-class SSHRunner(BaseRunner):
+class SSHRunner(RemoteBaseRunner):
     """
-    Executes CRYSTAL jobs on remote machines via SSH.
+    Executes DFT jobs on remote machines via SSH.
 
     Features:
     - File transfer via SFTP (input staging, output retrieval)
     - Remote directory management (create, cleanup)
-    - Environment setup on remote machine (source cry23.bashrc)
+    - Environment setup on remote machine (source code-specific bashrc)
     - Process monitoring (PID tracking, resource usage)
     - Output streaming (tail -f equivalent)
 
+    Supports multiple DFT codes through the DFTCodeConfig abstraction:
+    - CRYSTAL23: stdin invocation with cry23.bashrc environment
+    - Quantum Espresso: flag invocation with QE environment
+    - VASP: cwd invocation with VASP environment
+
     The remote execution flow:
-    1. Create remote work directory: ~/crystal_jobs/job_<id>_<timestamp>/
-    2. Upload input files (.d12, .gui, .f9, etc.)
+    1. Create remote work directory: ~/dft_jobs/job_<id>_<timestamp>/
+    2. Upload input files (code-specific via DFTCodeConfig)
     3. Write execution script (bash wrapper)
     4. Execute: nohup bash run_job.sh > output.log 2>&1 &
     5. Capture PID and store as job_handle (format: "cluster_id:PID")
@@ -57,7 +63,9 @@ class SSHRunner(BaseRunner):
     Attributes:
         connection_manager: ConnectionManager instance for SSH pooling
         cluster_id: Database ID of the remote cluster
-        remote_crystal_root: Path to CRYSTAL23 on remote system
+        dft_code: DFT code to run (CRYSTAL, QUANTUM_ESPRESSO, VASP)
+        code_config: DFTCodeConfig for the selected DFT code
+        remote_dft_root: Path to DFT software on remote system
         remote_scratch_dir: Scratch directory on remote system
         cleanup_on_success: Whether to remove remote directory after success
     """
@@ -66,7 +74,8 @@ class SSHRunner(BaseRunner):
         self,
         connection_manager: ConnectionManager,
         cluster_id: int,
-        remote_crystal_root: Optional[Path] = None,
+        dft_code: DFTCode = DFTCode.CRYSTAL,
+        remote_dft_root: Optional[Path] = None,
         remote_scratch_dir: Optional[Path] = None,
         cleanup_on_success: bool = False,
     ):
@@ -76,17 +85,30 @@ class SSHRunner(BaseRunner):
         Args:
             connection_manager: ConnectionManager for SSH connections
             cluster_id: Database ID of the cluster to execute on
-            remote_crystal_root: CRYSTAL23 root directory on remote (default: ~/CRYSTAL23)
-            remote_scratch_dir: Scratch directory on remote (default: ~/crystal_jobs)
+            dft_code: DFT code to run (default: CRYSTAL for backwards compatibility)
+            remote_dft_root: DFT software root directory on remote (default: ~/CRYSTAL23 for CRYSTAL)
+            remote_scratch_dir: Scratch directory on remote (default: ~/dft_jobs)
             cleanup_on_success: Whether to remove remote directory after successful job
 
         Raises:
             ValueError: If cluster is not registered
         """
-        self.connection_manager = connection_manager
-        self.cluster_id = cluster_id
-        self.remote_crystal_root = remote_crystal_root or Path.home() / "CRYSTAL23"
-        self.remote_scratch_dir = remote_scratch_dir or Path.home() / "crystal_jobs"
+        # Call parent class constructor
+        super().__init__(
+            connection_manager=connection_manager,
+            cluster_id=cluster_id,
+            dft_code=dft_code,
+            remote_scratch_dir=remote_scratch_dir,
+        )
+
+        # Set default remote root based on DFT code
+        if remote_dft_root:
+            self.remote_dft_root = remote_dft_root
+        elif dft_code == DFTCode.CRYSTAL:
+            self.remote_dft_root = Path.home() / "CRYSTAL23"
+        else:
+            self.remote_dft_root = Path.home() / self.code_config.name.upper()
+
         self.cleanup_on_success = cleanup_on_success
 
         # Track active jobs: job_handle -> job_info
@@ -98,7 +120,8 @@ class SSHRunner(BaseRunner):
 
         logger.info(
             f"Initialized SSHRunner for cluster {cluster_id}, "
-            f"remote_root={self.remote_crystal_root}"
+            f"dft_code={self.code_config.display_name}, "
+            f"remote_root={self.remote_dft_root}"
         )
 
     async def submit_job(
@@ -111,7 +134,7 @@ class SSHRunner(BaseRunner):
         **kwargs: Any
     ) -> str:
         """
-        Submit a CRYSTAL job for remote execution.
+        Submit a DFT job for remote execution.
 
         Creates remote directory, uploads files, writes execution script,
         and starts the job in the background.
@@ -119,7 +142,7 @@ class SSHRunner(BaseRunner):
         Args:
             job_id: Database ID for tracking
             work_dir: Local working directory
-            input_file: Path to input.d12 file
+            input_file: Path to input file (e.g., input.d12 for CRYSTAL)
             threads: Number of OpenMP threads (optional)
             mpi_ranks: Number of MPI ranks (optional)
             **kwargs: Additional options (timeout, custom_env, etc.)
@@ -131,81 +154,84 @@ class SSHRunner(BaseRunner):
             FileNotFoundError: If input file doesn't exist
             JobSubmissionError: If submission fails
         """
-        # Validate input file
-        if not input_file.exists():
-            raise FileNotFoundError(f"Input file not found: {input_file}")
+        # Acquire slot to enforce max_concurrent_jobs limit
+        async with self.acquire_slot():
+            # Validate input file
+            if not input_file.exists():
+                raise FileNotFoundError(f"Input file not found: {input_file}")
 
-        # Create remote work directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        remote_work_dir = PurePosixPath(
-            self.remote_scratch_dir / f"job_{job_id}_{timestamp}"
-        )
+            # Create remote work directory
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            remote_work_dir = PurePosixPath(
+                self.remote_scratch_dir / f"job_{job_id}_{timestamp}"
+            )
 
-        try:
-            async with self.connection_manager.get_connection(self.cluster_id) as conn:
-                # Create remote directory (with proper shell escaping)
-                mkdir_cmd = f"mkdir -p {shlex.quote(str(remote_work_dir))}"
-                await conn.run(mkdir_cmd, check=True)
-                logger.info(f"Created remote work directory: {remote_work_dir}")
+            try:
+                async with self.connection_manager.get_connection(self.cluster_id) as conn:
+                    # Create remote directory (with proper shell escaping)
+                    mkdir_cmd = f"mkdir -p {shlex.quote(str(remote_work_dir))}"
+                    await conn.run(mkdir_cmd, check=True)
+                    logger.info(f"Created remote work directory: {remote_work_dir}")
 
-                # Upload input files
-                await self._upload_files(conn, work_dir, remote_work_dir)
+                    # Upload input files
+                    await self._upload_files(conn, work_dir, remote_work_dir)
 
-                # Create execution script
-                script_content = self._generate_execution_script(
-                    remote_work_dir=remote_work_dir,
-                    input_file=input_file.name,
-                    threads=threads,
-                    mpi_ranks=mpi_ranks,
-                    **kwargs
-                )
+                    # Create execution script
+                    script_content = self._generate_execution_script(
+                        remote_work_dir=remote_work_dir,
+                        input_file=input_file.name,
+                        threads=threads,
+                        mpi_ranks=mpi_ranks,
+                        **kwargs
+                    )
 
-                # Write script to remote
-                script_path = remote_work_dir / "run_job.sh"
-                async with conn.start_sftp_client() as sftp:
-                    async with sftp.open(str(script_path), "w") as f:
-                        await f.write(script_content)
-                chmod_cmd = f"chmod +x {shlex.quote(str(script_path))}"
-                await conn.run(chmod_cmd, check=True)
+                    # Write script to remote
+                    script_path = remote_work_dir / "run_job.sh"
+                    # Note: start_sftp_client() is a coroutine that must be awaited
+                    async with await conn.start_sftp_client() as sftp:
+                        async with sftp.open(str(script_path), "w") as f:
+                            await f.write(script_content)
+                    chmod_cmd = f"chmod +x {shlex.quote(str(script_path))}"
+                    await conn.run(chmod_cmd, check=True)
 
-                # Execute job in background and capture PID
-                execute_cmd = (
-                    f"cd {shlex.quote(str(remote_work_dir))} && "
-                    f"nohup bash run_job.sh > output.log 2>&1 & "
-                    f"echo $!"
-                )
-                result = await conn.run(execute_cmd, check=True)
-                pid_str = result.stdout.strip()
-                # Validate PID is an integer
-                try:
-                    pid = int(pid_str)
-                except ValueError:
-                    raise JobSubmissionError(f"Invalid PID returned: {pid_str}")
-                if pid <= 0:
-                    raise JobSubmissionError(f"Invalid PID (must be > 0): {pid}")
+                    # Execute job in background and capture PID
+                    execute_cmd = (
+                        f"cd {shlex.quote(str(remote_work_dir))} && "
+                        f"nohup bash run_job.sh > output.log 2>&1 & "
+                        f"echo $!"
+                    )
+                    result = await conn.run(execute_cmd, check=True)
+                    pid_str = result.stdout.strip()
+                    # Validate PID is an integer
+                    try:
+                        pid = int(pid_str)
+                    except ValueError:
+                        raise JobSubmissionError(f"Invalid PID returned: {pid_str}")
+                    if pid <= 0:
+                        raise JobSubmissionError(f"Invalid PID (must be > 0): {pid}")
 
-                # Create job handle
-                job_handle = f"{self.cluster_id}:{pid}:{remote_work_dir}"
+                    # Create job handle
+                    job_handle = f"{self.cluster_id}:{pid}:{remote_work_dir}"
 
-                # Track job
-                self._active_jobs[job_handle] = {
-                    "job_id": job_id,
-                    "pid": pid,
-                    "remote_work_dir": str(remote_work_dir),
-                    "local_work_dir": str(work_dir),
-                    "submitted_at": time.time(),
-                    "status": JobStatus.RUNNING,
-                }
+                    # Track job
+                    self._active_jobs[job_handle] = {
+                        "job_id": job_id,
+                        "pid": pid,
+                        "remote_work_dir": str(remote_work_dir),
+                        "local_work_dir": str(work_dir),
+                        "submitted_at": time.time(),
+                        "status": JobStatus.RUNNING,
+                    }
 
-                logger.info(
-                    f"Submitted job {job_id} with PID {pid} on cluster {self.cluster_id}"
-                )
-                return job_handle
+                    logger.info(
+                        f"Submitted job {job_id} with PID {pid} on cluster {self.cluster_id}"
+                    )
+                    return job_handle
 
-        except asyncssh.Error as e:
-            raise JobSubmissionError(f"SSH error during job submission: {e}") from e
-        except Exception as e:
-            raise JobSubmissionError(f"Failed to submit job: {e}") from e
+            except asyncssh.Error as e:
+                raise JobSubmissionError(f"SSH error during job submission: {e}") from e
+            except Exception as e:
+                raise JobSubmissionError(f"Failed to submit job: {e}") from e
 
     async def get_status(self, job_handle: str) -> str:
         """
@@ -321,16 +347,16 @@ class SSHRunner(BaseRunner):
                     f"Could not determine status for job {validated_pid}. "
                     f"Process not running, no exit code, and output parsing inconclusive."
                 )
-                job_info["status"] = "unknown"
-                return "unknown"
+                job_info["status"] = JobStatus.UNKNOWN
+                return JobStatus.UNKNOWN
 
         except JobNotFoundError:
             # Re-raise JobNotFoundError without wrapping
             raise
         except Exception as e:
             logger.error(f"Error checking job status: {e}")
-            job_info["status"] = "unknown"
-            return "unknown"
+            job_info["status"] = JobStatus.UNKNOWN
+            return JobStatus.UNKNOWN
 
     async def cancel_job(self, job_handle: str, timeout: float = 10.0) -> bool:
         """
@@ -383,7 +409,7 @@ class SSHRunner(BaseRunner):
                     result = await conn.run(check_cmd, check=False)
                     if "running" not in result.stdout:
                         logger.info(f"Job {validated_pid} terminated gracefully")
-                        job_info["status"] = "cancelled"
+                        job_info["status"] = JobStatus.CANCELLED
                         return True
                     await asyncio.sleep(0.5)
 
@@ -392,7 +418,7 @@ class SSHRunner(BaseRunner):
                 await conn.run(f"kill -9 {validated_pid}", check=False)
                 await asyncio.sleep(1.0)
 
-                job_info["status"] = "cancelled"
+                job_info["status"] = JobStatus.CANCELLED
                 return True
 
         except Exception as e:
@@ -481,7 +507,7 @@ class SSHRunner(BaseRunner):
 
         # Check if job is complete
         status = await self.get_status(job_handle)
-        if status == "running":
+        if status == JobStatus.RUNNING:
             raise ValueError("Job is still running, cannot retrieve results yet")
 
         cluster_id, pid, remote_work_dir = self._parse_job_handle(job_handle)
@@ -523,7 +549,7 @@ class SSHRunner(BaseRunner):
         job_info = self._active_jobs.get(job_handle)
         if not job_info:
             return False
-        return job_info.get("status") == "running"
+        return job_info.get("status") == JobStatus.RUNNING
 
     def get_job_pid(self, job_handle: str) -> Optional[int]:
         """
@@ -653,14 +679,29 @@ class SSHRunner(BaseRunner):
 
         # Determine executable and parallelization
         # Quote all paths and variables for security (convert Path objects to strings)
-        quoted_crystal_root = shlex.quote(str(self.remote_crystal_root))
+        quoted_dft_root = shlex.quote(str(self.remote_dft_root))
+
+        # Build command based on code configuration
         if mpi_ranks and mpi_ranks > 1:
-            # Use glob expansion in a safe way - the shell expands this after quoting the base path
-            executable = f"{quoted_crystal_root}/bin/*/v*/Pcrystal"
+            exe_name = self.code_config.parallel_executable
+        else:
+            exe_name = self.code_config.serial_executable
+
+        # Build run command based on invocation style
+        invocation = self.code_config.invocation_style
+        quoted_input_file = shlex.quote(str(input_file))
+        quoted_work_dir = shlex.quote(str(remote_work_dir))
+
+        # For CRYSTAL, use glob pattern to find executable in bin directory
+        if self.dft_code == DFTCode.CRYSTAL:
+            executable = f"{quoted_dft_root}/bin/*/v*/{exe_name}"
+        else:
+            # Generic: look in bin directory or root
+            executable = f"{quoted_dft_root}/bin/{exe_name}"
+
+        if mpi_ranks and mpi_ranks > 1:
             run_cmd = f"mpirun -np {mpi_ranks} {executable}"
         else:
-            # Use glob expansion in a safe way
-            executable = f"{quoted_crystal_root}/bin/*/v*/crystalOMP"
             run_cmd = executable
 
         # Set thread count (validate to prevent command injection via environment variable)
@@ -671,13 +712,35 @@ class SSHRunner(BaseRunner):
         else:
             omp_threads = 4
 
-        # Quote all user-controlled strings to prevent command injection
-        quoted_work_dir = shlex.quote(str(remote_work_dir))
-        quoted_input_file = shlex.quote(str(input_file))
-        quoted_bashrc = shlex.quote(f"{self.remote_crystal_root}/cry23.bashrc")
+        # Build input/output redirection based on invocation style
+        if invocation == InvocationStyle.STDIN:
+            # CRYSTAL-style: exe < input > output
+            run_with_io = f"{run_cmd} < {quoted_input_file}"
+        elif invocation == InvocationStyle.FLAG:
+            # QE-style: exe -in input
+            run_with_io = f"{run_cmd} -in {quoted_input_file}"
+        else:
+            # VASP-style (CWD): exe (reads from cwd)
+            run_with_io = run_cmd
+
+        # Determine bashrc path
+        if self.code_config.bashrc_pattern:
+            quoted_bashrc = shlex.quote(f"{self.remote_dft_root}/{self.code_config.bashrc_pattern}")
+        else:
+            quoted_bashrc = None
+
+        # Build bashrc sourcing block
+        if quoted_bashrc:
+            bashrc_block = f"""# Source {self.code_config.display_name} environment (if exists)
+if [ -f {quoted_bashrc} ]; then
+    source {quoted_bashrc}
+fi
+"""
+        else:
+            bashrc_block = f"# No bashrc configured for {self.code_config.display_name}"
 
         script = f"""#!/bin/bash
-# CRYSTAL23 job execution script
+# {self.code_config.display_name} job execution script
 # Generated by SSHRunner
 
 set -e  # Exit on error
@@ -685,16 +748,13 @@ set -e  # Exit on error
 # Change to work directory
 cd {quoted_work_dir}
 
-# Source CRYSTAL environment (if exists)
-if [ -f {quoted_bashrc} ]; then
-    source {quoted_bashrc}
-fi
+{bashrc_block}
 
 # Set OpenMP threads
 export OMP_NUM_THREADS={omp_threads}
 
 # Print environment info
-echo "=== CRYSTAL23 Job Starting ==="
+echo "=== {self.code_config.display_name} Job Starting ==="
 echo "Date: $(date)"
 echo "Host: $(hostname)"
 echo "Work dir: $(pwd)"
@@ -703,17 +763,17 @@ echo "OMP_NUM_THREADS: $OMP_NUM_THREADS"
 echo "================================"
 echo ""
 
-# Run CRYSTAL (don't exit on error to capture exit code)
+# Run {self.code_config.display_name} (don't exit on error to capture exit code)
 set +e
-{run_cmd} < {quoted_input_file}
+{run_with_io}
 
-# Capture exit code IMMEDIATELY after CRYSTAL execution
+# Capture exit code IMMEDIATELY after {self.code_config.display_name} execution
 EXIT_CODE=$?
 echo $EXIT_CODE > .exit_code
 set -e
 
 echo ""
-echo "=== CRYSTAL23 Job Finished ==="
+echo "=== {self.code_config.display_name} Job Finished ==="
 echo "Date: $(date)"
 echo "Exit code: $EXIT_CODE"
 echo "================================"
@@ -731,22 +791,23 @@ exit $EXIT_CODE
         """
         Upload input files to remote machine via SFTP.
 
-        Uploads all relevant CRYSTAL input files (.d12, .gui, .f9, etc.)
+        Uploads all relevant input files based on DFT code configuration.
 
         Args:
             conn: SSH connection
             local_dir: Local directory containing input files
             remote_dir: Remote directory to upload to
         """
-        # Files to upload (if they exist)
-        input_patterns = [
-            "*.d12",   # Main input
-            "*.gui",   # Geometry
-            "*.f9",    # Wave function
-            "*.f20",   # Alternative wave function
-            "*.hessopt",  # Hessian
-            "*.optinfo",  # Optimization info
-        ]
+        # Build file patterns from code config
+        input_patterns = []
+
+        # Primary input file extensions
+        for ext in self.code_config.input_extensions:
+            input_patterns.append(f"*{ext}")
+
+        # Auxiliary input files
+        for ext in self.code_config.auxiliary_inputs.keys():
+            input_patterns.append(f"*{ext}")
 
         files_to_upload = []
         for pattern in input_patterns:
@@ -757,7 +818,8 @@ exit $EXIT_CODE
 
         logger.info(f"Uploading {len(files_to_upload)} files to {remote_dir}")
 
-        async with conn.start_sftp_client() as sftp:
+        # Note: start_sftp_client() is a coroutine that must be awaited
+        async with await conn.start_sftp_client() as sftp:
             for local_file in files_to_upload:
                 remote_file = str(remote_dir / local_file.name)
                 await sftp.put(str(local_file), remote_file)
@@ -779,35 +841,33 @@ exit $EXIT_CODE
             remote_dir: Remote directory containing output files
             local_dir: Local directory to download to
         """
-        # Files to download
+        # Build output file patterns from code config
         output_files = [
-            "output.log",
-            "fort.9",
-            "fort.98",
-            "fort.25",  # Properties
-            "*.xyz",
-            "*.cif",
+            "output.log",  # Our standardized output log
+            ".exit_code",  # Exit code marker
         ]
+
+        # Add code-specific output files
+        for fort_name, ext in self.code_config.auxiliary_outputs.items():
+            output_files.append(fort_name)
+            output_files.append(f"*{ext}")
+
+        # Common output formats
+        output_files.extend(["*.xyz", "*.cif"])
 
         logger.info(f"Downloading output files from {remote_dir}")
 
-        async with conn.start_sftp_client() as sftp:
+        async with await conn.start_sftp_client() as sftp:
             # List files in remote directory
             remote_files = await sftp.listdir(remote_dir)
 
+            import fnmatch
             for filename in remote_files:
-                # Check if file matches our patterns
-                should_download = False
-                for pattern in output_files:
-                    if "*" in pattern:
-                        # Simple wildcard matching
-                        suffix = pattern.replace("*", "")
-                        if filename.endswith(suffix):
-                            should_download = True
-                            break
-                    elif filename == pattern:
-                        should_download = True
-                        break
+                # Check if file matches our patterns using proper glob matching
+                should_download = any(
+                    fnmatch.fnmatch(filename, pattern)
+                    for pattern in output_files
+                )
 
                 if should_download:
                     # Security: Validate filename to prevent path traversal attacks
@@ -829,7 +889,7 @@ exit $EXIT_CODE
 
     async def _parse_results(self, output_file: Path, status: str) -> JobResult:
         """
-        Parse CRYSTAL output file using CRYSTALpytools.
+        Parse DFT output file using code-specific parser.
 
         Args:
             output_file: Path to output.log
@@ -838,113 +898,52 @@ exit $EXIT_CODE
         Returns:
             JobResult with extracted information
         """
-        errors: list[str] = []
-        warnings: list[str] = []
-        final_energy: Optional[float] = None
-        convergence_status = "UNKNOWN"
         metadata: Dict[str, Any] = {"status": status}
 
         if not output_file.exists():
-            errors.append("Output file not found")
             return JobResult(
                 success=False,
                 final_energy=None,
+                energy_unit=self.code_config.energy_unit,
                 convergence_status="FAILED",
-                errors=errors,
-                warnings=warnings,
+                errors=["Output file not found"],
+                warnings=[],
                 metadata=metadata
             )
 
-        # Try parsing with CRYSTALpytools
+        # Use code-specific parser
         try:
-            from CRYSTALpytools.crystal_io import Crystal_output
+            parser = get_parser(self.dft_code)
+            parse_result = await parser.parse(output_file)
 
-            cry_out = Crystal_output(str(output_file))
+            # Determine success
+            success = (
+                status == JobStatus.COMPLETED and
+                parse_result.convergence_status == "CONVERGED" and
+                len(parse_result.errors) == 0
+            )
 
-            # Extract energy
-            if hasattr(cry_out, "get_final_energy"):
-                try:
-                    final_energy = cry_out.get_final_energy()
-                except Exception as e:
-                    warnings.append(f"Could not extract energy: {e}")
-
-            # Check convergence
-            if hasattr(cry_out, "is_converged"):
-                try:
-                    if cry_out.is_converged():
-                        convergence_status = "CONVERGED"
-                    else:
-                        convergence_status = "NOT_CONVERGED"
-                        warnings.append("SCF did not converge")
-                except Exception as e:
-                    warnings.append(f"Could not check convergence: {e}")
-
-        except ImportError:
-            warnings.append("CRYSTALpytools not available, using fallback parser")
-            # Simple fallback parsing
-            final_energy, convergence_status, parse_errors = self._fallback_parse(output_file)
-            errors.extend(parse_errors)
-
+            return JobResult(
+                success=success,
+                final_energy=parse_result.final_energy,
+                energy_unit=parse_result.energy_unit,
+                convergence_status=parse_result.convergence_status,
+                errors=parse_result.errors,
+                warnings=parse_result.warnings,
+                metadata={
+                    **metadata,
+                    "scf_cycles": parse_result.scf_cycles,
+                    "geometry_converged": parse_result.geometry_converged,
+                    **parse_result.metadata
+                }
+            )
         except Exception as e:
-            errors.append(f"Parsing failed: {e}")
-
-        # Determine success
-        success = (
-            status == "completed" and
-            convergence_status == "CONVERGED" and
-            len(errors) == 0
-        )
-
-        return JobResult(
-            success=success,
-            final_energy=final_energy,
-            convergence_status=convergence_status,
-            errors=errors,
-            warnings=warnings,
-            metadata=metadata
-        )
-
-    def _fallback_parse(self, output_file: Path) -> tuple[Optional[float], str, list[str]]:
-        """
-        Fallback parser when CRYSTALpytools is not available.
-
-        Args:
-            output_file: Path to output.log
-
-        Returns:
-            Tuple of (final_energy, convergence_status, errors)
-        """
-        final_energy: Optional[float] = None
-        convergence_status = "UNKNOWN"
-        errors: list[str] = []
-
-        try:
-            with output_file.open("r") as f:
-                content = f.read()
-
-            # Look for energy
-            for line in content.split("\n"):
-                if "TOTAL ENERGY" in line and "AU" in line:
-                    parts = line.split()
-                    for part in parts:
-                        try:
-                            energy = float(part)
-                            final_energy = energy
-                            break
-                        except ValueError:
-                            continue
-
-            # Check convergence
-            if "CONVERGENCE REACHED" in content or "SCF ENDED" in content:
-                convergence_status = "CONVERGED"
-            elif "NOT CONVERGED" in content:
-                convergence_status = "NOT_CONVERGED"
-
-            # Check for errors
-            if "ERROR" in content or "FAILED" in content:
-                errors.append("Errors detected in output")
-
-        except Exception as e:
-            errors.append(f"Fallback parsing failed: {e}")
-
-        return final_energy, convergence_status, errors
+            return JobResult(
+                success=False,
+                final_energy=None,
+                energy_unit=self.code_config.energy_unit,
+                convergence_status="UNKNOWN",
+                errors=[f"Failed to parse output: {e}"],
+                warnings=[],
+                metadata=metadata
+            )

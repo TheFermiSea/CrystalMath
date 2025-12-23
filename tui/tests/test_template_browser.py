@@ -164,10 +164,10 @@ def test_template_rendering(template_dir):
 
     assert template is not None
 
-    # Render with default parameters
-    rendered = manager.render(template, {})
+    # Render with required parameter (param1 is required, param2 uses default)
+    rendered = manager.render(template, {"param1": "default_value"})
     assert "default_value" in rendered
-    assert "10" in rendered
+    assert "10" in rendered  # param2 default
 
     # Render with custom parameters
     rendered = manager.render(template, {
@@ -284,14 +284,14 @@ def test_template_save_and_load(template_dir):
         input_template="Test {{ test_param }}"
     )
 
-    # Save template
-    save_path = template_dir / "test_save.yaml"
-    manager.save_template(new_template, save_path)
+    # Save template - use relative path for security
+    manager.save_template(new_template, "test_save.yaml")
 
+    save_path = template_dir / "test_save.yaml"
     assert save_path.exists()
 
-    # Load template back
-    loaded = manager.load_template(save_path)
+    # Load template back - use relative path
+    loaded = manager.load_template("test_save.yaml")
     assert loaded.name == new_template.name
     assert loaded.version == new_template.version
     assert "test_param" in loaded.parameters

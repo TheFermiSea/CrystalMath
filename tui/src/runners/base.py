@@ -1,9 +1,10 @@
 """
-Abstract base class for CRYSTAL job runners.
+Abstract base class for DFT job runners.
 
 This module defines the interface that all job runners (local, SSH, SLURM)
 must implement to provide consistent job execution capabilities across
-different execution environments.
+different execution environments. Supports multiple DFT codes (CRYSTAL,
+Quantum Espresso, VASP) through the DFTCodeConfig abstraction.
 
 Design principles:
 - Async/await throughout for non-blocking execution
@@ -11,6 +12,7 @@ Design principles:
 - Type-safe interfaces with comprehensive type hints
 - Extensible configuration system for runner-specific settings
 - Resource management and cleanup guarantees
+- DFT code-agnostic through DFTCodeConfig abstraction
 """
 
 from abc import ABC, abstractmethod
@@ -19,6 +21,8 @@ from enum import Enum
 from pathlib import Path
 from typing import AsyncIterator, Any, Dict, Optional, NewType
 import asyncio
+
+from ..core.codes import DFTCode, get_code_config
 
 
 # Type alias for job handles (runner-specific identifiers)
@@ -60,8 +64,9 @@ class RunnerConfig:
 
     Attributes:
         name: Human-readable name for this runner instance
+        dft_code: DFT code to run (CRYSTAL, QUANTUM_ESPRESSO, VASP)
         scratch_dir: Base directory for temporary calculation files
-        executable_path: Path to crystalOMP or crystal executable
+        executable_path: Path to DFT executable (overrides code config default)
         default_threads: Default number of OpenMP threads
         max_concurrent_jobs: Maximum number of jobs to run simultaneously
         timeout_seconds: Default timeout for job operations (0 = no timeout)
@@ -72,6 +77,7 @@ class RunnerConfig:
     """
 
     name: str = "default"
+    dft_code: DFTCode = DFTCode.CRYSTAL  # Default for backwards compatibility
     scratch_dir: Path = Path.home() / "tmp_crystal"
     executable_path: Optional[Path] = None
     default_threads: int = 4
@@ -145,14 +151,15 @@ class JobInfo:
 @dataclass
 class JobResult:
     """
-    Structured results from a completed CRYSTAL job.
+    Structured results from a completed DFT job.
 
-    This dataclass encapsulates the output of a CRYSTAL calculation,
+    This dataclass encapsulates the output of a DFT calculation,
     including energy, convergence status, and any errors or warnings.
 
     Attributes:
         success: Whether the job completed successfully
-        final_energy: Final energy in Hartree (if available)
+        final_energy: Final energy (units depend on DFT code: Hartree/Ry/eV)
+        energy_unit: Unit of final_energy (e.g., "Hartree", "Ry", "eV")
         convergence_status: Convergence status string (CONVERGED, NOT_CONVERGED, etc.)
         errors: List of error messages encountered during execution
         warnings: List of warning messages
@@ -161,10 +168,11 @@ class JobResult:
 
     success: bool
     final_energy: Optional[float]
-    convergence_status: str
-    errors: list[str]
-    warnings: list[str]
-    metadata: Dict[str, Any]
+    energy_unit: str = "Hartree"  # Default for backwards compatibility
+    convergence_status: str = "UNKNOWN"
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class BaseRunner(ABC):
@@ -508,55 +516,224 @@ class BaseRunner(ABC):
         return True  # Subclasses should override
 
 
-# -------------------------------------------------------------------------
-# Exception Classes
-# -------------------------------------------------------------------------
+# Exception classes are defined in exceptions.py to avoid duplication.
+# Import them from there for backwards compatibility or use:
+#   from .exceptions import RunnerError, TimeoutError, etc.
 
 
-class RunnerError(Exception):
-    """Base exception for all runner errors."""
-    pass
+class RemoteBaseRunner(BaseRunner):
+    """
+    Base class for remote job runners (SSH, SLURM).
 
+    This class provides common functionality for runners that execute jobs
+    on remote systems, including:
+    - Connection management via ConnectionManager
+    - DFT code configuration handling
+    - SFTP-based file transfer (upload/download)
+    - Remote directory management
 
-class JobSubmissionError(RunnerError):
-    """Raised when job submission fails."""
-    pass
+    Subclasses (SSHRunner, SLURMRunner) implement the abstract methods
+    with their specific execution semantics.
 
+    Attributes:
+        connection_manager: ConnectionManager instance for SSH pooling
+        cluster_id: Database ID of the remote cluster
+        dft_code: DFT code to run (CRYSTAL, QUANTUM_ESPRESSO, VASP)
+        code_config: DFTCodeConfig for the selected DFT code
+        remote_scratch_dir: Base directory for remote scratch space
+    """
 
-class JobNotFoundError(RunnerError):
-    """Raised when job handle is not found or invalid."""
-    pass
+    def __init__(
+        self,
+        connection_manager: "ConnectionManager",  # Forward reference
+        cluster_id: int,
+        dft_code: DFTCode = DFTCode.CRYSTAL,
+        remote_scratch_dir: Optional[Path] = None,
+        config: Optional[RunnerConfig] = None,
+    ):
+        """
+        Initialize the remote base runner.
 
+        Args:
+            connection_manager: ConnectionManager for SSH connections
+            cluster_id: Database ID of the cluster to execute on
+            dft_code: DFT code to run (default: CRYSTAL for backwards compatibility)
+            remote_scratch_dir: Scratch directory on remote (default: ~/dft_jobs)
+            config: Optional runner configuration
+        """
+        super().__init__(config)
+        self.connection_manager = connection_manager
+        self.cluster_id = cluster_id
+        self.dft_code = dft_code
+        self.code_config = get_code_config(dft_code)
+        self.remote_scratch_dir = remote_scratch_dir or Path.home() / "dft_jobs"
 
-class ConnectionError(RunnerError):
-    """Raised when connection to execution backend fails."""
-    pass
+    async def _upload_files_sftp(
+        self,
+        conn: Any,  # asyncssh.SSHClientConnection
+        local_dir: Path,
+        remote_dir: str,
+        patterns: Optional[list[str]] = None,
+    ) -> list[str]:
+        """
+        Upload files to remote machine via SFTP.
 
+        This method uploads files matching the specified patterns (or
+        code-specific defaults) from the local directory to the remote.
 
-class CancellationError(RunnerError):
-    """Raised when job cancellation fails."""
-    pass
+        Args:
+            conn: SSH connection with SFTP support
+            local_dir: Local directory containing files to upload
+            remote_dir: Remote directory to upload to
+            patterns: Optional list of glob patterns (default: code-specific)
 
+        Returns:
+            List of uploaded file names
 
-class ExecutionError(RunnerError):
-    """Raised when job execution fails."""
-    pass
+        Raises:
+            FileNotFoundError: If no matching files found
+        """
+        import logging
+        logger = logging.getLogger(__name__)
 
+        # Build file patterns from code config if not provided
+        if patterns is None:
+            patterns = []
+            # Primary input file extensions
+            for ext in self.code_config.input_extensions:
+                patterns.append(f"*{ext}")
+            # Auxiliary input files
+            for ext in self.code_config.auxiliary_inputs.keys():
+                patterns.append(f"*{ext}")
 
-class TimeoutError(RunnerError):
-    """Raised when operation exceeds timeout limit."""
+        files_to_upload = []
+        for pattern in patterns:
+            files_to_upload.extend(local_dir.glob(pattern))
 
-    def __init__(self, message: str, timeout_seconds: float, operation: str):
-        super().__init__(message)
-        self.timeout_seconds = timeout_seconds
-        self.operation = operation
+        if not files_to_upload:
+            raise FileNotFoundError(f"No input files found in {local_dir}")
 
+        logger.info(f"Uploading {len(files_to_upload)} files to {remote_dir}")
 
-class ConfigurationError(RunnerError):
-    """Raised when runner configuration is invalid."""
-    pass
+        uploaded = []
+        # Note: start_sftp_client() is a coroutine that must be awaited
+        async with await conn.start_sftp_client() as sftp:
+            for local_file in files_to_upload:
+                remote_file = f"{remote_dir}/{local_file.name}"
+                await sftp.put(str(local_file), remote_file)
+                uploaded.append(local_file.name)
+                logger.debug(f"Uploaded: {local_file.name}")
 
+        logger.info("File upload complete")
+        return uploaded
 
-class ResourceError(RunnerError):
-    """Raised when insufficient resources are available."""
-    pass
+    async def _download_files_sftp(
+        self,
+        conn: Any,  # asyncssh.SSHClientConnection
+        remote_dir: str,
+        local_dir: Path,
+        patterns: Optional[list[str]] = None,
+    ) -> list[str]:
+        """
+        Download output files from remote machine via SFTP.
+
+        This method downloads files matching the specified patterns from
+        the remote directory to the local directory.
+
+        Args:
+            conn: SSH connection with SFTP support
+            remote_dir: Remote directory containing output files
+            local_dir: Local directory to download to
+            patterns: Optional list of glob patterns (default: code-specific)
+
+        Returns:
+            List of downloaded file names
+        """
+        import fnmatch
+        import logging
+        import shlex
+        logger = logging.getLogger(__name__)
+
+        # Build output file patterns from code config if not provided
+        if patterns is None:
+            patterns = [
+                "output.log",
+                "output.out",
+                ".exit_code",
+                "slurm-*.out",
+                "slurm-*.err",
+                "*.xyz",
+                "*.cif",
+            ]
+            # Add code-specific output files
+            for fort_name, ext in self.code_config.auxiliary_outputs.items():
+                patterns.append(fort_name)
+                patterns.append(f"*{ext}")
+
+        logger.info(f"Downloading output files from {remote_dir}")
+
+        downloaded = []
+        async with await conn.start_sftp_client() as sftp:
+            # List files in remote directory
+            remote_files = await sftp.listdir(remote_dir)
+
+            for filename in remote_files:
+                # Check if file matches our patterns using proper glob matching
+                should_download = any(
+                    fnmatch.fnmatch(filename, pattern)
+                    for pattern in patterns
+                )
+
+                if should_download:
+                    # Security: Validate filename to prevent path traversal attacks
+                    if "/" in filename or "\\" in filename or filename in (".", ".."):
+                        logger.warning(f"Skipping file with suspicious name: {filename}")
+                        continue
+
+                    remote_path = f"{remote_dir}/{filename}"
+                    local_path = local_dir / filename
+
+                    try:
+                        await sftp.get(remote_path, str(local_path))
+                        downloaded.append(filename)
+                        logger.debug(f"Downloaded: {filename}")
+                    except Exception as e:
+                        logger.warning(f"Failed to download {filename}: {e}")
+
+        logger.info(f"File download complete ({len(downloaded)} files)")
+        return downloaded
+
+    async def _create_remote_directory(
+        self,
+        conn: Any,  # asyncssh.SSHClientConnection
+        remote_dir: str,
+    ) -> None:
+        """
+        Create a directory on the remote machine.
+
+        Args:
+            conn: SSH connection
+            remote_dir: Remote directory path to create
+        """
+        import shlex
+        mkdir_cmd = f"mkdir -p {shlex.quote(remote_dir)}"
+        await conn.run(mkdir_cmd, check=True)
+
+    async def _remove_remote_directory(
+        self,
+        conn: Any,  # asyncssh.SSHClientConnection
+        remote_dir: str,
+    ) -> None:
+        """
+        Remove a directory on the remote machine.
+
+        Args:
+            conn: SSH connection
+            remote_dir: Remote directory path to remove
+        """
+        import shlex
+        import logging
+        logger = logging.getLogger(__name__)
+        cleanup_cmd = f"rm -rf {shlex.quote(remote_dir)}"
+        await conn.run(cleanup_cmd, check=False)
+        logger.info(f"Removed remote directory: {remote_dir}")

@@ -1,9 +1,10 @@
 """
 SLURM Runner for batch job submission to HPC clusters.
 
-This module provides a SLURM-based runner that submits CRYSTAL jobs
-to HPC clusters with batch scheduling. It handles:
-- Dynamic SLURM script generation
+This module provides a SLURM-based runner that submits DFT jobs
+(CRYSTAL, Quantum Espresso, VASP, etc.) to HPC clusters with batch scheduling.
+It handles:
+- Dynamic SLURM script generation for multiple DFT codes
 - Job submission via sbatch
 - Non-blocking status monitoring with squeue
 - Job arrays for parameter sweeps
@@ -19,7 +20,10 @@ from typing import AsyncIterator, Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
-from .base import BaseRunner
+from .base import RemoteBaseRunner, JobResult, JobHandle, JobStatus, RunnerConfig
+from .exceptions import SLURMRunnerError
+from .slurm_templates import SLURMTemplateGenerator, SLURMTemplateParams, SLURMTemplateValidationError
+from ..core.codes import DFTCode, get_code_config, get_parser, InvocationStyle
 from ..core.connection_manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
@@ -60,32 +64,36 @@ class SLURMJobConfig:
     environment_setup: str = ""  # Additional environment setup commands
 
 
-class SLURMRunnerError(Exception):
-    """Base exception for SLURM Runner errors."""
-    pass
+# SLURMRunnerError is imported from exceptions.py
+# These are SLURM-specific sub-exceptions
 
 
 class SLURMSubmissionError(SLURMRunnerError):
-    """Raised when job submission fails."""
+    """Raised when SLURM job submission fails."""
     pass
 
 
 class SLURMStatusError(SLURMRunnerError):
-    """Raised when status checking fails."""
+    """Raised when SLURM status checking fails."""
     pass
 
 
 class SLURMValidationError(SLURMRunnerError):
-    """Raised when input validation fails."""
+    """Raised when SLURM input validation fails."""
     pass
 
 
-class SLURMRunner(BaseRunner):
+class SLURMRunner(RemoteBaseRunner):
     """
-    Execute CRYSTAL jobs via SLURM batch system on HPC clusters.
+    Execute DFT jobs via SLURM batch system on HPC clusters.
 
-    This runner:
-    - Generates SLURM submission scripts dynamically
+    This runner supports multiple DFT codes through the DFTCodeConfig abstraction:
+    - CRYSTAL23: stdin invocation with cry23.bashrc environment
+    - Quantum Espresso: flag invocation with QE environment
+    - VASP: cwd invocation with VASP environment
+
+    Features:
+    - Generates SLURM submission scripts dynamically for any DFT code
     - Submits jobs using sbatch via SSH
     - Polls job status with squeue
     - Downloads results when job completes
@@ -95,6 +103,8 @@ class SLURMRunner(BaseRunner):
     Attributes:
         connection_manager: SSH connection manager
         cluster_id: ID of the cluster to submit jobs to
+        dft_code: DFT code to run (CRYSTAL, QUANTUM_ESPRESSO, VASP)
+        code_config: DFTCodeConfig for the selected DFT code
         default_config: Default SLURM job configuration
         poll_interval: Seconds between status checks (default: 30)
     """
@@ -103,9 +113,10 @@ class SLURMRunner(BaseRunner):
         self,
         connection_manager: ConnectionManager,
         cluster_id: int,
+        dft_code: DFTCode = DFTCode.CRYSTAL,
         default_config: Optional[SLURMJobConfig] = None,
         poll_interval: int = 30,
-        remote_scratch_base: str = "/scratch/crystal"
+        remote_scratch_base: str = "/scratch/dft_jobs"
     ):
         """
         Initialize the SLURM Runner.
@@ -113,13 +124,23 @@ class SLURMRunner(BaseRunner):
         Args:
             connection_manager: ConnectionManager instance for SSH
             cluster_id: Database ID of the cluster
+            dft_code: DFT code to run (default: CRYSTAL for backwards compatibility)
             default_config: Default SLURM job configuration
             poll_interval: Seconds to wait between status checks
             remote_scratch_base: Base directory for remote scratch space
         """
-        self.connection_manager = connection_manager
-        self.cluster_id = cluster_id
-        self.default_config = default_config or SLURMJobConfig(job_name="crystal_job")
+        # Call parent class constructor
+        super().__init__(
+            connection_manager=connection_manager,
+            cluster_id=cluster_id,
+            dft_code=dft_code,
+            remote_scratch_dir=Path(remote_scratch_base),
+        )
+
+        self.default_config = default_config or SLURMJobConfig(
+            job_name=f"{self.code_config.name}_job",
+            modules=[self.code_config.name]
+        )
         self.poll_interval = poll_interval
         self.remote_scratch_base = remote_scratch_base
 
@@ -128,6 +149,340 @@ class SLURMRunner(BaseRunner):
 
         # Track job states
         self._job_states: Dict[int, SLURMJobState] = {}
+
+        # Initialize template generator for SLURM scripts
+        self._template_generator = SLURMTemplateGenerator(dft_code=dft_code)
+
+        logger.info(
+            f"Initialized SLURMRunner for cluster {cluster_id}, "
+            f"dft_code={self.code_config.display_name}"
+        )
+
+    # -------------------------------------------------------------------------
+    # BaseRunner Abstract Method Implementations
+    # -------------------------------------------------------------------------
+
+    async def submit_job(
+        self,
+        job_id: int,
+        input_file: Path,
+        work_dir: Path,
+        threads: Optional[int] = None,
+        **kwargs
+    ) -> JobHandle:
+        """
+        Submit a job to SLURM and return a job handle.
+
+        Args:
+            job_id: Database ID of the job for tracking
+            input_file: Path to the input file (.d12, .in, INCAR, etc.)
+            work_dir: Path to the job's working directory
+            threads: Number of CPUs per task (overrides default)
+            **kwargs: Additional SLURM configuration options
+                - config: SLURMJobConfig instance
+                - nodes: Number of nodes
+                - ntasks: Number of MPI tasks
+                - partition: SLURM partition name
+                - time_limit: Time limit (HH:MM:SS)
+
+        Returns:
+            JobHandle: Opaque identifier in format "slurm:{cluster_id}:{slurm_job_id}:{remote_dir}"
+
+        Raises:
+            SLURMSubmissionError: If job submission fails
+            SLURMValidationError: If input validation fails
+        """
+        # Acquire slot to enforce max_concurrent_jobs limit
+        async with self.acquire_slot():
+            # Validate input file exists
+            if not input_file.exists():
+                raise SLURMSubmissionError(f"Input file not found: {input_file}")
+
+            # Get or create SLURM config
+            config: SLURMJobConfig = kwargs.get("config") or SLURMJobConfig(
+                job_name=f"{self.code_config.name}_job_{job_id}",
+                modules=[self.code_config.name]
+            )
+
+            # Apply kwargs overrides
+            if threads:
+                config.cpus_per_task = threads
+            if "nodes" in kwargs:
+                config.nodes = kwargs["nodes"]
+            if "ntasks" in kwargs:
+                config.ntasks = kwargs["ntasks"]
+            if "partition" in kwargs:
+                config.partition = kwargs["partition"]
+            if "time_limit" in kwargs:
+                config.time_limit = kwargs["time_limit"]
+
+            # Setup remote work directory
+            remote_work_dir = f"{self.remote_scratch_base}/{job_id}_{work_dir.name}"
+
+            try:
+                # Generate SLURM script
+                script_content = self._generate_slurm_script(config, remote_work_dir)
+
+                # Write script locally
+                script_file = work_dir / "job.slurm"
+                script_file.write_text(script_content)
+
+                # Create remote directory and transfer files
+                async with self.connection_manager.get_connection(self.cluster_id) as conn:
+                    # Create remote directory
+                    await conn.run(f"mkdir -p {shlex.quote(remote_work_dir)}")
+
+                    # Transfer files using SFTP
+                    # Note: start_sftp_client() is a coroutine that must be awaited
+                    async with await conn.start_sftp_client() as sftp:
+                        # Upload input file with appropriate name for DFT code
+                        remote_input_name = self._get_remote_input_name(input_file)
+                        await sftp.put(str(input_file), f"{remote_work_dir}/{remote_input_name}")
+
+                        # Upload SLURM script
+                        await sftp.put(str(script_file), f"{remote_work_dir}/job.slurm")
+
+                        # Upload any additional files (.gui, .f9, etc.)
+                        for file_path in work_dir.glob("*"):
+                            if file_path.is_file() and file_path.suffix in [".gui", ".f9", ".f20"]:
+                                await sftp.put(str(file_path), f"{remote_work_dir}/{file_path.name}")
+
+                    # Submit job
+                    result = await conn.run(
+                        f"cd {shlex.quote(remote_work_dir)} && sbatch job.slurm",
+                        check=False
+                    )
+
+                    if result.exit_status != 0:
+                        raise SLURMSubmissionError(f"sbatch failed: {result.stderr}")
+
+                    # Parse SLURM job ID from sbatch output
+                    slurm_job_id = self._parse_job_id(result.stdout)
+                    if not slurm_job_id:
+                        raise SLURMSubmissionError(
+                            f"Could not parse job ID from sbatch output: {result.stdout}"
+                        )
+
+                    # Track job mappings
+                    self._slurm_job_ids[job_id] = slurm_job_id
+                    self._job_states[job_id] = SLURMJobState.PENDING
+
+                    # Return handle in format: slurm:{cluster_id}:{slurm_job_id}:{remote_dir}
+                    job_handle = JobHandle(f"slurm:{self.cluster_id}:{slurm_job_id}:{remote_work_dir}")
+
+                    logger.info(f"Submitted SLURM job {slurm_job_id} for job_id={job_id}")
+                    return job_handle
+
+            except SLURMSubmissionError:
+                raise
+            except Exception as e:
+                logger.error(f"SLURM job submission failed: {e}")
+                raise SLURMSubmissionError(f"Job submission failed: {e}") from e
+
+    def _get_remote_input_name(self, input_file: Path) -> str:
+        """Get the appropriate remote input file name for the DFT code."""
+        # For CRYSTAL, use input.d12 convention
+        if self.dft_code == DFTCode.CRYSTAL:
+            return "input.d12"
+        # For other codes, preserve the original name
+        return input_file.name
+
+    async def get_status(self, job_handle: JobHandle) -> JobStatus:
+        """
+        Query the current status of a submitted SLURM job.
+
+        Args:
+            job_handle: Job identifier returned by submit_job()
+
+        Returns:
+            JobStatus: Current status of the job
+
+        Raises:
+            SLURMStatusError: If status cannot be determined
+        """
+        # Parse handle: slurm:{cluster_id}:{slurm_job_id}:{remote_dir}
+        cluster_id, slurm_job_id, _ = self._parse_job_handle(job_handle)
+
+        try:
+            async with self.connection_manager.get_connection(cluster_id) as conn:
+                slurm_state, _ = await self._check_status(conn, slurm_job_id)
+
+                # Map SLURMJobState to JobStatus
+                return self._slurm_state_to_job_status(slurm_state)
+
+        except Exception as e:
+            logger.error(f"Failed to get status for {job_handle}: {e}")
+            return JobStatus.UNKNOWN
+
+    async def cancel_job(self, job_handle: JobHandle) -> bool:
+        """
+        Cancel a running or queued SLURM job.
+
+        Args:
+            job_handle: Job identifier to cancel
+
+        Returns:
+            bool: True if job was successfully cancelled, False otherwise
+
+        Raises:
+            SLURMRunnerError: If cancellation fails unexpectedly
+        """
+        # Parse handle
+        cluster_id, slurm_job_id, _ = self._parse_job_handle(job_handle)
+
+        try:
+            async with self.connection_manager.get_connection(cluster_id) as conn:
+                result = await conn.run(f"scancel {shlex.quote(slurm_job_id)}", check=False)
+
+                if result.exit_status == 0:
+                    logger.info(f"Cancelled SLURM job {slurm_job_id}")
+                    return True
+                else:
+                    logger.warning(f"scancel failed for {slurm_job_id}: {result.stderr}")
+                    return False
+
+        except Exception as e:
+            logger.error(f"Failed to cancel job {slurm_job_id}: {e}")
+            return False
+
+    async def get_output(self, job_handle: JobHandle) -> AsyncIterator[str]:
+        """
+        Stream job output in real-time as an async generator.
+
+        This method tails the SLURM output file on the remote cluster.
+
+        Args:
+            job_handle: Job identifier to stream output from
+
+        Yields:
+            str: Output lines from the job
+
+        Raises:
+            SLURMRunnerError: If output streaming fails
+        """
+        # Parse handle
+        cluster_id, slurm_job_id, remote_dir = self._parse_job_handle(job_handle)
+
+        try:
+            async with self.connection_manager.get_connection(cluster_id) as conn:
+                # Find the SLURM output file
+                output_file = f"{remote_dir}/slurm-{slurm_job_id}.out"
+
+                # Wait for the file to exist
+                for _ in range(30):  # Wait up to 30 seconds
+                    result = await conn.run(f"test -f {shlex.quote(output_file)}", check=False)
+                    if result.exit_status == 0:
+                        break
+                    await asyncio.sleep(1)
+                else:
+                    yield f"Waiting for output file: {output_file}"
+
+                # Track file position for incremental reads
+                last_size = 0
+
+                while True:
+                    # Check job status
+                    status = await self.get_status(job_handle)
+
+                    # Read new content from file
+                    result = await conn.run(
+                        f"tail -c +{last_size + 1} {shlex.quote(output_file)} 2>/dev/null",
+                        check=False
+                    )
+
+                    if result.stdout:
+                        for line in result.stdout.splitlines():
+                            yield line
+                        last_size += len(result.stdout.encode())
+
+                    # Check for terminal states
+                    if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+                        # Read any remaining output
+                        result = await conn.run(
+                            f"tail -c +{last_size + 1} {shlex.quote(output_file)} 2>/dev/null",
+                            check=False
+                        )
+                        if result.stdout:
+                            for line in result.stdout.splitlines():
+                                yield line
+                        break
+
+                    await asyncio.sleep(self.poll_interval)
+
+        except Exception as e:
+            logger.error(f"Failed to stream output for {job_handle}: {e}")
+            raise SLURMRunnerError(f"Output streaming failed: {e}") from e
+
+    async def retrieve_results(
+        self,
+        job_handle: JobHandle,
+        dest: Path,
+        cleanup: Optional[bool] = None
+    ) -> None:
+        """
+        Retrieve all output files from a completed SLURM job.
+
+        Args:
+            job_handle: Job identifier to retrieve results from
+            dest: Destination directory for output files
+            cleanup: Whether to delete remote scratch files after retrieval
+
+        Raises:
+            SLURMRunnerError: If result retrieval fails
+        """
+        # Parse handle
+        cluster_id, slurm_job_id, remote_dir = self._parse_job_handle(job_handle)
+
+        try:
+            async with self.connection_manager.get_connection(cluster_id) as conn:
+                await self._download_results(conn, remote_dir, dest)
+
+                # Clean up remote directory if requested
+                if cleanup:
+                    await conn.run(f"rm -rf {shlex.quote(remote_dir)}", check=False)
+                    logger.info(f"Cleaned up remote directory: {remote_dir}")
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve results for {job_handle}: {e}")
+            raise SLURMRunnerError(f"Result retrieval failed: {e}") from e
+
+    def _parse_job_handle(self, job_handle: JobHandle) -> Tuple[int, str, str]:
+        """
+        Parse a SLURM job handle into its components.
+
+        Args:
+            job_handle: Handle in format "slurm:{cluster_id}:{slurm_job_id}:{remote_dir}"
+
+        Returns:
+            Tuple of (cluster_id, slurm_job_id, remote_dir)
+
+        Raises:
+            ValueError: If handle format is invalid
+        """
+        parts = str(job_handle).split(":", 3)
+        if len(parts) != 4 or parts[0] != "slurm":
+            raise ValueError(f"Invalid SLURM job handle format: {job_handle}")
+
+        return int(parts[1]), parts[2], parts[3]
+
+    def _slurm_state_to_job_status(self, slurm_state: SLURMJobState) -> JobStatus:
+        """Map SLURMJobState to BaseRunner JobStatus."""
+        state_map = {
+            SLURMJobState.PENDING: JobStatus.QUEUED,
+            SLURMJobState.RUNNING: JobStatus.RUNNING,
+            SLURMJobState.COMPLETED: JobStatus.COMPLETED,
+            SLURMJobState.FAILED: JobStatus.FAILED,
+            SLURMJobState.CANCELLED: JobStatus.CANCELLED,
+            SLURMJobState.TIMEOUT: JobStatus.FAILED,
+            SLURMJobState.NODE_FAIL: JobStatus.FAILED,
+            SLURMJobState.OUT_OF_MEMORY: JobStatus.FAILED,
+            SLURMJobState.UNKNOWN: JobStatus.UNKNOWN,
+        }
+        return state_map.get(slurm_state, JobStatus.UNKNOWN)
+
+    # -------------------------------------------------------------------------
+    # Legacy Method (deprecated - use submit_job + get_output instead)
+    # -------------------------------------------------------------------------
 
     async def run_job(
         self,
@@ -187,7 +542,8 @@ class SLURMRunner(BaseRunner):
                 await conn.run(f"mkdir -p {shlex.quote(remote_work_dir)}")
 
                 # Transfer files using SFTP
-                async with conn.start_sftp_client() as sftp:
+                # Note: start_sftp_client() is a coroutine that must be awaited
+                async with await conn.start_sftp_client() as sftp:
                     # Upload input file
                     await sftp.put(str(input_file), f"{remote_work_dir}/input.d12")
                     yield f"  Uploaded: input.d12"
@@ -267,12 +623,22 @@ class SLURMRunner(BaseRunner):
         """
         Cancel a running SLURM job.
 
+        .. deprecated:: Use cancel_job(job_handle) instead.
+            This method is provided for backwards compatibility.
+
         Args:
             job_id: Database ID of the job to cancel
 
         Returns:
             True if job was cancelled, False if not running or cancel failed
         """
+        import warnings
+        warnings.warn(
+            "stop_job(job_id) is deprecated. Use cancel_job(job_handle) instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         slurm_job_id = self._slurm_job_ids.get(job_id)
         if not slurm_job_id:
             logger.warning(f"No SLURM job ID found for job {job_id}")
@@ -596,7 +962,10 @@ class SLURMRunner(BaseRunner):
         work_dir: str
     ) -> str:
         """
-        Generate a SLURM submission script with input validation and escaping.
+        Generate a SLURM submission script using templates.
+
+        Uses the SLURMTemplateGenerator for template-based script generation
+        with comprehensive input validation.
 
         Args:
             config: SLURM job configuration
@@ -608,145 +977,30 @@ class SLURMRunner(BaseRunner):
         Raises:
             SLURMValidationError: If configuration contains invalid values
         """
-        # Validate entire configuration
-        self._validate_config(config)
-
-        # Validate work directory path (prevent injection in cd command)
-        if not work_dir or not re.match(r"^[a-zA-Z0-9/_.-]+$", work_dir):
-            raise SLURMValidationError(
-                f"Invalid work directory '{work_dir}': "
-                "must contain only alphanumeric characters, slashes, dots, and hyphens"
+        try:
+            # Use the template generator
+            return self._template_generator.generate(
+                job_name=config.job_name,
+                work_dir=work_dir,
+                nodes=config.nodes,
+                ntasks=config.ntasks,
+                cpus_per_task=config.cpus_per_task,
+                time_limit=config.time_limit,
+                partition=config.partition,
+                memory=config.memory,
+                account=config.account,
+                qos=config.qos,
+                email=config.email,
+                email_type=config.email_type,
+                constraint=config.constraint,
+                exclusive=config.exclusive,
+                dependencies=config.dependencies,
+                array=config.array,
+                modules=config.modules,
+                environment_setup=config.environment_setup,
             )
-
-        lines = ["#!/bin/bash"]
-
-        # Required directives - escape all user-supplied values for defense in depth
-        lines.append(f"#SBATCH --job-name={shlex.quote(config.job_name)}")
-        lines.append(f"#SBATCH --nodes={config.nodes}")
-        lines.append(f"#SBATCH --ntasks={config.ntasks}")
-        lines.append(f"#SBATCH --cpus-per-task={config.cpus_per_task}")
-        lines.append(f"#SBATCH --time={shlex.quote(config.time_limit)}")
-
-        # Output/error files
-        lines.append("#SBATCH --output=slurm-%j.out")
-        lines.append("#SBATCH --error=slurm-%j.err")
-
-        # Optional directives with escaping for values that might come from user input
-        if config.partition:
-            # Partition already validated, but use shlex.quote for defense in depth
-            lines.append(f"#SBATCH --partition={shlex.quote(config.partition)}")
-        if config.memory:
-            lines.append(f"#SBATCH --mem={shlex.quote(config.memory)}")
-        if config.account:
-            lines.append(f"#SBATCH --account={shlex.quote(config.account)}")
-        if config.qos:
-            lines.append(f"#SBATCH --qos={shlex.quote(config.qos)}")
-        if config.email:
-            lines.append(f"#SBATCH --mail-user={shlex.quote(config.email)}")
-            if config.email_type:
-                # Email types are comma-separated standard values, validate them
-                email_types = config.email_type.split(",")
-                valid_types = {"BEGIN", "END", "FAIL", "REQUEUE", "ALL"}
-                for et in email_types:
-                    if et.strip().upper() not in valid_types:
-                        raise SLURMValidationError(
-                            f"Invalid email type '{et}': "
-                            "must be one of BEGIN, END, FAIL, REQUEUE, ALL"
-                        )
-                lines.append(f"#SBATCH --mail-type={shlex.quote(config.email_type)}")
-        if config.constraint:
-            lines.append(f"#SBATCH --constraint={shlex.quote(config.constraint)}")
-        if config.exclusive:
-            lines.append("#SBATCH --exclusive")
-        if config.dependencies:
-            # Dependencies already validated as numeric
-            dep_str = ":".join(config.dependencies)
-            lines.append(f"#SBATCH --dependency=afterok:{dep_str}")
-        if config.array:
-            # Array spec already validated but still escape
-            lines.append(f"#SBATCH --array={shlex.quote(config.array)}")
-
-        lines.append("")
-
-        # Environment setup
-        lines.append("# Environment setup")
-
-        # Load modules - already validated but still escape for defense in depth
-        if config.modules:
-            for module in config.modules:
-                lines.append(f"module load {shlex.quote(module)}")
-
-        # Custom environment setup - IMPORTANT: Validate to prevent injection
-        if config.environment_setup:
-            # Split by newlines and validate each line
-            for line in config.environment_setup.strip().split("\n"):
-                if line.strip():
-                    line_stripped = line.strip()
-
-                    # Only allow safe commands: export, source, or dot-source
-                    is_safe_command = (
-                        line_stripped.startswith("export ") or
-                        line_stripped.startswith("source ") or
-                        line_stripped.startswith(". ")
-                    )
-
-                    if not is_safe_command:
-                        # Reject any command that's not export/source/.
-                        raise SLURMValidationError(
-                            f"Dangerous command in environment setup: {line}\n"
-                            "Only 'export', 'source', and '.' commands are allowed"
-                        )
-
-                    # Check for obviously dangerous patterns
-                    dangerous_patterns = [";", "|", "&", ">", "<", "$(", "`"]
-                    has_dangerous = any(pattern in line for pattern in dangerous_patterns)
-
-                    if has_dangerous:
-                        # For export statements, ensure they're simple assignments
-                        # Pattern: export NAME=value (no special chars in value)
-                        if line_stripped.startswith("export "):
-                            after_export = line_stripped[7:]  # Remove "export "
-                            # Must be NAME=value format, no pipes, redirects, command subs, or chaining
-                            if any(p in after_export for p in ["|", "&", ">", "<", "$(", "`", ";"]):
-                                raise SLURMValidationError(
-                                    f"Dangerous command in environment setup: {line}"
-                                )
-                        else:
-                            # For source/. commands, reject if they have dangerous patterns
-                            raise SLURMValidationError(
-                                f"Dangerous pattern in environment setup: {line}"
-                            )
-
-                    lines.append(line)
-
-        # Set OpenMP threads
-        lines.append("export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK")
-
-        lines.append("")
-
-        # Change to work directory - path already validated but still escape
-        lines.append("# Change to working directory")
-        lines.append(f"cd {shlex.quote(work_dir)}")
-
-        lines.append("")
-
-        # Execution command
-        lines.append("# Run CRYSTAL calculation")
-        if config.ntasks > 1:
-            # MPI execution
-            lines.append("srun PcrystalOMP < input.d12 > output.out 2>&1")
-        else:
-            # Serial/OpenMP execution
-            lines.append("crystalOMP < input.d12 > output.out 2>&1")
-
-        lines.append("")
-
-        # Exit code
-        lines.append("exit_code=$?")
-        lines.append("echo \"Job finished with exit code: $exit_code\"")
-        lines.append("exit $exit_code")
-
-        return "\n".join(lines)
+        except SLURMTemplateValidationError as e:
+            raise SLURMValidationError(str(e)) from e
 
     def _parse_job_id(self, sbatch_output: str) -> Optional[str]:
         """
@@ -917,7 +1171,8 @@ class SLURMRunner(BaseRunner):
             local_dir: Local destination directory
         """
         try:
-            async with connection.start_sftp_client() as sftp:
+            # Note: start_sftp_client() is a coroutine that must be awaited
+            async with await connection.start_sftp_client() as sftp:
                 # List remote files
                 remote_files = await sftp.listdir(remote_dir)
 
@@ -932,16 +1187,13 @@ class SLURMRunner(BaseRunner):
                     "*.cif"
                 ]
 
+                import fnmatch
                 for remote_file in remote_files:
-                    # Check if file matches any pattern
-                    should_download = False
-                    for pattern in download_patterns:
-                        if pattern == remote_file or (
-                            "*" in pattern and
-                            remote_file.endswith(pattern.replace("*", ""))
-                        ):
-                            should_download = True
-                            break
+                    # Check if file matches any pattern using proper glob matching
+                    should_download = any(
+                        fnmatch.fnmatch(remote_file, pattern)
+                        for pattern in download_patterns
+                    )
 
                     if should_download:
                         remote_path = f"{remote_dir}/{remote_file}"

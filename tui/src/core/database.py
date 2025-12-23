@@ -10,6 +10,7 @@ Includes support for:
 
 import sqlite3
 import json
+import warnings
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
@@ -41,7 +42,7 @@ class DependencyType(Enum):
 
 @dataclass
 class Job:
-    """Represents a CRYSTAL calculation job."""
+    """Represents a DFT calculation job."""
     id: Optional[int]
     name: str
     work_dir: str
@@ -60,6 +61,8 @@ class Job:
     queue_time: Optional[str] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+    # Phase 3 field - DFT code type
+    dft_code: str = "crystal"  # crystal, quantum_espresso, vasp
 
 
 @dataclass
@@ -102,19 +105,33 @@ class JobDependency:
     dependency_type: str
 
 
+@dataclass
+class JobResult:
+    """Represents detailed job results (normalized from jobs table)."""
+    id: Optional[int]
+    job_id: int
+    key_results: Optional[Dict[str, Any]] = None
+    convergence_status: Optional[str] = None
+    scf_cycles: Optional[int] = None
+    cpu_time_seconds: Optional[float] = None
+    wall_time_seconds: Optional[float] = None
+    created_at: Optional[str] = None
+
+
 class Database:
-    """Manages the SQLite database for a CRYSTAL-TUI project."""
+    """Manages the SQLite database for DFT-TUI project."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 5
 
     # Base schema (version 1 - Phase 1)
+    # Note: CANCELLED added in v4, but included here for new databases
     SCHEMA_V1 = """
     CREATE TABLE IF NOT EXISTS jobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         work_dir TEXT NOT NULL UNIQUE,
-        status TEXT NOT NULL CHECK(status IN ('PENDING', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED')),
+        status TEXT NOT NULL CHECK(status IN ('PENDING', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         started_at TIMESTAMP,
         completed_at TIMESTAMP,
@@ -196,6 +213,76 @@ class Database:
     CREATE INDEX IF NOT EXISTS idx_dependencies_depends_on ON job_dependencies (depends_on_job_id);
     """
 
+    # Migration to version 3 (Phase 3 - Multi-DFT code support)
+    MIGRATION_V2_TO_V3 = """
+    -- Add DFT code type column to jobs table
+    ALTER TABLE jobs ADD COLUMN dft_code TEXT DEFAULT 'crystal' CHECK(dft_code IN ('crystal', 'quantum_espresso', 'vasp'));
+    """
+
+    # Migration to version 4 (Add CANCELLED status to jobs CHECK constraint)
+    # SQLite doesn't support ALTER TABLE to modify CHECK constraints,
+    # so we must recreate the table with the updated constraint.
+    MIGRATION_V3_TO_V4 = """
+    -- Step 1: Create new table with updated CHECK constraint
+    CREATE TABLE jobs_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        work_dir TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK(status IN ('PENDING', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        started_at TIMESTAMP,
+        completed_at TIMESTAMP,
+        pid INTEGER,
+        input_file TEXT,
+        final_energy REAL,
+        key_results TEXT,
+        cluster_id INTEGER REFERENCES clusters(id) ON DELETE SET NULL,
+        runner_type TEXT DEFAULT 'local' CHECK(runner_type IN ('local', 'ssh', 'slurm')),
+        parallelism_config TEXT,
+        queue_time TIMESTAMP,
+        start_time TIMESTAMP,
+        end_time TIMESTAMP,
+        dft_code TEXT DEFAULT 'crystal' CHECK(dft_code IN ('crystal', 'quantum_espresso', 'vasp'))
+    );
+
+    -- Step 2: Copy data from old table
+    INSERT INTO jobs_new SELECT * FROM jobs;
+
+    -- Step 3: Drop old table
+    DROP TABLE jobs;
+
+    -- Step 4: Rename new table to original name
+    ALTER TABLE jobs_new RENAME TO jobs;
+
+    -- Step 5: Recreate indexes
+    CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status);
+    CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs (created_at DESC);
+    """
+
+    # Migration to version 5 (Normalize job results into separate table)
+    # This creates a separate job_results table for detailed computation results,
+    # normalizing the large key_results JSON out of the main jobs table.
+    MIGRATION_V4_TO_V5 = """
+    CREATE TABLE IF NOT EXISTS job_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id INTEGER NOT NULL UNIQUE,
+        key_results TEXT,
+        convergence_status TEXT,
+        scf_cycles INTEGER,
+        cpu_time_seconds REAL,
+        wall_time_seconds REAL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_job_results_job_id ON job_results (job_id);
+
+    INSERT OR IGNORE INTO job_results (job_id, key_results, created_at)
+    SELECT id, key_results, CURRENT_TIMESTAMP
+    FROM jobs
+    WHERE key_results IS NOT NULL;
+    """
+
     def __init__(self, db_path: Path, pool_size: int = 4):
         """
         Initialize database with connection pooling for concurrent access.
@@ -272,7 +359,15 @@ class Database:
         Returns a connection from the pool and stores it for subsequent access.
         The connection is returned to the pool when close() is called or when
         the object is garbage collected.
+
+        .. deprecated:: 0.2.0
+            Use :meth:`connection` context manager instead.
         """
+        warnings.warn(
+            "Database.conn is deprecated. Use 'with db.connection() as conn:' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if not hasattr(self, '_shared_conn'):
             self._shared_conn = self._pool.get()
         return self._shared_conn
@@ -310,6 +405,15 @@ class Database:
         if current_version < 2:
             self._migrate_v1_to_v2(conn)
 
+        if current_version < 3:
+            self._migrate_v2_to_v3(conn)
+
+        if current_version < 4:
+            self._migrate_v3_to_v4(conn)
+
+        if current_version < 5:
+            self._migrate_v4_to_v5(conn)
+
     def _get_schema_version(self, conn: sqlite3.Connection) -> int:
         """Get current schema version."""
         try:
@@ -344,6 +448,153 @@ class Database:
             if "duplicate column name" not in str(e).lower():
                 raise
 
+    def _migrate_v2_to_v3(self, conn: sqlite3.Connection) -> None:
+        """Migrate from version 2 to version 3 atomically (add dft_code column)."""
+        try:
+            # Use explicit BEGIN/COMMIT/ROLLBACK for true atomicity
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                # Parse and execute each statement individually
+                statements = [
+                    stmt.strip() for stmt in self.MIGRATION_V2_TO_V3.split(';')
+                    if stmt.strip()
+                ]
+                for stmt in statements:
+                    conn.execute(stmt)
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (3,)
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        except sqlite3.OperationalError as e:
+            # Migration may have been partially applied - check and skip if needed
+            if "duplicate column name" not in str(e).lower():
+                raise
+
+    def _migrate_v3_to_v4(self, conn: sqlite3.Connection) -> None:
+        """Migrate from version 3 to version 4 (add CANCELLED to status CHECK constraint).
+
+        SQLite doesn't support modifying CHECK constraints via ALTER TABLE,
+        so we must recreate the jobs table with the updated constraint.
+
+        For new databases created with updated SCHEMA_V1 (which already has CANCELLED),
+        this migration just records version 4 without modifying the table.
+        """
+        # For databases created with the new SCHEMA_V1 that already includes CANCELLED,
+        # the migration SQL will try to copy data but the table already has the right schema.
+        # We need to check if migration is actually needed.
+        try:
+            # Test if CANCELLED is already allowed in the CHECK constraint
+            # by parsing the table schema
+            cursor = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='jobs'"
+            )
+            schema_sql = cursor.fetchone()
+            if schema_sql and "'CANCELLED'" in schema_sql[0]:
+                # CANCELLED already in schema - just record version 4
+                try:
+                    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (4,))
+                    conn.commit()
+                except sqlite3.IntegrityError:
+                    pass  # Version already recorded
+                return
+
+            # Migration is needed - recreate the table
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                # Parse and execute each statement individually
+                statements = [
+                    stmt.strip() for stmt in self.MIGRATION_V3_TO_V4.split(';')
+                    if stmt.strip() and not stmt.strip().startswith('--')
+                ]
+                for stmt in statements:
+                    conn.execute(stmt)
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (4,)
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        except sqlite3.OperationalError as e:
+            # Migration may have been partially applied - check and skip if needed
+            if "table jobs_new already exists" in str(e).lower():
+                # Clean up partial migration attempt
+                try:
+                    conn.execute("DROP TABLE IF EXISTS jobs_new")
+                except Exception:
+                    pass
+                raise
+
+    def _migrate_v4_to_v5(self, conn: sqlite3.Connection) -> None:
+        """Migrate from version 4 to version 5 (normalize job_results table).
+
+        Creates a separate job_results table for detailed computation results,
+        reducing the main jobs table width and improving query performance.
+        """
+        try:
+            # Check if job_results table already exists
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='job_results'"
+            )
+            if cursor.fetchone():
+                # Table already exists - just record version 5
+                try:
+                    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (5,))
+                    conn.commit()
+                except sqlite3.IntegrityError:
+                    pass  # Version already recorded
+                return
+
+            # Check if key_results column exists in jobs table
+            cursor = conn.execute("PRAGMA table_info(jobs)")
+            columns = {row[1] for row in cursor.fetchall()}
+            has_key_results = 'key_results' in columns
+
+            # Migration is needed - create table and migrate data
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                # Create the job_results table
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS job_results (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        job_id INTEGER NOT NULL UNIQUE,
+                        key_results TEXT,
+                        convergence_status TEXT,
+                        scf_cycles INTEGER,
+                        cpu_time_seconds REAL,
+                        wall_time_seconds REAL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+                    )
+                """)
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_job_results_job_id ON job_results (job_id)"
+                )
+
+                # Only migrate existing data if key_results column exists
+                if has_key_results:
+                    conn.execute("""
+                        INSERT OR IGNORE INTO job_results (job_id, key_results, created_at)
+                        SELECT id, key_results, CURRENT_TIMESTAMP
+                        FROM jobs
+                        WHERE key_results IS NOT NULL
+                    """)
+
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (5,)
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        except sqlite3.OperationalError as e:
+            # Migration may have been partially applied
+            if "table job_results already exists" not in str(e).lower():
+                raise
+
     def get_schema_version(self) -> int:
         """Public method to get current schema version."""
         with self.connection() as conn:
@@ -358,7 +609,8 @@ class Database:
         input_content: str,
         cluster_id: Optional[int] = None,
         runner_type: str = "local",
-        parallelism_config: Optional[Dict[str, Any]] = None
+        parallelism_config: Optional[Dict[str, Any]] = None,
+        dft_code: str = "crystal"
     ) -> int:
         """Create a new job entry."""
         parallelism_json = json.dumps(parallelism_config) if parallelism_config else None
@@ -367,10 +619,10 @@ class Database:
             with conn:
                 cursor = conn.execute(
                     """
-                    INSERT INTO jobs (name, work_dir, status, input_file, cluster_id, runner_type, parallelism_config)
-                    VALUES (?, ?, 'PENDING', ?, ?, ?, ?)
+                    INSERT INTO jobs (name, work_dir, status, input_file, cluster_id, runner_type, parallelism_config, dft_code)
+                    VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?)
                     """,
-                    (name, work_dir, input_content, cluster_id, runner_type, parallelism_json)
+                    (name, work_dir, input_content, cluster_id, runner_type, parallelism_json, dft_code)
                 )
                 job_id = cursor.lastrowid
                 if job_id is None:
@@ -480,7 +732,7 @@ class Database:
         timestamp_field = None
         if status == "RUNNING":
             timestamp_field = "started_at"
-        elif status in ("COMPLETED", "FAILED"):
+        elif status in ("COMPLETED", "FAILED", "CANCELLED"):
             timestamp_field = "completed_at"
 
         with self.connection() as conn:
@@ -554,7 +806,8 @@ class Database:
             parallelism_config=parallelism_config,
             queue_time=safe_get("queue_time"),
             start_time=safe_get("start_time"),
-            end_time=safe_get("end_time")
+            end_time=safe_get("end_time"),
+            dft_code=safe_get("dft_code", "crystal")
         )
 
     # ==================== Cluster Methods (Phase 2) ====================
@@ -888,6 +1141,101 @@ class Database:
             job_id=row["job_id"],
             depends_on_job_id=row["depends_on_job_id"],
             dependency_type=row["dependency_type"]
+        )
+
+    # ==================== Job Results Methods (Phase 5 - Normalized) ====================
+
+    def save_job_result(
+        self,
+        job_id: int,
+        key_results: Optional[Dict[str, Any]] = None,
+        convergence_status: Optional[str] = None,
+        scf_cycles: Optional[int] = None,
+        cpu_time_seconds: Optional[float] = None,
+        wall_time_seconds: Optional[float] = None
+    ) -> int:
+        """
+        Save detailed job results to normalized job_results table.
+
+        Also updates the legacy key_results column in jobs table for backward compatibility.
+        """
+        results_json = json.dumps(key_results) if key_results else None
+
+        with self.connection() as conn:
+            with conn:
+                # Upsert into job_results table
+                cursor = conn.execute(
+                    """
+                    INSERT INTO job_results (job_id, key_results, convergence_status,
+                                            scf_cycles, cpu_time_seconds, wall_time_seconds)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id) DO UPDATE SET
+                        key_results = excluded.key_results,
+                        convergence_status = excluded.convergence_status,
+                        scf_cycles = excluded.scf_cycles,
+                        cpu_time_seconds = excluded.cpu_time_seconds,
+                        wall_time_seconds = excluded.wall_time_seconds
+                    """,
+                    (job_id, results_json, convergence_status, scf_cycles,
+                     cpu_time_seconds, wall_time_seconds)
+                )
+
+                # Also update legacy column for backward compatibility
+                conn.execute(
+                    "UPDATE jobs SET key_results = ? WHERE id = ?",
+                    (results_json, job_id)
+                )
+
+                result_id = cursor.lastrowid
+                if result_id is None:
+                    # Upsert updated existing row, get the ID
+                    row = conn.execute(
+                        "SELECT id FROM job_results WHERE job_id = ?", (job_id,)
+                    ).fetchone()
+                    result_id = row[0] if row else 0
+                return result_id
+
+    def get_job_result(self, job_id: int) -> Optional[JobResult]:
+        """Get detailed job results from normalized table."""
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM job_results WHERE job_id = ?", (job_id,)
+            ).fetchone()
+
+            if not row:
+                return None
+
+            return self._row_to_job_result(row)
+
+    def get_job_with_results(self, job_id: int) -> Optional[Tuple[Job, Optional[JobResult]]]:
+        """
+        Get a job with its detailed results in a single operation.
+
+        Returns:
+            Tuple of (Job, JobResult) or None if job doesn't exist
+        """
+        job = self.get_job(job_id)
+        if not job:
+            return None
+
+        result = self.get_job_result(job_id)
+        return (job, result)
+
+    def _row_to_job_result(self, row: sqlite3.Row) -> JobResult:
+        """Convert database row to JobResult object."""
+        key_results = None
+        if row["key_results"]:
+            key_results = json.loads(row["key_results"])
+
+        return JobResult(
+            id=row["id"],
+            job_id=row["job_id"],
+            key_results=key_results,
+            convergence_status=row["convergence_status"],
+            scf_cycles=row["scf_cycles"],
+            cpu_time_seconds=row["cpu_time_seconds"],
+            wall_time_seconds=row["wall_time_seconds"],
+            created_at=row["created_at"]
         )
 
     # ==================== Utility Methods ====================

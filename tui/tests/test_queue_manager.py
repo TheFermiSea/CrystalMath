@@ -22,6 +22,7 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 import pytest
+import pytest_asyncio
 
 from src.core.database import Database
 from src.core.queue_manager import (
@@ -55,7 +56,7 @@ def queue_manager(temp_db):
     return qm
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def running_queue_manager(temp_db):
     """Create and start a QueueManager instance."""
     qm = QueueManager(temp_db, default_max_concurrent=2)
@@ -199,7 +200,7 @@ class TestDependencyValidation:
         await queue_manager.enqueue(job3, dependencies=[job2])
 
         # Try to create circular dependency: job1 depends on job3
-        with pytest.raises(CircularDependencyError, match="circular dependency"):
+        with pytest.raises(CircularDependencyError, match="(?i)circular dependency"):
             await queue_manager.enqueue(job1, dependencies=[job3])
 
     @pytest.mark.asyncio
@@ -820,3 +821,124 @@ class TestEdgeCases:
         # Now job4 should be schedulable
         schedulable = await queue_manager.schedule_jobs()
         assert schedulable == [jobs[4]]
+
+
+class TestJobCancellation:
+    """Tests for job cancellation functionality."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_queued_job(self, queue_manager, temp_db):
+        """Test cancelling a job that is queued (pending)."""
+        # Create and enqueue a job
+        job_id = temp_db.create_job("test_job", "/tmp/test", "CRYSTAL\n")
+        await queue_manager.enqueue(job_id)
+
+        # Verify job is in queue
+        assert job_id in queue_manager._jobs
+
+        # Cancel the job
+        result = await queue_manager.cancel_job(job_id)
+
+        # Verify cancellation succeeded
+        assert result is True
+
+        # Verify job is removed from queue
+        assert job_id not in queue_manager._jobs
+
+        # Verify database status is CANCELLED
+        job = temp_db.get_job(job_id)
+        assert job.status == "CANCELLED"
+
+    @pytest.mark.asyncio
+    async def test_cancel_completed_job_returns_false(self, queue_manager, temp_db):
+        """Test cancelling a job that is already completed returns False."""
+        # Create a job and mark it as completed
+        job_id = temp_db.create_job("test_job", "/tmp/test", "CRYSTAL\n")
+        temp_db.update_status(job_id, "COMPLETED")
+
+        # Try to cancel
+        result = await queue_manager.cancel_job(job_id)
+
+        # Should return False since job is already completed
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_cancel_failed_job_returns_false(self, queue_manager, temp_db):
+        """Test cancelling a job that has failed returns False."""
+        job_id = temp_db.create_job("test_job", "/tmp/test", "CRYSTAL\n")
+        temp_db.update_status(job_id, "FAILED")
+
+        result = await queue_manager.cancel_job(job_id)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_cancel_nonexistent_job_returns_false(self, queue_manager, temp_db):
+        """Test cancelling a job that doesn't exist returns False."""
+        result = await queue_manager.cancel_job(99999)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_cancel_job_removes_from_cluster(self, queue_manager, temp_db):
+        """Test that cancelling a running job removes it from cluster state."""
+        # Create and enqueue a job
+        job_id = temp_db.create_job("test_job", "/tmp/test", "CRYSTAL\n")
+        await queue_manager.enqueue(job_id)
+
+        # Simulate job being dequeued and running
+        await queue_manager.dequeue("local")
+
+        # Verify job is in default cluster running jobs
+        assert job_id in queue_manager._default_cluster.running_jobs
+
+        # Cancel the job
+        result = await queue_manager.cancel_job(job_id)
+
+        # Verify cancellation succeeded
+        assert result is True
+
+        # Verify removed from running jobs
+        assert job_id not in queue_manager._default_cluster.running_jobs
+
+    @pytest.mark.asyncio
+    async def test_cancel_job_removes_dependencies(self, queue_manager, temp_db):
+        """Test that cancelling a job removes it from dependency graph."""
+        # Create jobs with dependencies
+        job1_id = temp_db.create_job("job1", "/tmp/job1", "CRYSTAL\n")
+        job2_id = temp_db.create_job("job2", "/tmp/job2", "CRYSTAL\n")
+
+        await queue_manager.enqueue(job1_id)
+        await queue_manager.enqueue(job2_id, dependencies=[job1_id])
+
+        # Verify dependency exists
+        assert job2_id in queue_manager._dependents.get(job1_id, set())
+        assert job1_id in queue_manager._jobs[job2_id].dependencies
+
+        # Cancel job1
+        await queue_manager.cancel_job(job1_id)
+
+        # Verify dependency on job1 is removed from job2
+        assert job1_id not in queue_manager._jobs[job2_id].dependencies
+
+    @pytest.mark.asyncio
+    async def test_cancel_job_clears_queue_state(self, queue_manager, temp_db):
+        """Test that cancelling a job removes it from queue_state table."""
+        # Create and enqueue a job
+        job_id = temp_db.create_job("test_job", "/tmp/test", "CRYSTAL\n")
+        await queue_manager.enqueue(job_id)
+
+        # Verify job is in queue_state table
+        cursor = temp_db.conn.execute(
+            "SELECT job_id FROM queue_state WHERE job_id = ?",
+            (job_id,)
+        )
+        assert cursor.fetchone() is not None
+
+        # Cancel the job
+        await queue_manager.cancel_job(job_id)
+
+        # Verify job is removed from queue_state table
+        cursor = temp_db.conn.execute(
+            "SELECT job_id FROM queue_state WHERE job_id = ?",
+            (job_id,)
+        )
+        assert cursor.fetchone() is None

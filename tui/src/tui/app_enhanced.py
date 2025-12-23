@@ -17,6 +17,7 @@ from textual.binding import Binding
 from ..core.database import Database
 from ..core.environment import CrystalConfig, get_crystal_config
 from ..runners import LocalRunner, LocalRunnerError, InputFileError
+from ..runners.base import JobResult
 from .screens import NewJobScreen
 from .screens.new_job import JobCreated
 from .widgets import InputPreview, ResultsSummary, JobListWidget, JobStatsWidget
@@ -453,6 +454,11 @@ class CrystalTUI(App):
     async def _run_crystal_job(self, job_id: int) -> None:
         """
         Worker that runs a CRYSTAL job in a subprocess.
+
+        This method properly handles the LocalRunner.run_job() async generator
+        which yields string lines during execution and a JobResult object as
+        the final yield. The JobResult is captured directly to avoid race
+        conditions with get_last_result().
         """
         if not self.db:
             return
@@ -464,22 +470,28 @@ class CrystalTUI(App):
         work_dir = Path(job.work_dir)
         runner = self._ensure_runner()
         pid_reported = False
+        result: Optional[JobResult] = None  # Capture result directly
 
         self.post_message(JobStatus(job_id, "RUNNING"))
         self.post_message(JobLog(job_id, f"[bold green]Starting job {job_id}: {job.name}[/bold green]"))
 
         try:
-            async for line in runner.run_job(job_id, work_dir):
-                if not pid_reported:
-                    pid = runner.get_process_pid(job_id)
-                    if pid:
-                        self.post_message(JobStatus(job_id, "RUNNING", pid))
-                        pid_reported = True
-                self.post_message(JobLog(job_id, line))
+            async for item in runner.run_job(job_id, work_dir):
+                # run_job yields strings during execution, then JobResult at the end
+                if isinstance(item, JobResult):
+                    # Capture the result directly - avoids race condition
+                    result = item
+                else:
+                    # Regular output line
+                    if not pid_reported:
+                        pid = runner.get_process_pid(job_id)
+                        if pid:
+                            self.post_message(JobStatus(job_id, "RUNNING", pid))
+                            pid_reported = True
+                    self.post_message(JobLog(job_id, item))
 
-            result = runner.get_last_result()
             if result is None:
-                raise LocalRunnerError("Job finished but no result was recorded")
+                raise LocalRunnerError("Job finished but no result was yielded")
 
             # Persist results
             if self.db:

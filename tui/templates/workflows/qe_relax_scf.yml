@@ -1,0 +1,134 @@
+name: "QE Relaxation + SCF Workflow"
+version: "1.0"
+description: "Two-step workflow: geometry optimization followed by precise SCF calculation"
+author: "Crystal-TUI Team"
+dft_code: "quantum_espresso"
+tags: ["workflow", "qe", "relax", "scf"]
+
+parameters:
+  prefix:
+    type: "string"
+    default: "pwscf"
+    description: "Prefix for output files"
+    required: true
+
+  pseudo_dir:
+    type: "string"
+    default: "./"
+    description: "Directory containing pseudopotential files"
+    required: true
+
+  ecutwfc:
+    type: "float"
+    default: 60.0
+    min: 10.0
+    max: 200.0
+    description: "Kinetic energy cutoff for wavefunctions (Ry)"
+    required: true
+
+  ntyp:
+    type: "integer"
+    default: 1
+    min: 1
+    description: "Number of atomic species"
+    required: true
+
+  nat:
+    type: "integer"
+    default: 2
+    min: 1
+    description: "Number of atoms"
+    required: true
+
+  atomic_species:
+    type: "text"
+    description: "Atomic species block"
+    required: true
+
+  atomic_positions:
+    type: "text"
+    description: "Initial atomic positions"
+    required: true
+
+  cell_parameters:
+    type: "text"
+    description: "Cell parameters (for ibrav=0)"
+    required: true
+
+  kpoints_relax:
+    type: "string"
+    default: "4 4 4 0 0 0"
+    description: "K-point grid for relaxation"
+
+  kpoints_scf:
+    type: "string"
+    default: "8 8 8 0 0 0"
+    description: "K-point grid for final SCF (denser)"
+
+  forc_conv_thr:
+    type: "float"
+    default: 1.0e-4
+    description: "Force convergence threshold (Ry/Bohr)"
+
+  conv_thr_relax:
+    type: "float"
+    default: 1.0e-6
+    description: "SCF convergence for relaxation"
+
+  conv_thr_scf:
+    type: "float"
+    default: 1.0e-10
+    description: "SCF convergence for final calculation (tighter)"
+
+workflow:
+  nodes:
+    - id: "relax"
+      type: "calculation"
+      template: "qe/relax"
+      parameters:
+        calculation: "vc-relax"
+        prefix: "{{ prefix }}_relax"
+        pseudo_dir: "{{ pseudo_dir }}"
+        ecutwfc: "{{ ecutwfc }}"
+        ntyp: "{{ ntyp }}"
+        nat: "{{ nat }}"
+        atomic_species: "{{ atomic_species }}"
+        atomic_positions: "{{ atomic_positions }}"
+        cell_parameters: "{{ cell_parameters }}"
+        kpoints: "{{ kpoints_relax }}"
+        conv_thr: "{{ conv_thr_relax }}"
+        forc_conv_thr: "{{ forc_conv_thr }}"
+
+    - id: "transfer_structure"
+      type: "data_transfer"
+      source_node: "relax"
+      source_files:
+        - "*.xml"  # vasprun.xml contains final structure
+      target_node: "scf"
+      dependencies:
+        - "relax"
+
+    - id: "scf"
+      type: "calculation"
+      template: "qe/scf"
+      parameters:
+        calculation: "scf"
+        prefix: "{{ prefix }}_scf"
+        pseudo_dir: "{{ pseudo_dir }}"
+        ecutwfc: "{{ ecutwfc }}"
+        ntyp: "{{ ntyp }}"
+        nat: "{{ nat }}"
+        atomic_species: "{{ atomic_species }}"
+        # atomic_positions will be extracted from relax output
+        atomic_positions: "{{ relax.final_positions }}"
+        cell_parameters: "{{ relax.final_cell }}"
+        kpoints: "{{ kpoints_scf }}"
+        conv_thr: "{{ conv_thr_scf }}"
+      dependencies:
+        - "transfer_structure"
+
+  edges:
+    - from: "relax"
+      to: "transfer_structure"
+    - from: "transfer_structure"
+      to: "scf"

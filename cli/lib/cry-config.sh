@@ -35,7 +35,22 @@ cry_config_init() {
 
     # Tutorial paths - default to share/tutorials in project root
     # cry-config.sh is in lib/, so go up one level to project root
-    PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+    # Robust script location detection for bash, zsh, and edge cases
+    local _script_path=""
+    if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "-" ]]; then
+        _script_path="${BASH_SOURCE[0]}"
+    elif [[ -n "${ZSH_VERSION:-}" && -n "${(%):-%x}" ]]; then
+        _script_path="${(%):-%x}"
+    elif [[ -n "$0" && "$0" != "-" && "$0" != "-bash" && "$0" != "-zsh" ]]; then
+        _script_path="$0"
+    fi
+
+    if [[ -n "$_script_path" && -f "$_script_path" ]]; then
+        PROJECT_ROOT="$(cd "$(dirname "$_script_path")/.." 2>/dev/null && pwd)" || PROJECT_ROOT=""
+    else
+        # Fallback: use CRY23_ROOT if available
+        PROJECT_ROOT="${CRY23_ROOT:-}"
+    fi
     : "${CRY_TUTORIAL_DIR:="$PROJECT_ROOT/share/tutorials"}"
     TUTORIAL_DIR="$CRY_TUTORIAL_DIR"  # Backward compatibility alias
 
@@ -251,27 +266,106 @@ cry_retrieve_map_get() {
 
 cry_config_validate() {
     # Validate configuration paths and dependencies
+    # Args:
+    #   $1 - validation mode: "strict" (fail on any error) or "warn" (warn only)
+    # Returns:
+    #   0 if validation passes (or mode=warn)
+    #   non-zero count of errors if mode=strict
+    local mode="${1:-strict}"
     local errors=0
+    local warnings=0
 
     # Check if CRYSTAL23 directory exists
     if [[ ! -d "$CRY23_ROOT" ]]; then
         echo "Error: CRYSTAL23 directory not found: $CRY23_ROOT" >&2
+        echo "  Set CRY23_ROOT environment variable to your CRYSTAL23 installation" >&2
         ((errors++))
     fi
 
     # Check if binary directory exists
     if [[ ! -d "$CRY_BIN_DIR" ]]; then
         echo "Error: Binary directory not found: $CRY_BIN_DIR" >&2
+        echo "  Check CRY_ARCH=$CRY_ARCH and CRY_VERSION=$CRY_VERSION" >&2
         ((errors++))
     fi
 
-    # Check if crystal executable exists
-    if [[ ! -x "$CRY_BIN_DIR/crystal" ]]; then
-        echo "Error: crystal executable not found or not executable: $CRY_BIN_DIR/crystal" >&2
+    # Check for crystal executables (need at least one)
+    local found_exe=false
+    if [[ -x "$CRY_BIN_DIR/crystalOMP" ]]; then
+        found_exe=true
+    elif [[ -x "$CRY_BIN_DIR/crystal" ]]; then
+        found_exe=true
+    fi
+
+    if ! $found_exe; then
+        echo "Error: No CRYSTAL executable found in $CRY_BIN_DIR" >&2
+        echo "  Expected: crystalOMP or crystal" >&2
         ((errors++))
     fi
 
-    return "$errors"
+    # Check for optional but useful parallel binary
+    if [[ ! -x "$CRY_BIN_DIR/PcrystalOMP" && ! -x "$CRY_BIN_DIR/Pcrystal" ]]; then
+        echo "Warning: Parallel CRYSTAL binary not found (PcrystalOMP/Pcrystal)" >&2
+        echo "  MPI parallelism will not be available" >&2
+        ((warnings++))
+    fi
+
+    # Check if scratch directory is writable
+    if [[ -n "${CRY_SCRATCH_BASE:-}" ]]; then
+        if [[ ! -d "$CRY_SCRATCH_BASE" ]]; then
+            # Try to create it
+            if ! mkdir -p "$CRY_SCRATCH_BASE" 2>/dev/null; then
+                echo "Error: Cannot create scratch directory: $CRY_SCRATCH_BASE" >&2
+                ((errors++))
+            fi
+        elif [[ ! -w "$CRY_SCRATCH_BASE" ]]; then
+            echo "Error: Scratch directory not writable: $CRY_SCRATCH_BASE" >&2
+            ((errors++))
+        fi
+    fi
+
+    # Validate version format (should be v#.#.#)
+    if [[ -n "${CRY_VERSION:-}" ]]; then
+        if [[ ! "$CRY_VERSION" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "Warning: CRY_VERSION format unexpected: $CRY_VERSION" >&2
+            echo "  Expected format: v1.0.1" >&2
+            ((warnings++))
+        fi
+    fi
+
+    # Summary
+    if [[ "$errors" -gt 0 ]]; then
+        echo "" >&2
+        echo "Configuration validation: $errors error(s), $warnings warning(s)" >&2
+        if [[ "$mode" == "strict" ]]; then
+            return "$errors"
+        fi
+    elif [[ "$warnings" -gt 0 ]]; then
+        echo "" >&2
+        echo "Configuration validation: $warnings warning(s)" >&2
+    fi
+
+    return 0
+}
+
+cry_config_validate_quick() {
+    # Quick validation: only check critical paths exist
+    # Used during normal execution to catch obvious misconfigurations
+    # Returns 0 if valid, 1 if invalid
+
+    if [[ ! -d "${CRY23_ROOT:-}" ]]; then
+        echo "Error: CRY23_ROOT not set or directory does not exist" >&2
+        echo "  export CRY23_ROOT=/path/to/CRYSTAL23" >&2
+        return 1
+    fi
+
+    if [[ ! -d "${CRY_BIN_DIR:-}" ]]; then
+        echo "Error: CRYSTAL binary directory not found" >&2
+        echo "  Expected: $CRY_BIN_DIR" >&2
+        return 1
+    fi
+
+    return 0
 }
 
 cry_config_show() {

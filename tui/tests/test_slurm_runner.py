@@ -25,6 +25,7 @@ from src.runners.slurm_runner import (
     SLURMStatusError,
     SLURMValidationError,
 )
+from src.runners.exceptions import SLURMRunnerError
 from src.core.connection_manager import ConnectionManager
 
 
@@ -600,13 +601,14 @@ class TestJobSubmission:
         mock_connection
     ):
         """Test successful job submission flow."""
-        # Setup mocks
-        mock_connection_manager.get_connection = AsyncMock(
-            return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_connection),
-                __aexit__=AsyncMock()
-            )
-        )
+        # Setup mocks - get_connection uses @asynccontextmanager
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_get_connection(cluster_id):
+            yield mock_connection
+
+        mock_connection_manager.get_connection = mock_get_connection
 
         # Mock sbatch output
         mock_connection.run.return_value = Mock(
@@ -615,13 +617,18 @@ class TestJobSubmission:
             stderr=""
         )
 
-        # Mock SFTP for file transfer
+        # Mock SFTP for file transfer - start_sftp_client is a coroutine returning async ctx mgr
         mock_sftp = AsyncMock()
         mock_sftp.put = AsyncMock()
-        mock_connection.start_sftp_client.return_value = AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_sftp),
-            __aexit__=AsyncMock()
-        )
+
+        @asynccontextmanager
+        async def mock_sftp_ctx():
+            yield mock_sftp
+
+        async def mock_start_sftp():
+            return mock_sftp_ctx()
+
+        mock_connection.start_sftp_client = mock_start_sftp
 
         # Mock status checks (immediate completion)
         async def mock_status_check(*args, **kwargs):
@@ -673,13 +680,14 @@ class TestJobSubmission:
         mock_connection
     ):
         """Test handling of sbatch submission failure."""
-        # Setup mocks
-        mock_connection_manager.get_connection = AsyncMock(
-            return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_connection),
-                __aexit__=AsyncMock()
-            )
-        )
+        # Setup mocks - get_connection uses @asynccontextmanager
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_get_connection(cluster_id):
+            yield mock_connection
+
+        mock_connection_manager.get_connection = mock_get_connection
 
         # Mock sbatch failure
         mock_connection.run.return_value = Mock(
@@ -688,15 +696,20 @@ class TestJobSubmission:
             stderr="sbatch: error: Invalid partition name specified\n"
         )
 
-        # Mock SFTP
+        # Mock SFTP - start_sftp_client is a coroutine returning async ctx mgr
         mock_sftp = AsyncMock()
-        mock_connection.start_sftp_client.return_value = AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_sftp),
-            __aexit__=AsyncMock()
-        )
 
-        # Run job and expect error
-        with pytest.raises(SLURMSubmissionError, match="sbatch failed"):
+        @asynccontextmanager
+        async def mock_sftp_ctx():
+            yield mock_sftp
+
+        async def mock_start_sftp():
+            return mock_sftp_ctx()
+
+        mock_connection.start_sftp_client = mock_start_sftp
+
+        # Run job and expect error (wrapped in SLURMRunnerError)
+        with pytest.raises(SLURMRunnerError, match="sbatch failed"):
             async for line in slurm_runner.run_job(1, temp_work_dir):
                 pass
 
@@ -712,13 +725,14 @@ class TestJobCancellation:
         mock_connection
     ):
         """Test cancelling a running job."""
-        # Setup mocks
-        mock_connection_manager.get_connection = AsyncMock(
-            return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_connection),
-                __aexit__=AsyncMock()
-            )
-        )
+        # Setup mocks - get_connection uses @asynccontextmanager
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_get_connection(cluster_id):
+            yield mock_connection
+
+        mock_connection_manager.get_connection = mock_get_connection
 
         # Mock successful cancellation
         mock_connection.run.return_value = Mock(exit_status=0, stdout="", stderr="")
@@ -787,7 +801,9 @@ class TestResultDownload:
         mock_connection
     ):
         """Test downloading result files."""
-        # Mock SFTP
+        # Mock SFTP - start_sftp_client is a coroutine returning async ctx mgr
+        from contextlib import asynccontextmanager
+
         mock_sftp = AsyncMock()
         mock_sftp.listdir.return_value = [
             "output.out",
@@ -800,10 +816,14 @@ class TestResultDownload:
         ]
         mock_sftp.get = AsyncMock()
 
-        mock_connection.start_sftp_client.return_value = AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_sftp),
-            __aexit__=AsyncMock()
-        )
+        @asynccontextmanager
+        async def mock_sftp_ctx():
+            yield mock_sftp
+
+        async def mock_start_sftp():
+            return mock_sftp_ctx()
+
+        mock_connection.start_sftp_client = mock_start_sftp
 
         # Download results
         await slurm_runner._download_results(

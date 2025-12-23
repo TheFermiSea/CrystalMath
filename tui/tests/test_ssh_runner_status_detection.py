@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from asyncssh import ProcessError
 
 from src.runners.ssh_runner import SSHRunner
-from src.runners.base import JobNotFoundError
+from src.runners.base import JobStatus
+from src.runners.exceptions import JobNotFoundError
 from src.core.connection_manager import ConnectionManager
 
 
@@ -40,7 +41,7 @@ def ssh_runner(mock_connection_manager):
     runner = SSHRunner(
         connection_manager=mock_connection_manager,
         cluster_id=1,
-        remote_crystal_root=Path("/home/user/CRYSTAL23"),
+        remote_dft_root=Path("/home/user/CRYSTAL23"),
         remote_scratch_dir=Path("/home/user/crystal_jobs")
     )
 
@@ -50,7 +51,7 @@ def ssh_runner(mock_connection_manager):
         "pid": 12345,
         "remote_work_dir": "/home/user/crystal_jobs/job_1",
         "local_work_dir": "/tmp/local_work",
-        "status": "running"
+        "status": JobStatus.RUNNING
     }
 
     return runner
@@ -71,8 +72,8 @@ class TestStatusDetectionRunning:
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "running"
-        assert ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"] == "running"
+        assert status == JobStatus.RUNNING
+        assert ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"] == JobStatus.RUNNING
 
         # Verify ps command was called
         mock_conn.run.assert_called_once()
@@ -90,7 +91,7 @@ class TestStatusDetectionRunning:
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "running"
+        assert status == JobStatus.RUNNING
 
     async def test_rapid_status_checks_no_race_condition(self, ssh_runner, mock_connection_manager):
         """Test multiple rapid status checks don't cause race conditions."""
@@ -107,7 +108,7 @@ class TestStatusDetectionRunning:
         results = await asyncio.gather(*tasks)
 
         # All should return running
-        assert all(status == "running" for status in results)
+        assert all(status == JobStatus.RUNNING for status in results)
 
 
 @pytest.mark.asyncio
@@ -128,8 +129,8 @@ class TestStatusDetectionCompleted:
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "completed"
-        assert ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"] == "completed"
+        assert status == JobStatus.COMPLETED
+        assert ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"] == JobStatus.COMPLETED
 
     async def test_completed_via_exit_code_with_whitespace(self, ssh_runner, mock_connection_manager):
         """Test that exit code is parsed correctly even with whitespace."""
@@ -144,7 +145,7 @@ class TestStatusDetectionCompleted:
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "completed"
+        assert status == JobStatus.COMPLETED
 
     async def test_completed_via_output_parsing_fallback(self, ssh_runner, mock_connection_manager):
         """Test fallback to output parsing when exit code unavailable."""
@@ -171,7 +172,7 @@ CRYSTAL23 OUTPUT
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "completed"
+        assert status == JobStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -192,8 +193,8 @@ class TestStatusDetectionFailed:
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "failed"
-        assert ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"] == "failed"
+        assert status == JobStatus.FAILED
+        assert ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"] == JobStatus.FAILED
 
     async def test_failed_via_exit_code_137(self, ssh_runner, mock_connection_manager):
         """Test detection of killed job (exit code 137 = SIGKILL)."""
@@ -208,7 +209,7 @@ class TestStatusDetectionFailed:
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "failed"
+        assert status == JobStatus.FAILED
 
     async def test_failed_via_output_parsing_error_termination(self, ssh_runner, mock_connection_manager):
         """Test fallback detection of error termination in output."""
@@ -231,7 +232,7 @@ CRYSTAL23 OUTPUT
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "failed"
+        assert status == JobStatus.FAILED
 
     async def test_failed_via_output_parsing_segfault(self, ssh_runner, mock_connection_manager):
         """Test detection of segmentation fault in output."""
@@ -254,7 +255,7 @@ CRYSTAL23 OUTPUT
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "failed"
+        assert status == JobStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -276,7 +277,7 @@ class TestStatusDetectionEdgeCases:
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "unknown"
+        assert status == JobStatus.UNKNOWN
 
     async def test_unknown_when_output_incomplete(self, ssh_runner, mock_connection_manager):
         """Test handling of incomplete output file (job still writing)."""
@@ -299,7 +300,7 @@ CRYSTAL23 OUTPUT
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "unknown"
+        assert status == JobStatus.UNKNOWN
 
     async def test_invalid_job_handle_raises_error(self, ssh_runner):
         """Test that invalid job handle raises JobNotFoundError."""
@@ -337,7 +338,7 @@ CRYSTAL23 OUTPUT
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
         # Should fall back to next detection method
-        assert status in ("completed", "failed", "unknown")
+        assert status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.UNKNOWN)
 
     async def test_invalid_exit_code_fallback_to_output(self, ssh_runner, mock_connection_manager):
         """Test fallback when exit code file contains garbage."""
@@ -355,7 +356,7 @@ CRYSTAL23 OUTPUT
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "completed"
+        assert status == JobStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -417,7 +418,7 @@ class TestStatusDetectionPerformance:
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "running"
+        assert status == JobStatus.RUNNING
         # Should only call ps once
         assert mock_conn.run.call_count == 1
 
@@ -434,7 +435,7 @@ class TestStatusDetectionPerformance:
 
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
-        assert status == "completed"
+        assert status == JobStatus.COMPLETED
         # Should only call ps and exit code check (not output parsing)
         assert mock_conn.run.call_count == 2
 

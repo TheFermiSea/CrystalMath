@@ -25,6 +25,9 @@ LIB_DIR="${SCRIPT_DIR}/../lib"
 source "${LIB_DIR}/cry-config.sh" || { echo "FATAL: Failed to load cry-config.sh" >&2; exit 1; }
 cry_config_init
 
+# Quick validation of CRYSTAL23 installation
+cry_config_validate_quick || exit 1
+
 source "${LIB_DIR}/cry-logging.sh" || { echo "FATAL: Failed to load cry-logging.sh" >&2; exit 1; }
 source "${LIB_DIR}/core.sh" || { echo "FATAL: Failed to load core.sh" >&2; exit 1; }
 

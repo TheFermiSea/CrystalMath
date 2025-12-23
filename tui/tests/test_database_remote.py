@@ -57,24 +57,24 @@ class TestSchemaMigration:
     """Tests for database schema migrations."""
 
     def test_new_database_creates_v2_schema(self, temp_db):
-        """Test that new databases are created with v2 schema."""
-        assert temp_db.get_schema_version() == 2
+        """Test that new databases are created with current schema (v5)."""
+        assert temp_db.get_schema_version() == 5
 
-        # Verify all Phase 2 tables exist
+        # Verify all tables exist
         cursor = temp_db.conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )
         tables = {row[0] for row in cursor.fetchall()}
 
-        expected_tables = {"jobs", "clusters", "remote_jobs", "job_dependencies", "schema_version"}
+        expected_tables = {"jobs", "clusters", "remote_jobs", "job_dependencies", "job_results", "schema_version"}
         assert expected_tables.issubset(tables)
 
     def test_v1_database_migrates_to_v2(self, temp_db_v1):
-        """Test that v1 databases are automatically migrated to v2."""
+        """Test that v1 databases are automatically migrated to latest (v5)."""
         # Open v1 database - should trigger migration
         db = Database(temp_db_v1)
 
-        assert db.get_schema_version() == 2
+        assert db.get_schema_version() == 5
 
         # Verify Phase 2 columns exist in jobs table
         cursor = db.conn.execute("PRAGMA table_info(jobs)")
@@ -586,6 +586,7 @@ class TestJobDependencies:
 
         # Reset and test with failed
         temp_db.conn.execute("UPDATE jobs SET status = 'PENDING' WHERE id = ?", (job1_id,))
+        temp_db.conn.commit()
         temp_db.update_status(job1_id, "FAILED")
         can_run, _ = temp_db.can_job_run(job2_id)
         assert can_run is True
@@ -604,6 +605,7 @@ class TestJobDependencies:
 
         # Reset and fail parent
         temp_db.conn.execute("UPDATE jobs SET status = 'PENDING' WHERE id = ?", (job1_id,))
+        temp_db.conn.commit()
         temp_db.update_status(job1_id, "FAILED")
         can_run, _ = temp_db.can_job_run(job2_id)
         assert can_run is True

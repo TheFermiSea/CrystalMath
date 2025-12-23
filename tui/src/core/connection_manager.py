@@ -12,15 +12,34 @@ Provides a robust connection management system with:
 import asyncio
 import logging
 import time
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple
 from contextlib import asynccontextmanager
 
 import asyncssh
-import keyring
+
+# Keyring fallback: check if keyring is available and functional
+_KEYRING_AVAILABLE = False
+_KEYRING_WARNING_SHOWN = False
+
+try:
+    import keyring
+    # Test if keyring backend is functional
+    try:
+        keyring.get_keyring()
+        _KEYRING_AVAILABLE = True
+    except Exception:
+        _KEYRING_AVAILABLE = False
+except ImportError:
+    keyring = None  # type: ignore
+    _KEYRING_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+# In-memory fallback storage (not persisted - only for headless environments)
+_FALLBACK_PASSWORDS: Dict[str, str] = {}
 
 
 @dataclass
@@ -163,17 +182,43 @@ class ConnectionManager:
         """
         Store password for a cluster in system keyring.
 
+        Falls back to in-memory storage if keyring is not available.
+
         Args:
             cluster_id: Cluster identifier
             password: SSH password to store securely
         """
+        global _KEYRING_WARNING_SHOWN
+
         key = f"cluster_{cluster_id}"
-        keyring.set_password(self.KEYRING_SERVICE, key, password)
-        logger.info(f"Stored password for cluster {cluster_id}")
+
+        if _KEYRING_AVAILABLE and keyring is not None:
+            try:
+                keyring.set_password(self.KEYRING_SERVICE, key, password)
+                logger.info(f"Stored password for cluster {cluster_id} in system keyring")
+                return
+            except Exception as e:
+                logger.warning(f"Keyring failed, using fallback: {e}")
+
+        # Fallback to in-memory storage
+        if not _KEYRING_WARNING_SHOWN:
+            warnings.warn(
+                "Keyring not available. Using in-memory password storage. "
+                "Passwords will NOT be persisted across sessions. "
+                "For production use, install a keyring backend.",
+                UserWarning,
+                stacklevel=2,
+            )
+            _KEYRING_WARNING_SHOWN = True
+
+        _FALLBACK_PASSWORDS[key] = password
+        logger.info(f"Stored password for cluster {cluster_id} in memory (not persisted)")
 
     def get_password(self, cluster_id: int) -> Optional[str]:
         """
         Retrieve password for a cluster from system keyring.
+
+        Falls back to in-memory storage if keyring is not available.
 
         Args:
             cluster_id: Cluster identifier
@@ -182,21 +227,41 @@ class ConnectionManager:
             Password if stored, None otherwise
         """
         key = f"cluster_{cluster_id}"
-        return keyring.get_password(self.KEYRING_SERVICE, key)
+
+        if _KEYRING_AVAILABLE and keyring is not None:
+            try:
+                password = keyring.get_password(self.KEYRING_SERVICE, key)
+                if password is not None:
+                    return password
+            except Exception as e:
+                logger.debug(f"Keyring get_password failed: {e}")
+
+        # Fallback to in-memory storage
+        return _FALLBACK_PASSWORDS.get(key)
 
     def delete_password(self, cluster_id: int) -> None:
         """
         Delete password for a cluster from system keyring.
 
+        Also removes from fallback storage if present.
+
         Args:
             cluster_id: Cluster identifier
         """
         key = f"cluster_{cluster_id}"
-        try:
-            keyring.delete_password(self.KEYRING_SERVICE, key)
-            logger.info(f"Deleted password for cluster {cluster_id}")
-        except keyring.errors.PasswordDeleteError:
-            logger.warning(f"No password stored for cluster {cluster_id}")
+
+        # Try keyring first
+        if _KEYRING_AVAILABLE and keyring is not None:
+            try:
+                keyring.delete_password(self.KEYRING_SERVICE, key)
+                logger.info(f"Deleted password for cluster {cluster_id} from keyring")
+            except Exception as e:
+                logger.debug(f"Keyring delete_password failed or no password: {e}")
+
+        # Also remove from fallback
+        if key in _FALLBACK_PASSWORDS:
+            del _FALLBACK_PASSWORDS[key]
+            logger.info(f"Deleted password for cluster {cluster_id} from memory")
 
     async def connect(self, cluster_id: int) -> asyncssh.SSHClientConnection:
         """

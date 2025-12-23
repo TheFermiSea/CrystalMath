@@ -1,8 +1,9 @@
 """
-Modal screen for creating new CRYSTAL calculation jobs.
+Modal screen for creating new DFT calculation jobs.
+
+Supports multiple DFT codes: CRYSTAL23, Quantum Espresso, VASP.
 """
 
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -26,7 +27,7 @@ class JobCreated(Message):
 
 
 class NewJobScreen(ModalScreen):
-    """Modal screen for creating a new CRYSTAL calculation job."""
+    """Modal screen for creating a new DFT calculation job."""
 
     CSS = """
     NewJobScreen {
@@ -188,12 +189,26 @@ class NewJobScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         """Compose the modal layout."""
         with Container(id="modal_container"):
-            yield Static("Create New CRYSTAL Job", id="modal_title")
+            yield Static("Create New DFT Job", id="modal_title")
 
             with ScrollableContainer(id="form_scroll"):
                 # Section 1: Job Configuration
                 with Vertical(classes="form_section"):
                     yield Label("Job Configuration", classes="section_title")
+
+                    # DFT Code selector
+                    yield Label("DFT Code:", classes="field_label")
+                    yield Select(
+                        [
+                            ("CRYSTAL23", "crystal"),
+                            ("Quantum Espresso", "quantum_espresso"),
+                            ("VASP", "vasp"),
+                        ],
+                        value="crystal",
+                        id="dft_code_select",
+                        classes="field_input"
+                    )
+
                     yield Label("Job Name (letters, numbers, hyphens, underscores only):", classes="field_label")
                     yield Input(
                         placeholder="e.g., mgo_bulk_optimization",
@@ -203,9 +218,9 @@ class NewJobScreen(ModalScreen):
 
                 # Section 2: Input File
                 with Vertical(classes="form_section"):
-                    yield Label("CRYSTAL Input File (.d12)", classes="section_title")
+                    yield Label("Input File", classes="section_title", id="input_section_title")
                     yield Static(
-                        "Paste your .d12 input content below or use 'Browse Files' to load from disk",
+                        "Paste your input content below or use 'Browse Files' to load from disk",
                         id="info_message"
                     )
                     yield TextArea(
@@ -291,6 +306,8 @@ class NewJobScreen(ModalScreen):
         job_name_input = self.query_one("#job_name_input", Input)
         job_name_input.focus()
         self._update_work_dir_preview()
+        # Initialize UI for default DFT code
+        self._update_ui_for_dft_code("crystal")
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle input field changes."""
@@ -325,6 +342,27 @@ class NewJobScreen(ModalScreen):
             mpi_input.disabled = not is_parallel
             if not is_parallel:
                 mpi_input.value = "1"
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle DFT code selection changes."""
+        if event.select.id == "dft_code_select":
+            self._update_ui_for_dft_code(str(event.value))
+
+    def _update_ui_for_dft_code(self, dft_code: str) -> None:
+        """Update UI elements based on selected DFT code."""
+        input_section_title = self.query_one("#input_section_title", Label)
+        info_message = self.query_one("#info_message", Static)
+
+        # DFT code display names and file extensions
+        code_info = {
+            "crystal": ("CRYSTAL23 Input File (.d12)", "Paste your .d12 input content below"),
+            "quantum_espresso": ("Quantum Espresso Input File (.in)", "Paste your .in input content below (QE stub - not yet implemented)"),
+            "vasp": ("VASP Input Files", "VASP uses POSCAR/INCAR/KPOINTS/POTCAR - paste POSCAR below (VASP stub - not yet implemented)"),
+        }
+
+        display_name, hint = code_info.get(dft_code, ("Input File", "Paste input content below"))
+        input_section_title.update(display_name)
+        info_message.update(hint)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press events."""
@@ -367,6 +405,7 @@ class NewJobScreen(ModalScreen):
         job_name_input = self.query_one("#job_name_input", Input)
         input_textarea = self.query_one("#input_textarea", TextArea)
         error_message = self.query_one("#error_message", Static)
+        dft_code_select = self.query_one("#dft_code_select", Select)
 
         # Auxiliary files
         gui_checkbox = self.query_one("#gui_checkbox", Checkbox)
@@ -382,6 +421,7 @@ class NewJobScreen(ModalScreen):
 
         job_name = job_name_input.value.strip()
         input_content = input_textarea.text.strip()
+        dft_code = str(dft_code_select.value) if dft_code_select.value else "crystal"
 
         # Clear previous error
         error_message.update("")
@@ -412,8 +452,8 @@ class NewJobScreen(ModalScreen):
             input_textarea.focus()
             return
 
-        # Basic validation: check for required sections
-        validation_error = self._validate_crystal_input(input_content)
+        # Basic validation: check for required sections (DFT code specific)
+        validation_error = self._validate_input(dft_code, input_content)
         if validation_error:
             self._show_error(validation_error)
             input_textarea.focus()
@@ -516,6 +556,7 @@ class NewJobScreen(ModalScreen):
 
         # Write job metadata file
         metadata = {
+            "dft_code": dft_code,
             "mpi_ranks": mpi_ranks,
             "parallel_mode": "parallel" if parallel_mode.pressed_index == 1 else "serial",
             "auxiliary_files": list(aux_files.keys())
@@ -533,7 +574,8 @@ class NewJobScreen(ModalScreen):
             job_id = self.database.create_job(
                 name=job_name,
                 work_dir=str(work_dir),
-                input_content=input_content
+                input_content=input_content,
+                dft_code=dft_code
             )
         except Exception as e:
             self._show_error(f"Failed to create job in database: {str(e)}")
@@ -554,6 +596,20 @@ class NewJobScreen(ModalScreen):
         error_message = self.query_one("#error_message", Static)
         error_message.update(f"Error: {message}")
         error_message.add_class("visible")
+
+    def _validate_input(self, dft_code: str, content: str) -> Optional[str]:
+        """
+        Perform basic validation on DFT input content based on the selected code.
+        Returns error message if invalid, None if valid.
+        """
+        if dft_code == "crystal":
+            return self._validate_crystal_input(content)
+        elif dft_code == "quantum_espresso":
+            return self._validate_qe_input(content)
+        elif dft_code == "vasp":
+            return self._validate_vasp_input(content)
+        else:
+            return None  # Unknown code - skip validation
 
     def _validate_crystal_input(self, content: str) -> Optional[str]:
         """
@@ -580,5 +636,33 @@ class NewJobScreen(ModalScreen):
         end_count = content_upper.count('END')
         if end_count < 2:
             return "Input must contain at least 2 END keywords (geometry and basis set sections)"
+
+        return None
+
+    def _validate_qe_input(self, content: str) -> Optional[str]:
+        """
+        Perform basic validation on Quantum Espresso input content (stub).
+        Returns error message if invalid, None if valid.
+        """
+        # Stub validation - minimal checks
+        if len(content.strip()) < 10:
+            return "Input file too short"
+
+        # QE inputs typically have &CONTROL, &SYSTEM, &ELECTRONS namelists
+        content_upper = content.upper()
+        if "&CONTROL" not in content_upper:
+            return "QE input should contain &CONTROL namelist (stub validation)"
+
+        return None
+
+    def _validate_vasp_input(self, content: str) -> Optional[str]:
+        """
+        Perform basic validation on VASP POSCAR content (stub).
+        Returns error message if invalid, None if valid.
+        """
+        # Stub validation - minimal checks
+        lines = content.strip().split('\n')
+        if len(lines) < 5:
+            return "POSCAR file too short - needs at least comment, scale, lattice vectors"
 
         return None

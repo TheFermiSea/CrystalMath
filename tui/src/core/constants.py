@@ -14,14 +14,18 @@ Usage:
 
 
 class JobStatus:
-    """Job execution status constants."""
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    UNKNOWN = "unknown"
-    QUEUED = "QUEUED"  # Legacy uppercase variant used in database
+    """Job execution status constants.
+
+    Note: Database uses uppercase values for the CHECK constraint.
+    All status constants should be uppercase for database compatibility.
+    """
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    UNKNOWN = "UNKNOWN"
+    QUEUED = "QUEUED"
 
     @classmethod
     def all(cls):

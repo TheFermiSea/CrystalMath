@@ -193,6 +193,27 @@ class QueueManager:
         # Initialize database schema extensions
         self._initialize_queue_schema()
 
+    # ==================== Async Database Helpers ====================
+
+    async def _run_db(self, func, *args, **kwargs):
+        """
+        Run a blocking database call in a thread to avoid freezing the event loop.
+
+        This wraps synchronous database operations to be async-safe, preventing
+        TUI freezes during database operations.
+
+        Args:
+            func: The database method to call
+            *args: Positional arguments for the method
+            **kwargs: Keyword arguments for the method
+
+        Returns:
+            Result of the database call
+        """
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+    # ==================== Schema Initialization ====================
+
     def _initialize_queue_schema(self) -> None:
         """Extend database schema for queue management."""
         schema_extension = """
@@ -237,88 +258,92 @@ class QueueManager:
         CREATE INDEX IF NOT EXISTS idx_queue_cluster ON queue_state (cluster_id);
         """
 
-        self.db.conn.executescript(schema_extension)
-        self.db.conn.commit()
+        # FIX: Use connection context manager instead of raw self.db.conn
+        with self.db.connection() as conn:
+            conn.executescript(schema_extension)
+            conn.commit()
 
         # Restore queue state from database
         self._restore_from_database()
 
     def _restore_from_database(self) -> None:
         """Restore queue state from database after restart."""
-        cursor = self.db.conn.execute(
-            "SELECT * FROM queue_state WHERE job_id IN "
-            f"(SELECT id FROM jobs WHERE status IN ('{JobStatus.PENDING}', '{JobStatus.QUEUED}'))"
-        )
-
-        for row in cursor.fetchall():
-            job_id = row[0]
-            priority = Priority(row[1])
-            enqueued_at = datetime.fromisoformat(row[2])
-            dependencies = set(json.loads(row[3])) if row[3] else set()
-            retry_count = row[4]
-            max_retries = row[5]
-            runner_type = row[6]
-            cluster_id = row[7]
-            user_id = row[8]
-            resource_requirements = json.loads(row[9]) if row[9] else {}
-
-            queued_job = QueuedJob(
-                job_id=job_id,
-                priority=priority,
-                enqueued_at=enqueued_at,
-                dependencies=dependencies,
-                retry_count=retry_count,
-                max_retries=max_retries,
-                runner_type=runner_type,
-                cluster_id=cluster_id,
-                user_id=user_id,
-                resource_requirements=resource_requirements
+        # FIX: Use connection context manager instead of raw self.db.conn
+        with self.db.connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM queue_state WHERE job_id IN "
+                f"(SELECT id FROM jobs WHERE status IN ('{JobStatus.PENDING}', '{JobStatus.QUEUED}'))"
             )
 
-            self._jobs[job_id] = queued_job
+            for row in cursor.fetchall():
+                job_id = row[0]
+                priority = Priority(row[1])
+                enqueued_at = datetime.fromisoformat(row[2])
+                dependencies = set(json.loads(row[3])) if row[3] else set()
+                retry_count = row[4]
+                max_retries = row[5]
+                runner_type = row[6]
+                cluster_id = row[7]
+                user_id = row[8]
+                resource_requirements = json.loads(row[9]) if row[9] else {}
 
-            # Build dependency graph
-            for dep_id in dependencies:
-                self._dependents[dep_id].add(job_id)
+                queued_job = QueuedJob(
+                    job_id=job_id,
+                    priority=priority,
+                    enqueued_at=enqueued_at,
+                    dependencies=dependencies,
+                    retry_count=retry_count,
+                    max_retries=max_retries,
+                    runner_type=runner_type,
+                    cluster_id=cluster_id,
+                    user_id=user_id,
+                    resource_requirements=resource_requirements
+                )
 
-        # Restore cluster state
-        cursor = self.db.conn.execute("SELECT * FROM cluster_state")
-        for row in cursor.fetchall():
-            cluster_id = row[0]
-            max_concurrent = row[1]
-            paused = bool(row[2])
-            available_resources = json.loads(row[3]) if row[3] else {}
+                self._jobs[job_id] = queued_job
 
-            # Get running jobs for this cluster
-            running_cursor = self.db.conn.execute(
-                f"SELECT id FROM jobs WHERE status = '{JobStatus.RUNNING}' AND id IN "
-                "(SELECT job_id FROM queue_state WHERE cluster_id = ?)",
-                (cluster_id,)
-            )
-            running_jobs = {row[0] for row in running_cursor.fetchall()}
+                # Build dependency graph
+                for dep_id in dependencies:
+                    self._dependents[dep_id].add(job_id)
 
-            self._clusters[cluster_id] = ClusterState(
-                cluster_id=cluster_id,
-                max_concurrent_jobs=max_concurrent,
-                running_jobs=running_jobs,
-                paused=paused,
-                available_resources=available_resources
-            )
+            # Restore cluster state
+            cursor = conn.execute("SELECT * FROM cluster_state")
+            for row in cursor.fetchall():
+                cluster_id = row[0]
+                max_concurrent = row[1]
+                paused = bool(row[2])
+                available_resources = json.loads(row[3]) if row[3] else {}
 
-        # Restore metrics
-        cursor = self.db.conn.execute("SELECT * FROM scheduler_metrics WHERE id = 1")
-        row = cursor.fetchone()
-        if row:
-            self.metrics = SchedulerMetrics(
-                total_jobs_scheduled=row[1],
-                total_jobs_completed=row[2],
-                total_jobs_failed=row[3],
-                total_jobs_retried=row[4],
-                average_wait_time_seconds=row[5],
-                jobs_per_hour=row[6],
-                failed_job_rate=row[7],
-                last_updated=datetime.fromisoformat(row[8]) if row[8] else None
-            )
+                # Get running jobs for this cluster
+                running_cursor = conn.execute(
+                    f"SELECT id FROM jobs WHERE status = '{JobStatus.RUNNING}' AND id IN "
+                    "(SELECT job_id FROM queue_state WHERE cluster_id = ?)",
+                    (cluster_id,)
+                )
+                running_jobs = {row[0] for row in running_cursor.fetchall()}
+
+                self._clusters[cluster_id] = ClusterState(
+                    cluster_id=cluster_id,
+                    max_concurrent_jobs=max_concurrent,
+                    running_jobs=running_jobs,
+                    paused=paused,
+                    available_resources=available_resources
+                )
+
+            # Restore metrics
+            cursor = conn.execute("SELECT * FROM scheduler_metrics WHERE id = 1")
+            row = cursor.fetchone()
+            if row:
+                self.metrics = SchedulerMetrics(
+                    total_jobs_scheduled=row[1],
+                    total_jobs_completed=row[2],
+                    total_jobs_failed=row[3],
+                    total_jobs_retried=row[4],
+                    average_wait_time_seconds=row[5],
+                    jobs_per_hour=row[6],
+                    failed_job_rate=row[7],
+                    last_updated=datetime.fromisoformat(row[8]) if row[8] else None
+                )
 
         logger.info(
             f"Restored queue state: {len(self._jobs)} queued jobs, "
@@ -521,8 +546,8 @@ class QueueManager:
             Job ID if a job is available, None otherwise
         """
         async with self._lock:
-            # Find highest priority job that can run
-            schedulable = await self.schedule_jobs()
+            # Find highest priority job that can run (use locked version to avoid deadlock)
+            schedulable = self._schedule_jobs_locked()
 
             for job_id in schedulable:
                 queued_job = self._jobs.get(job_id)
@@ -573,40 +598,52 @@ class QueueManager:
             List of job IDs ready to be scheduled (in priority order)
         """
         async with self._lock:
-            schedulable: List[Tuple[QueuedJob, float]] = []
+            return self._schedule_jobs_locked()
 
-            # OPTIMIZATION: Batch query all job statuses instead of individual queries
-            job_ids = list(self._jobs.keys())
-            job_statuses = self._get_job_statuses_batch(job_ids)
+    def _schedule_jobs_locked(self) -> List[int]:
+        """
+        Internal scheduling logic without lock acquisition.
 
-            for job_id, queued_job in self._jobs.items():
-                # Check job status from batch query cache (O(1) lookup)
-                status = job_statuses.get(job_id)
-                if not status or status not in (JobStatus.PENDING, JobStatus.QUEUED):
+        IMPORTANT: Caller MUST hold self._lock before calling this method.
+        This is an internal helper used by methods that already hold the lock.
+
+        Returns:
+            List of job IDs ready to be scheduled (in priority order)
+        """
+        schedulable: List[Tuple[QueuedJob, float]] = []
+
+        # OPTIMIZATION: Batch query all job statuses instead of individual queries
+        job_ids = list(self._jobs.keys())
+        job_statuses = self._get_job_statuses_batch(job_ids)
+
+        for job_id, queued_job in self._jobs.items():
+            # Check job status from batch query cache (O(1) lookup)
+            status = job_statuses.get(job_id)
+            if not status or status not in (JobStatus.PENDING, JobStatus.QUEUED):
+                continue
+
+            # Check if dependencies are satisfied (using locked helper)
+            if not self._dependencies_satisfied_locked(job_id):
+                continue
+
+            # Check cluster capacity
+            cluster = self._get_cluster(queued_job.cluster_id)
+            if not cluster.can_accept_job:
+                continue
+
+            # Check resources available (if resource-aware scheduling)
+            if queued_job.resource_requirements:
+                if not self._resources_available(cluster, queued_job.resource_requirements):
                     continue
 
-                # Check if dependencies are satisfied (using locked helper)
-                if not self._dependencies_satisfied_locked(job_id):
-                    continue
+            # Calculate scheduling score
+            score = self._calculate_scheduling_score(queued_job)
+            schedulable.append((queued_job, score))
 
-                # Check cluster capacity
-                cluster = self._get_cluster(queued_job.cluster_id)
-                if not cluster.can_accept_job:
-                    continue
+        # Sort by score (higher = better)
+        schedulable.sort(key=lambda x: x[1], reverse=True)
 
-                # Check resources available (if resource-aware scheduling)
-                if queued_job.resource_requirements:
-                    if not self._resources_available(cluster, queued_job.resource_requirements):
-                        continue
-
-                # Calculate scheduling score
-                score = self._calculate_scheduling_score(queued_job)
-                schedulable.append((queued_job, score))
-
-            # Sort by score (higher = better)
-            schedulable.sort(key=lambda x: x[1], reverse=True)
-
-            return [job.job_id for job, _ in schedulable]
+        return [job.job_id for job, _ in schedulable]
 
     def _dependencies_satisfied(self, job_id: int) -> bool:
         """
@@ -781,6 +818,68 @@ class QueueManager:
                 f"Reordered job {job_id}: priority {old_priority} → {new_priority}"
             )
 
+    async def cancel_job(self, job_id: int) -> bool:
+        """
+        Cancel a job, removing it from the queue.
+
+        If the job is queued (pending), it is removed from the queue.
+        If the job is running, it is marked as cancelled but the actual
+        process termination should be handled by the runner.
+        If the job is already completed or failed, returns False.
+
+        Args:
+            job_id: Database ID of the job to cancel
+
+        Returns:
+            True if job was cancelled, False if job was not cancellable
+            (already completed, failed, or not found)
+        """
+        async with self._lock:
+            # Get current job status from database
+            job = self.db.get_job(job_id)
+            if not job:
+                logger.warning(f"Cannot cancel job {job_id}: not found")
+                return False
+
+            current_status = job.get("status") if isinstance(job, dict) else getattr(job, "status", None)
+
+            # Already in terminal state
+            if current_status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+                logger.debug(f"Job {job_id} already in terminal state: {current_status}")
+                return False
+
+            # Remove from internal queue if present
+            if job_id in self._jobs:
+                del self._jobs[job_id]
+
+            # Remove from cluster running jobs
+            for cluster in self._clusters.values():
+                if job_id in cluster.running_jobs:
+                    cluster.running_jobs.remove(job_id)
+                    break
+            else:
+                self._default_cluster.running_jobs.discard(job_id)
+
+            # Remove from dependency graph
+            if job_id in self._dependents:
+                del self._dependents[job_id]
+
+            # Remove any dependencies on this job from other jobs
+            for other_job in self._jobs.values():
+                other_job.dependencies.discard(job_id)
+
+            # Update database status to CANCELLED
+            self.db.update_status(job_id, JobStatus.CANCELLED)
+
+            # Invalidate cache
+            self._invalidate_status_cache(job_id)
+
+            # Remove from queue_state table
+            self._remove_job_from_database(job_id)
+
+            logger.info(f"Cancelled job {job_id}")
+            return True
+
     async def handle_job_completion(self, job_id: int, success: bool) -> None:
         """
         Handle job completion event.
@@ -841,12 +940,14 @@ class QueueManager:
         Args:
             job_id: Failed job ID
         """
-        # Check if job was queued (might have retry metadata)
-        cursor = self.db.conn.execute(
-            "SELECT * FROM queue_state WHERE job_id = ?",
-            (job_id,)
-        )
-        row = cursor.fetchone()
+        # FIX: Use connection context manager instead of raw self.db.conn
+        with self.db.connection() as conn:
+            # Check if job was queued (might have retry metadata)
+            cursor = conn.execute(
+                "SELECT * FROM queue_state WHERE job_id = ?",
+                (job_id,)
+            )
+            row = cursor.fetchone()
 
         if row:
             retry_count = row[4]  # retry_count column
@@ -883,14 +984,15 @@ class QueueManager:
                 self._jobs[job_id] = queued_job
 
                 # Update retry count in database
-                self.db.conn.execute(
-                    "UPDATE queue_state SET retry_count = ? WHERE job_id = ?",
-                    (retry_count, job_id)
-                )
-                self.db.conn.commit()
+                with self.db.connection() as conn:
+                    conn.execute(
+                        "UPDATE queue_state SET retry_count = ? WHERE job_id = ?",
+                        (retry_count, job_id)
+                    )
+                    conn.commit()
 
                 # Reset job status to QUEUED
-                self.db.update_status(job_id, JobStatus.QUEUED)
+                await self._run_db(self.db.update_status, job_id, JobStatus.QUEUED)
 
                 logger.info(
                     f"Retrying job {job_id} (attempt {retry_count}/{max_retries})"
@@ -1023,84 +1125,111 @@ class QueueManager:
 
     def _persist_to_database(self) -> None:
         """Persist all queue state to database."""
-        # Persist all queued jobs
-        for queued_job in self._jobs.values():
-            self._persist_job_to_database(queued_job)
+        # FIX: Use a single connection context for all persistence operations
+        with self.db.connection() as conn:
+            # Persist all queued jobs
+            for queued_job in self._jobs.values():
+                self._persist_job_to_database(queued_job, conn)
 
-        # Persist cluster states
-        for cluster in self._clusters.values():
-            self._persist_cluster_to_database(cluster)
+            # Persist cluster states
+            for cluster in self._clusters.values():
+                self._persist_cluster_to_database(cluster, conn)
 
-        # Persist metrics
-        self.db.conn.execute(
-            """
-            INSERT OR REPLACE INTO scheduler_metrics
-            (id, total_jobs_scheduled, total_jobs_completed, total_jobs_failed,
-             total_jobs_retried, average_wait_time_seconds, jobs_per_hour,
-             failed_job_rate, last_updated)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                self.metrics.total_jobs_scheduled,
-                self.metrics.total_jobs_completed,
-                self.metrics.total_jobs_failed,
-                self.metrics.total_jobs_retried,
-                self.metrics.average_wait_time_seconds,
-                self.metrics.jobs_per_hour,
-                self.metrics.failed_job_rate,
-                self.metrics.last_updated.isoformat() if self.metrics.last_updated else None
+            # Persist metrics
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO scheduler_metrics
+                (id, total_jobs_scheduled, total_jobs_completed, total_jobs_failed,
+                 total_jobs_retried, average_wait_time_seconds, jobs_per_hour,
+                 failed_job_rate, last_updated)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self.metrics.total_jobs_scheduled,
+                    self.metrics.total_jobs_completed,
+                    self.metrics.total_jobs_failed,
+                    self.metrics.total_jobs_retried,
+                    self.metrics.average_wait_time_seconds,
+                    self.metrics.jobs_per_hour,
+                    self.metrics.failed_job_rate,
+                    self.metrics.last_updated.isoformat() if self.metrics.last_updated else None
+                )
             )
-        )
-        self.db.conn.commit()
+            conn.commit()
 
-    def _persist_job_to_database(self, queued_job: QueuedJob) -> None:
-        """Persist a single queued job to database."""
-        self.db.conn.execute(
-            """
-            INSERT OR REPLACE INTO queue_state
-            (job_id, priority, enqueued_at, dependencies, retry_count, max_retries,
-             runner_type, cluster_id, user_id, resource_requirements)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                queued_job.job_id,
-                queued_job.priority.value,
-                queued_job.enqueued_at.isoformat(),
-                json.dumps(list(queued_job.dependencies)),
-                queued_job.retry_count,
-                queued_job.max_retries,
-                queued_job.runner_type,
-                queued_job.cluster_id,
-                queued_job.user_id,
-                json.dumps(queued_job.resource_requirements)
-            )
-        )
-        self.db.conn.commit()
+    def _persist_job_to_database(self, queued_job: QueuedJob, conn=None) -> None:
+        """Persist a single queued job to database.
 
-    def _persist_cluster_to_database(self, cluster: ClusterState) -> None:
-        """Persist cluster state to database."""
-        self.db.conn.execute(
-            """
-            INSERT OR REPLACE INTO cluster_state
-            (cluster_id, max_concurrent_jobs, paused, available_resources)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                cluster.cluster_id,
-                cluster.max_concurrent_jobs,
-                1 if cluster.paused else 0,
-                json.dumps(cluster.available_resources)
+        Args:
+            queued_job: Job to persist
+            conn: Optional connection (if None, uses context manager)
+        """
+        def _execute(c):
+            c.execute(
+                """
+                INSERT OR REPLACE INTO queue_state
+                (job_id, priority, enqueued_at, dependencies, retry_count, max_retries,
+                 runner_type, cluster_id, user_id, resource_requirements)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    queued_job.job_id,
+                    queued_job.priority.value,
+                    queued_job.enqueued_at.isoformat(),
+                    json.dumps(list(queued_job.dependencies)),
+                    queued_job.retry_count,
+                    queued_job.max_retries,
+                    queued_job.runner_type,
+                    queued_job.cluster_id,
+                    queued_job.user_id,
+                    json.dumps(queued_job.resource_requirements)
+                )
             )
-        )
-        self.db.conn.commit()
+
+        if conn:
+            _execute(conn)
+        else:
+            with self.db.connection() as c:
+                _execute(c)
+                c.commit()
+
+    def _persist_cluster_to_database(self, cluster: ClusterState, conn=None) -> None:
+        """Persist cluster state to database.
+
+        Args:
+            cluster: Cluster state to persist
+            conn: Optional connection (if None, uses context manager)
+        """
+        def _execute(c):
+            c.execute(
+                """
+                INSERT OR REPLACE INTO cluster_state
+                (cluster_id, max_concurrent_jobs, paused, available_resources)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    cluster.cluster_id,
+                    cluster.max_concurrent_jobs,
+                    1 if cluster.paused else 0,
+                    json.dumps(cluster.available_resources)
+                )
+            )
+
+        if conn:
+            _execute(conn)
+        else:
+            with self.db.connection() as c:
+                _execute(c)
+                c.commit()
 
     def _remove_job_from_database(self, job_id: int) -> None:
         """Remove job from queue_state table (after dequeue)."""
-        self.db.conn.execute(
-            "DELETE FROM queue_state WHERE job_id = ?",
-            (job_id,)
-        )
-        self.db.conn.commit()
+        with self.db.connection() as conn:
+            conn.execute(
+                "DELETE FROM queue_state WHERE job_id = ?",
+                (job_id,)
+            )
+            conn.commit()
 
     def get_queue_status(self, runner_type: Optional[str] = None) -> Dict[str, Any]:
         """

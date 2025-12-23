@@ -266,7 +266,8 @@ class WorkflowOrchestrator:
         self._scratch_base = scratch_base or self._get_scratch_base()
 
         # Track cleanup handlers for proper resource cleanup
-        self._work_dirs: Set[Path] = set()
+        # Maps work_dir -> workflow_id for conditional cleanup
+        self._work_dirs: Dict[Path, int] = {}
         atexit.register(self._cleanup_work_dirs)
 
         # In-memory state for active workflows
@@ -287,6 +288,228 @@ class WorkflowOrchestrator:
         # This prevents template injection attacks like:
         # {{ ''.__class__.__mro__[1].__subclasses__()[104].__init__.__globals__['os'].system('rm -rf /') }}
         self._jinja_env = SandboxedEnvironment(autoescape=False)
+
+        # Output parser registry
+        # Maps parser name -> async callable that takes (work_dir: Path) -> Dict[str, Any]
+        self._output_parsers: Dict[str, Callable[[Path], Dict[str, Any]]] = {}
+        self._register_builtin_parsers()
+
+    def register_parser(self, name: str, parser_func: Callable[[Path], Dict[str, Any]]) -> None:
+        """
+        Register a custom output parser.
+
+        Parsers are async functions that extract specific information from job output files.
+        They receive the work directory path and return a dictionary of extracted values.
+
+        Args:
+            name: Unique name for the parser (e.g., "energy", "bandgap")
+            parser_func: Async function with signature (work_dir: Path) -> Dict[str, Any]
+
+        Example:
+            >>> async def my_parser(work_dir: Path) -> Dict[str, Any]:
+            ...     output_file = work_dir / "job.out"
+            ...     # Parse output_file
+            ...     return {"my_value": 42}
+            >>> orchestrator.register_parser("my_parser", my_parser)
+        """
+        self._output_parsers[name] = parser_func
+
+    def _get_output_parser(self, name: str) -> Optional[Callable[[Path], Dict[str, Any]]]:
+        """
+        Retrieve a registered output parser by name.
+
+        Args:
+            name: Name of the parser to retrieve
+
+        Returns:
+            Parser function if found, None otherwise
+        """
+        return self._output_parsers.get(name)
+
+    def _register_builtin_parsers(self) -> None:
+        """
+        Register built-in output parsers for common CRYSTAL outputs.
+
+        Built-in parsers:
+        - "energy": Extracts final SCF energy from output
+        - "bandgap": Extracts band gap if available
+        - "lattice": Extracts lattice parameters
+        """
+        self.register_parser("energy", self._parse_energy)
+        self.register_parser("bandgap", self._parse_bandgap)
+        self.register_parser("lattice", self._parse_lattice)
+
+    def _find_output_file(self, work_dir: Path) -> Optional[Path]:
+        """
+        Find the output file in a work directory.
+
+        Searches for common output file patterns used by different runners:
+        - LocalRunner: output.d12, output.out, *.out
+        - SSHRunner: output.log
+        - SLURMRunner: output.log, slurm-*.out
+
+        Args:
+            work_dir: Job work directory
+
+        Returns:
+            Path to output file if found, None otherwise
+        """
+        # Priority order of output file patterns
+        patterns = [
+            "output.d12",      # LocalRunner with CRYSTAL
+            "output.out",      # LocalRunner generic
+            "output.log",      # SSHRunner
+            "job.out",         # Legacy pattern
+            "*.out",           # Fallback glob
+        ]
+
+        for pattern in patterns:
+            if "*" in pattern:
+                # Glob pattern
+                matches = list(work_dir.glob(pattern))
+                if matches:
+                    # Return the most recently modified .out file
+                    return max(matches, key=lambda p: p.stat().st_mtime)
+            else:
+                # Exact filename
+                candidate = work_dir / pattern
+                if candidate.exists():
+                    return candidate
+
+        return None
+
+    async def _parse_energy(self, work_dir: Path) -> Dict[str, Any]:
+        """
+        Extract final SCF energy from CRYSTAL output.
+
+        Searches for the final energy line in the output file.
+        Typical format: "== SCF ENDED - CONVERGENCE ON ENERGY      E(AU) = -XXX.XXXXXXXX"
+
+        Args:
+            work_dir: Job work directory containing output file
+
+        Returns:
+            Dictionary with "final_energy" key if found, empty dict otherwise
+        """
+        output_file = self._find_output_file(work_dir)
+        if output_file is None:
+            return {}
+
+        try:
+            with open(output_file, "r") as f:
+                lines = f.readlines()
+
+            # Search backwards for final energy (last occurrence)
+            for line in reversed(lines):
+                if "SCF ENDED" in line and "E(AU)" in line:
+                    # Extract energy value
+                    parts = line.split("E(AU)")
+                    if len(parts) > 1:
+                        energy_str = parts[1].strip().split()[1]
+                        return {"final_energy": float(energy_str)}
+
+            return {}
+        except Exception as e:
+            # Log error but don't fail the workflow
+            print(f"Warning: Failed to parse energy from {output_file}: {e}")
+            return {}
+
+    async def _parse_bandgap(self, work_dir: Path) -> Dict[str, Any]:
+        """
+        Extract band gap from CRYSTAL output.
+
+        Searches for band structure analysis lines in the output.
+        Typical format: "ENERGY BAND GAP:     X.XXX eV"
+
+        Args:
+            work_dir: Job work directory containing output file
+
+        Returns:
+            Dictionary with "bandgap" key if found, empty dict otherwise
+        """
+        output_file = self._find_output_file(work_dir)
+        if output_file is None:
+            return {}
+
+        try:
+            with open(output_file, "r") as f:
+                content = f.read()
+
+            # Search for band gap line
+            # Check for direct/indirect first (more specific pattern)
+            for line in content.split("\n"):
+                if "DIRECT ENERGY BAND GAP" in line or "INDIRECT ENERGY BAND GAP" in line:
+                    parts = line.split(":")
+                    if len(parts) > 1:
+                        gap_str = parts[1].strip().split()[0]
+                        gap_type = "direct" if "DIRECT" in line else "indirect"
+                        return {"bandgap": float(gap_str), "bandgap_type": gap_type}
+
+                # Generic band gap format (fallback)
+                if "ENERGY BAND GAP" in line and "DIRECT" not in line and "INDIRECT" not in line:
+                    parts = line.split(":")
+                    if len(parts) > 1:
+                        gap_str = parts[1].strip().split()[0]
+                        return {"bandgap": float(gap_str)}
+
+            return {}
+        except Exception as e:
+            print(f"Warning: Failed to parse band gap from {output_file}: {e}")
+            return {}
+
+    async def _parse_lattice(self, work_dir: Path) -> Dict[str, Any]:
+        """
+        Extract lattice parameters from CRYSTAL output.
+
+        Searches for the final geometry section with cell parameters.
+        Typical format:
+        "FINAL OPTIMIZED GEOMETRY"
+        "PRIMITIVE CELL"
+        "A      B      C   ALPHA  BETA  GAMMA"
+
+        Args:
+            work_dir: Job work directory containing output file
+
+        Returns:
+            Dictionary with lattice parameter keys if found, empty dict otherwise
+        """
+        output_file = self._find_output_file(work_dir)
+        if output_file is None:
+            return {}
+
+        try:
+            with open(output_file, "r") as f:
+                lines = f.readlines()
+
+            results = {}
+
+            # Search for lattice parameter section
+            for i, line in enumerate(lines):
+                # Look for optimized or initial geometry
+                if "PRIMITIVE CELL" in line or "CRYSTALLOGRAPHIC CELL" in line:
+                    # Check next few lines for parameter headers
+                    for j in range(i + 1, min(i + 10, len(lines))):
+                        if "A" in lines[j] and "B" in lines[j] and "C" in lines[j]:
+                            # Next line should have values
+                            if j + 1 < len(lines):
+                                values_line = lines[j + 1].strip()
+                                values = values_line.split()
+                                if len(values) >= 6:
+                                    try:
+                                        results["lattice_a"] = float(values[0])
+                                        results["lattice_b"] = float(values[1])
+                                        results["lattice_c"] = float(values[2])
+                                        results["lattice_alpha"] = float(values[3])
+                                        results["lattice_beta"] = float(values[4])
+                                        results["lattice_gamma"] = float(values[5])
+                                        return results
+                                    except (ValueError, IndexError):
+                                        continue
+
+            return results
+        except Exception as e:
+            print(f"Warning: Failed to parse lattice parameters from {output_file}: {e}")
+            return {}
 
     @staticmethod
     def _get_scratch_base() -> Path:
@@ -341,22 +564,41 @@ class WorkflowOrchestrator:
         # Create directory
         work_dir.mkdir(parents=True, exist_ok=True)
 
-        # Register for cleanup
-        self._work_dirs.add(work_dir)
+        # Register for cleanup with workflow_id for conditional cleanup
+        self._work_dirs[work_dir] = workflow_id
 
         return work_dir
 
     def _cleanup_work_dirs(self) -> None:
         """
-        Clean up all registered work directories.
+        Clean up work directories for workflows in terminal state only.
 
         This method is registered as an atexit handler to ensure
         cleanup occurs even if the orchestrator is not explicitly stopped.
+
+        SAFETY: Only cleans up directories for workflows that have reached
+        a terminal state (COMPLETED, FAILED, CANCELLED). Directories for
+        running workflows are preserved to prevent data loss.
         """
-        for work_dir in self._work_dirs:
+        terminal_states = {
+            WorkflowStatus.COMPLETED,
+            WorkflowStatus.FAILED,
+            WorkflowStatus.CANCELLED,
+        }
+
+        dirs_to_remove = []
+        for work_dir, workflow_id in self._work_dirs.items():
+            # Check if workflow is in a terminal state
+            state = self._workflow_states.get(workflow_id)
+            if state is None or state.status in terminal_states:
+                dirs_to_remove.append(work_dir)
+
+        for work_dir in dirs_to_remove:
             try:
                 if work_dir.exists():
                     shutil.rmtree(work_dir, ignore_errors=True)
+                # Remove from tracking dict
+                self._work_dirs.pop(work_dir, None)
             except Exception:
                 # Silently ignore cleanup errors to prevent atexit issues
                 pass
@@ -512,11 +754,31 @@ class WorkflowOrchestrator:
         for node_id in list(state.running_nodes):
             node = self._node_lookup[workflow_id][node_id]
             if node.job_id:
-                # TODO: Call queue_manager to stop job
-                pass
+                await self.queue_manager.cancel_job(node.job_id)
+
+        # Also cancel any pending jobs that haven't started yet
+        for node_id, node in self._node_lookup[workflow_id].items():
+            if node.job_id and node_id not in state.running_nodes:
+                await self.queue_manager.cancel_job(node.job_id)
 
         # Emit event
         self._emit_event(WorkflowCancelled(workflow_id, reason=reason))
+
+    async def cancel_job(self, job_id: int) -> bool:
+        """
+        Cancel a single job.
+
+        This method cancels a job via the queue manager and updates the
+        database status to CANCELLED.
+
+        Args:
+            job_id: Database ID of the job to cancel
+
+        Returns:
+            True if job was cancelled, False if job was already completed/failed
+            or not found
+        """
+        return await self.queue_manager.cancel_job(job_id)
 
     async def get_workflow_status(self, workflow_id: int) -> WorkflowState:
         """
@@ -843,6 +1105,9 @@ class WorkflowOrchestrator:
         """
         Extract results from completed job output.
 
+        Applies custom output parsers specified in the node configuration.
+        Results from multiple parsers are merged into a single dictionary.
+
         Args:
             node: Node configuration with output_parsers
             job: Completed job with results
@@ -859,11 +1124,27 @@ class WorkflowOrchestrator:
         if job.final_energy is not None:
             results["final_energy"] = job.final_energy
 
-        # TODO: Apply custom output parsers if specified
-        # for parser_name in node.output_parsers:
-        #     parser = self._get_output_parser(parser_name)
-        #     parsed = parser(job.work_dir)
-        #     results.update(parsed)
+        # Apply custom output parsers if specified
+        if node.output_parsers:
+            work_dir = Path(job.work_dir)
+
+            for parser_name in node.output_parsers:
+                parser = self._get_output_parser(parser_name)
+
+                if parser is None:
+                    # Log warning but continue with other parsers
+                    print(f"Warning: Parser '{parser_name}' not found in registry, skipping")
+                    continue
+
+                try:
+                    # Execute parser and merge results
+                    parsed = await parser(work_dir)
+                    if parsed:
+                        results.update(parsed)
+                except Exception as e:
+                    # Log error but don't fail the workflow
+                    print(f"Warning: Parser '{parser_name}' failed for job {job.id}: {e}")
+                    continue
 
         return results
 

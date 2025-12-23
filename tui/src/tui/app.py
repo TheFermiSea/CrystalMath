@@ -141,9 +141,13 @@ class CrystalTUI(App):
         # Initialize database
         self.db = Database(self.db_path)
 
-        # Set up job table
+        # Set up job table with explicit column keys for reliable updates
         table = self.query_one("#job_list", DataTable)
-        table.add_columns("ID", "Name", "Status", "Energy (Ha)", "Created")
+        table.add_column("ID", key="id")
+        table.add_column("Name", key="name")
+        table.add_column("Status", key="status")
+        table.add_column("Energy (Ha)", key="energy")
+        table.add_column("Created", key="created")
 
         # Load existing jobs
         self._refresh_job_list()
@@ -175,26 +179,57 @@ class CrystalTUI(App):
         return self.runner
 
     def _refresh_job_list(self) -> None:
-        """Reload all jobs from database into the table."""
+        """Refresh job list with incremental updates (add/update/remove)."""
         if not self.db:
             return
 
         table = self.query_one("#job_list", DataTable)
-        table.clear()
-
         jobs = self.db.get_all_jobs()
-        for job in jobs:
-            energy_str = f"{job.final_energy:.6f}" if job.final_energy else "N/A"
-            created_str = job.created_at[:19] if job.created_at else "N/A"
 
-            table.add_row(
-                str(job.id),
-                job.name,
-                job.status,
-                energy_str,
-                created_str,
-                key=str(job.id)
-            )
+        desired_rows: dict[str, tuple[str, str, str, str, str]] = {}
+        desired_order: list[str] = []
+        for job in jobs:
+            if job.id is None:
+                continue
+            row_key = str(job.id)
+            desired_order.append(row_key)
+            desired_rows[row_key] = self._format_job_row(job)
+
+        # Remove rows that no longer exist in the database.
+        desired_key_set = set(desired_rows.keys())
+        for existing_row_key in list(table.rows.keys()):
+            if existing_row_key.value not in desired_key_set:
+                table.remove_row(existing_row_key)
+
+        # Add missing rows and update changed cells.
+        for row_key in desired_order:
+            desired = desired_rows[row_key]
+            if row_key not in table.rows:
+                table.add_row(*desired, key=row_key)
+                continue
+
+            current = table.get_row(row_key)
+            if len(current) != len(desired):
+                table.remove_row(row_key)
+                table.add_row(*desired, key=row_key)
+                continue
+
+            for column_key, current_value, desired_value in zip(
+                ("id", "name", "status", "energy", "created"),
+                current,
+                desired,
+            ):
+                if current_value != desired_value:
+                    table.update_cell(row_key, column_key, desired_value)
+
+        # Keep ordering consistent with database ordering (created_at DESC).
+        table.sort("created", "id", reverse=True)
+
+    @staticmethod
+    def _format_job_row(job) -> tuple[str, str, str, str, str]:
+        energy_str = f"{job.final_energy:.6f}" if job.final_energy is not None else "N/A"
+        created_str = job.created_at[:19] if job.created_at else "N/A"
+        return (str(job.id), job.name, job.status, energy_str, created_str)
 
     def action_new_job(self) -> None:
         """Create a new job via modal screen."""
@@ -434,7 +469,7 @@ class CrystalTUI(App):
         row_key = str(message.job_id)
 
         if row_key in table.rows:
-            table.update_cell(row_key, "Status", message.status)
+            table.update_cell(row_key, "status", message.status)
 
     def on_job_results(self, message: JobResults) -> None:
         """Update results in the DataTable and results view if this job is selected."""
@@ -444,9 +479,9 @@ class CrystalTUI(App):
         table = self.query_one("#job_list", DataTable)
         row_key = str(message.job_id)
 
-        if row_key in table.rows and message.final_energy:
+        if row_key in table.rows and message.final_energy is not None:
             energy_str = f"{message.final_energy:.6f}"
-            table.update_cell(row_key, "Energy (Ha)", energy_str)
+            table.update_cell(row_key, "energy", energy_str)
 
         # Update results view if this job is currently selected
         if table.cursor_row and str(table.cursor_row.value) == row_key:
