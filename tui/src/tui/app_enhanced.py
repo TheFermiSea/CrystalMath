@@ -16,6 +16,7 @@ from textual.binding import Binding
 
 from ..core.database import Database
 from ..core.environment import CrystalConfig, get_crystal_config
+from ..core.queue_manager import QueueManager, Priority
 from ..runners import LocalRunner, LocalRunnerError, InputFileError
 from ..runners.base import JobResult
 from .screens import NewJobScreen
@@ -112,6 +113,10 @@ class CrystalTUI(App):
         self.config = config
         self.runner: Optional[LocalRunner] = None
         self._update_timer_running = False
+        # QueueManager for priority-based scheduling
+        self.queue_manager: Optional[QueueManager] = None
+        self._job_executor_task: Optional[asyncio.Task] = None
+        self._executor_running = False
 
     def compose(self) -> ComposeResult:
         """Compose the UI layout."""
@@ -134,7 +139,7 @@ class CrystalTUI(App):
 
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Initialize the application on startup."""
         # Ensure project structure exists
         self.calculations_dir.mkdir(parents=True, exist_ok=True)
@@ -144,6 +149,18 @@ class CrystalTUI(App):
 
         # Initialize database
         self.db = Database(self.db_path)
+
+        # Initialize and start QueueManager
+        self.queue_manager = QueueManager(
+            database=self.db,
+            default_max_concurrent=4,
+            scheduling_interval=1.0
+        )
+        await self.queue_manager.start()
+
+        # Start job executor background task
+        self._executor_running = True
+        self._job_executor_task = asyncio.create_task(self._job_executor_worker())
 
         # Load existing jobs
         self._refresh_job_list()
@@ -157,6 +174,7 @@ class CrystalTUI(App):
         log.write_line("[bold cyan]CRYSTAL-TUI Started (Enhanced)[/bold cyan]")
         log.write_line(f"Project: {self.project_dir}")
         log.write_line(f"Database: {self.db_path}")
+        log.write_line("[dim]QueueManager active with priority scheduling[/dim]")
         log.write_line("")
         log.write_line("[dim]Keyboard shortcuts:[/dim]")
         log.write_line("[dim]  n - New Job  |  r - Run  |  s - Stop  |  f - Filter  |  t - Sort[/dim]")
@@ -219,8 +237,8 @@ class CrystalTUI(App):
             )
         )
 
-    def action_run_job(self) -> None:
-        """Run the selected job."""
+    async def action_run_job(self) -> None:
+        """Run the selected job via QueueManager."""
         job_list = self.query_one("#job_list", JobListWidget)
 
         if not job_list.cursor_row:
@@ -231,7 +249,7 @@ class CrystalTUI(App):
         job_id = int(row_data[0])
 
         # Get job from database to check status
-        if not self.db:
+        if not self.db or not self.queue_manager:
             return
 
         job = self.db.get_job(job_id)
@@ -244,18 +262,22 @@ class CrystalTUI(App):
             log.write_line(f"[yellow]Job {job_id} is already {job.status}[/yellow]")
             return
 
-        # Update status to queued
-        self.db.update_status(job_id, "QUEUED")
+        # Enqueue the job via QueueManager (handles priority, dependencies, etc.)
+        try:
+            await self.queue_manager.enqueue(
+                job_id=job_id,
+                priority=Priority.NORMAL,
+                runner_type="local"
+            )
+            log = self.query_one("#log_view", Log)
+            log.write_line(f"[cyan]Job {job_id} queued for execution[/cyan]")
+            self._refresh_job_list()
+        except Exception as e:
+            log = self.query_one("#log_view", Log)
+            log.write_line(f"[red]Failed to queue job {job_id}: {e}[/red]")
 
-        # Start worker
-        self.run_worker(
-            self._run_crystal_job(job_id),
-            name=f"job_{job_id}",
-            group=f"job_{job_id}"
-        )
-
-    def action_stop_job(self) -> None:
-        """Stop the selected running job."""
+    async def action_stop_job(self) -> None:
+        """Stop the selected running or queued job."""
         job_list = self.query_one("#job_list", JobListWidget)
 
         if not job_list.cursor_row:
@@ -266,31 +288,31 @@ class CrystalTUI(App):
         job_id = int(row_data[0])
 
         # Get job from database to check status
-        if not self.db:
+        if not self.db or not self.queue_manager:
             return
 
         job = self.db.get_job(job_id)
         if not job:
             return
 
-        if job.status != "RUNNING":
+        # Can cancel QUEUED or RUNNING jobs
+        if job.status not in ("RUNNING", "QUEUED"):
             log = self.query_one("#log_view", Log)
-            log.write_line(f"[yellow]Job {job_id} is not running[/yellow]")
+            log.write_line(f"[yellow]Job {job_id} is not running or queued[/yellow]")
             return
 
-        # Cancel the worker
-        worker_name = f"job_{job_id}"
-        for worker in self.workers:
-            if worker.name == worker_name:
-                worker.cancel()
+        # Cancel via QueueManager (handles queue removal and status update)
+        cancelled = await self.queue_manager.cancel_job(job_id)
 
-                log = self.query_one("#log_view", Log)
-                log.write_line(f"[red]Job {job_id} cancelled by user[/red]")
-
-                if self.db:
-                    self.db.update_status(job_id, "FAILED")
-
-                break
+        log = self.query_one("#log_view", Log)
+        if cancelled:
+            log.write_line(f"[red]Job {job_id} cancelled by user[/red]")
+            # Also stop the runner if job was running
+            if job.status == "RUNNING" and self.runner:
+                await self.runner.stop_job(job_id)
+            self._refresh_job_list()
+        else:
+            log.write_line(f"[yellow]Could not cancel job {job_id}[/yellow]")
 
     def action_filter_status(self) -> None:
         """Toggle status filtering."""
@@ -517,6 +539,9 @@ class CrystalTUI(App):
                         self.post_message(JobLog(job_id, f"[yellow]Warning: {warning}[/yellow]"))
                 self.post_message(JobStatus(job_id, "COMPLETED"))
                 self.post_message(JobResults(job_id, result.final_energy))
+                # Notify queue manager of successful completion
+                if self.queue_manager:
+                    await self.queue_manager.handle_job_completion(job_id, success=True)
             else:
                 self.post_message(JobLog(job_id, "[bold red]Job failed[/bold red]"))
                 if result.metadata.get("return_code") is not None:
@@ -524,21 +549,87 @@ class CrystalTUI(App):
                 for error in result.errors:
                     self.post_message(JobLog(job_id, f"[red]Error: {error}[/red]"))
                 self.post_message(JobStatus(job_id, "FAILED"))
+                # Notify queue manager of failure (may trigger retry)
+                if self.queue_manager:
+                    await self.queue_manager.handle_job_completion(job_id, success=False)
 
         except asyncio.CancelledError:
             await runner.stop_job(job_id)
             self.post_message(JobLog(job_id, "[red]Job was cancelled[/red]"))
             self.post_message(JobStatus(job_id, "FAILED"))
+            if self.queue_manager:
+                await self.queue_manager.handle_job_completion(job_id, success=False)
             raise
         except InputFileError as e:
             self.post_message(JobLog(job_id, f"[bold red]Input error: {e}[/bold red]"))
             self.post_message(JobStatus(job_id, "FAILED"))
+            if self.queue_manager:
+                await self.queue_manager.handle_job_completion(job_id, success=False)
         except LocalRunnerError as e:
             self.post_message(JobLog(job_id, f"[bold red]Runner error: {e}[/bold red]"))
             self.post_message(JobStatus(job_id, "FAILED"))
+            if self.queue_manager:
+                await self.queue_manager.handle_job_completion(job_id, success=False)
         except Exception as e:
             self.post_message(JobLog(job_id, f"[bold red]Unexpected error: {e}[/bold red]"))
             self.post_message(JobStatus(job_id, "FAILED"))
+            if self.queue_manager:
+                await self.queue_manager.handle_job_completion(job_id, success=False)
         finally:
             # Refresh grid to reflect final status and results
             self._refresh_job_list()
+
+    async def _job_executor_worker(self) -> None:
+        """
+        Background worker that consumes jobs from QueueManager and executes them.
+
+        This worker:
+        1. Polls the queue manager for ready jobs
+        2. Executes them using the appropriate runner
+        3. Reports completion back to the queue manager
+
+        This decouples job scheduling (priority, dependencies) from execution,
+        allowing the QueueManager to handle queuing logic while this worker
+        handles actual job execution.
+        """
+        while self._executor_running:
+            try:
+                if not self.queue_manager:
+                    await asyncio.sleep(1.0)
+                    continue
+
+                # Try to dequeue a job for the local runner
+                job_id = await self.queue_manager.dequeue("local")
+
+                if job_id is not None:
+                    # Execute the job (this handles the full lifecycle)
+                    await self._run_crystal_job(job_id)
+                else:
+                    # No jobs ready, wait before checking again
+                    await asyncio.sleep(0.5)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                # Log error but keep worker alive
+                log = self.query_one("#log_view", Log)
+                log.write_line(f"[red]Job executor error: {e}[/red]")
+                await asyncio.sleep(1.0)
+
+    async def action_quit(self) -> None:
+        """Cleanly shutdown the application."""
+        # Stop job executor
+        self._executor_running = False
+        if self._job_executor_task:
+            self._job_executor_task.cancel()
+            try:
+                await self._job_executor_task
+            except asyncio.CancelledError:
+                pass
+
+        # Stop queue manager
+        if self.queue_manager:
+            await self.queue_manager.stop()
+
+        # Exit the app
+        self.exit()
