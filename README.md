@@ -209,12 +209,12 @@ bd create "Title"    # New issue
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| `tui/docs/QE_VASP_SUPPORT.md` | Multi-code DFT support guide |
-| `tui/docs/ARCHITECTURE_REALIGNMENT.md` | Architecture analysis and fixes |
-| `cli/docs/ARCHITECTURE.md` | CLI module design |
-| `tui/docs/PHASE2_DESIGN.md` | TUI Phase 2 architecture |
+Full documentation is available in the `docs/` directory:
+
+*   **[Getting Started](docs/getting-started/installation.md)**: Installation and setup guides
+*   **[User Guide](docs/user-guide/tui/overview.md)**: Manuals for TUI and CLI usage
+*   **[Architecture](docs/architecture/overview.md)**: System design and module details
+*   **[Development](docs/development/contributing.md)**: Contributing guidelines and testing
 
 ## Roadmap
 
