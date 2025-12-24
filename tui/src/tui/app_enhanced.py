@@ -489,6 +489,13 @@ class CrystalTUI(App):
         if not job:
             return
 
+        # CRITICAL: Check if job was cancelled between dequeue and execution start
+        # This prevents race condition where cancel_job() runs after dequeue()
+        # but before we start the runner
+        if job.status == "CANCELLED":
+            self.post_message(JobLog(job_id, "[yellow]Job was cancelled before execution started[/yellow]"))
+            return
+
         work_dir = Path(job.work_dir)
         runner = self._ensure_runner()
         pid_reported = False
@@ -630,6 +637,10 @@ class CrystalTUI(App):
         # Stop queue manager
         if self.queue_manager:
             await self.queue_manager.stop()
+
+        # Close database connection to ensure WAL checkpoint
+        if self.db:
+            self.db.close()
 
         # Exit the app
         self.exit()

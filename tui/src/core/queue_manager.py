@@ -267,9 +267,23 @@ class QueueManager:
         self._restore_from_database()
 
     def _restore_from_database(self) -> None:
-        """Restore queue state from database after restart."""
+        """Restore queue state from database after restart.
+
+        CRITICAL: Also handles crash recovery by resetting any RUNNING jobs
+        that exist in queue_state back to QUEUED status. This prevents
+        "zombie" jobs that are stuck in RUNNING state after a crash.
+        """
         # FIX: Use connection context manager instead of raw self.db.conn
         with self.db.connection() as conn:
+            # CRASH RECOVERY: Reset any RUNNING jobs in queue_state to QUEUED
+            # These are jobs that were running when the app crashed/was killed
+            conn.execute(
+                f"UPDATE jobs SET status = '{JobStatus.QUEUED}' "
+                f"WHERE status = '{JobStatus.RUNNING}' "
+                "AND id IN (SELECT job_id FROM queue_state)"
+            )
+            conn.commit()
+
             cursor = conn.execute(
                 "SELECT * FROM queue_state WHERE job_id IN "
                 f"(SELECT id FROM jobs WHERE status IN ('{JobStatus.PENDING}', '{JobStatus.QUEUED}'))"
@@ -361,7 +375,11 @@ class QueueManager:
         logger.info("Queue manager started")
 
     async def stop(self) -> None:
-        """Stop the background scheduler worker."""
+        """Stop the background scheduler worker.
+
+        Uses locking to ensure thread-safe shutdown and prevent
+        race conditions with concurrent job completions.
+        """
         if not self._running:
             return
 
@@ -373,8 +391,9 @@ class QueueManager:
             except asyncio.CancelledError:
                 pass
 
-        # Persist final state
-        self._persist_to_database()
+        # Persist final state under lock to prevent race with handle_job_completion
+        async with self._lock:
+            self._persist_to_database()
         logger.info("Queue manager stopped")
 
     async def enqueue(
