@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "/Users/briansquires/beefcake2/",
+      "/Users/briansquires/code/vasp-lsp"
+    ]
+  }
+}

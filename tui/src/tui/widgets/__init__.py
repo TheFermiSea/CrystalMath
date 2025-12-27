@@ -7,6 +7,7 @@ from .job_list import JobListWidget
 from .job_stats import JobStatsWidget
 from .input_preview import InputPreview
 from .auto_form import AutoForm, FieldSchema, ValidationError
+from .slurm_queue import SLURMQueueWidget
 
 __all__ = [
     "ResultsSummary",
@@ -16,4 +17,5 @@ __all__ = [
     "AutoForm",
     "FieldSchema",
     "ValidationError",
+    "SLURMQueueWidget",
 ]

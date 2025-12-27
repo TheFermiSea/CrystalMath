@@ -14,14 +14,16 @@ from textual.worker import Worker
 from textual.message import Message
 from textual.binding import Binding
 
-from ..core.database import Database
+from ..core.backend import get_database, BackendMode
 from ..core.environment import CrystalConfig, get_crystal_config
 from ..core.queue_manager import QueueManager, Priority
 from ..runners import LocalRunner, LocalRunnerError, InputFileError
 from ..runners.base import JobResult
-from .screens import NewJobScreen
+from .screens import NewJobScreen, SLURMQueueScreen
 from .screens.new_job import JobCreated
 from .widgets import InputPreview, ResultsSummary, JobListWidget, JobStatsWidget
+from ..core.database import Database as CoreDatabase, Cluster
+from ..core.connection_manager import ConnectionManager
 
 
 # --- Custom Messages ---
@@ -52,6 +54,8 @@ class JobResults(Message):
 
 class CrystalTUI(App):
     """A TUI for managing CRYSTAL calculations."""
+
+    TITLE = "CRYSTAL-TUI"
 
     CSS = """
     Screen {
@@ -84,6 +88,15 @@ class CrystalTUI(App):
         width: 50%;
     }
 
+    /* Fix tab visibility */
+    TabbedContent Tabs {
+        height: 3;
+    }
+
+    TabbedContent Tab {
+        padding: 0 2;
+    }
+
     Log {
         border: solid $accent;
     }
@@ -101,6 +114,7 @@ class CrystalTUI(App):
         Binding("s", "stop_job", "Stop", show=True),
         Binding("f", "filter_status", "Filter", show=True),
         Binding("t", "sort_toggle", "Sort", show=True),
+        Binding("u", "slurm_queue", "Queue", show=True),
     ]
 
     def __init__(self, project_dir: Path, config: Optional[CrystalConfig] = None):
@@ -117,6 +131,9 @@ class CrystalTUI(App):
         self.queue_manager: Optional[QueueManager] = None
         self._job_executor_task: Optional[asyncio.Task] = None
         self._executor_running = False
+        # ConnectionManager for SSH connections (SLURM queue)
+        self.connection_manager: Optional[ConnectionManager] = None
+        self._core_db: Optional[CoreDatabase] = None
 
     def compose(self) -> ComposeResult:
         """Compose the UI layout."""
@@ -147,8 +164,15 @@ class CrystalTUI(App):
         # Ensure runner is configured and env vars are set from config
         self._ensure_runner()
 
-        # Initialize database
-        self.db = Database(self.db_path)
+        # Initialize database using backend abstraction
+        # This allows switching between SQLite (legacy) and AiiDA backends
+        self.db = get_database(mode=BackendMode.LEGACY, db_path=self.db_path)
+
+        # Initialize CoreDatabase for SLURM queue (shares same db file)
+        self._core_db = CoreDatabase(self.db_path)
+
+        # Initialize ConnectionManager for SSH connections
+        self.connection_manager = ConnectionManager()
 
         # Initialize and start QueueManager
         self.queue_manager = QueueManager(
@@ -365,6 +389,49 @@ class CrystalTUI(App):
 
         # Refresh list
         self._refresh_job_list()
+
+    def action_slurm_queue(self) -> None:
+        """Open the SLURM queue manager screen."""
+        if not self._core_db or not self.connection_manager:
+            self.notify("Database or connection manager not initialized", severity="error")
+            return
+
+        # Get available SLURM clusters
+        clusters = self._core_db.get_all_clusters()
+        slurm_clusters = [c for c in clusters if c.type == "slurm"]
+
+        if not slurm_clusters:
+            self.notify("No SLURM clusters configured", severity="warning")
+            return
+
+        # Use the first SLURM cluster (could add selection dialog later)
+        cluster = slurm_clusters[0]
+
+        # Register cluster with ConnectionManager (required for SSH access)
+        key_file = cluster.connection_config.get("key_file")
+        if key_file:
+            key_file = Path(key_file).expanduser()
+
+        self.connection_manager.register_cluster(
+            cluster_id=cluster.id,
+            host=cluster.hostname,
+            port=cluster.port,
+            username=cluster.username,
+            key_file=key_file,
+            strict_host_key_checking=False,  # TODO: Make configurable
+        )
+
+        log = self.query_one("#log_view", Log)
+        log.write_line(f"[cyan]Opening SLURM queue: {cluster.name}[/cyan]")
+
+        # Push the SLURM queue screen
+        self.push_screen(
+            SLURMQueueScreen(
+                db=self._core_db,
+                connection_manager=self.connection_manager,
+                cluster_id=cluster.id,
+            )
+        )
 
     # --- Event Handlers ---
     def on_job_list_widget_row_highlighted(self, event) -> None:

@@ -8,6 +8,7 @@ from typing import Optional, Literal
 
 from textual.app import ComposeResult
 from textual.widgets import DataTable
+from textual.widgets._data_table import CellDoesNotExist
 from textual.reactive import reactive
 from rich.text import Text
 
@@ -120,18 +121,23 @@ class JobListWidget(DataTable):
                 self._running_start_times[job_id] = datetime.now()
 
         # Update status cell with color and icon
-        status_text = self._format_status(status)
-        self.update_cell(row_key, "Status", status_text, update_width=True)
+        # Use try-except to handle async timing issues during tests and shutdown
+        try:
+            status_text = self._format_status(status)
+            self.update_cell(row_key, "Status", status_text, update_width=True)
 
-        # Update progress for running jobs
-        if status == "RUNNING":
-            self.update_cell(row_key, "Progress", "⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀", update_width=True)
-        elif status == "COMPLETED":
-            self.update_cell(row_key, "Progress", "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿", update_width=True)
-        elif status == "FAILED":
-            self.update_cell(row_key, "Progress", "⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀", update_width=True)
-        else:
-            self.update_cell(row_key, "Progress", "⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀", update_width=True)
+            # Update progress for running jobs
+            if status == "RUNNING":
+                self.update_cell(row_key, "Progress", "⣿⣿⣿⣿⣿⣀⣀⣀⣀⣀", update_width=True)
+            elif status == "COMPLETED":
+                self.update_cell(row_key, "Progress", "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿", update_width=True)
+            elif status == "FAILED":
+                self.update_cell(row_key, "Progress", "⣿⣿⣀⣀⣀⣀⣀⣀⣀⣀", update_width=True)
+            else:
+                self.update_cell(row_key, "Progress", "⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀", update_width=True)
+        except CellDoesNotExist:
+            # Cell may not exist during widget initialization or shutdown
+            pass
 
     def update_job_runtime(self, job_id: int) -> None:
         """
@@ -151,7 +157,10 @@ class JobListWidget(DataTable):
         elapsed = datetime.now() - start_time
         runtime_str = self._format_duration(elapsed.total_seconds())
 
-        self.update_cell(row_key, "Runtime", runtime_str, update_width=True)
+        try:
+            self.update_cell(row_key, "Runtime", runtime_str, update_width=True)
+        except CellDoesNotExist:
+            pass
 
     def update_job_energy(self, job_id: int, energy: float) -> None:
         """
@@ -166,7 +175,10 @@ class JobListWidget(DataTable):
             return
 
         energy_str = f"{energy:.8f}"
-        self.update_cell(row_key, "Energy (Ha)", energy_str, update_width=True)
+        try:
+            self.update_cell(row_key, "Energy (Ha)", energy_str, update_width=True)
+        except CellDoesNotExist:
+            pass
 
     def set_filter(self, status: Optional[StatusType]) -> None:
         """

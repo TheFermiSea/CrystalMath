@@ -51,6 +51,17 @@ aiida = [
     "psycopg2-binary>=2.9",       # PostgreSQL adapter
 ]
 
+# Materials Project API integration (Phase 4)
+# Install with: pip install crystal-tui[materials]
+# Requires: MP_API_KEY environment variable
+materials = [
+    "mp-api>=0.45",               # Materials Project API client
+    "mpcontribs-client>=5.10",    # MPContribs user contributions
+    "optimade[http_client]>=1.2", # OPTIMADE cross-database queries (native async)
+    "pymatgen>=2023.0.0",         # Structure handling and conversion
+    "python-dotenv>=1.0.0",       # Environment variable loading
+]
+
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

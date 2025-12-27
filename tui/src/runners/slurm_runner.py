@@ -16,7 +16,7 @@ import re
 import logging
 import shlex
 from pathlib import Path
-from typing import AsyncIterator, Optional, Dict, List, Tuple
+from typing import Any, AsyncIterator, Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -698,6 +698,465 @@ class SLURMRunner(RemoteBaseRunner):
             SLURMJobState if known, None otherwise
         """
         return self._job_states.get(job_id)
+
+    # -------------------------------------------------------------------------
+    # Queue Management Methods (for SLURMQueueWidget)
+    # -------------------------------------------------------------------------
+
+    async def get_queue_status(
+        self,
+        user_only: bool = True,
+        partition: Optional[str] = None,
+        states: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get SLURM queue status for the cluster.
+
+        Queries squeue to get all jobs matching the filter criteria.
+        Uses JSON output for modern SLURM (21.08+), falls back to
+        formatted output for older versions.
+
+        Args:
+            user_only: If True, only show current user's jobs
+            partition: Filter by partition name (optional)
+            states: Filter by job states (optional, e.g., ["RUNNING", "PENDING"])
+
+        Returns:
+            List of job dictionaries with standardized keys:
+            - job_id: int
+            - name: str
+            - user: str
+            - state: str
+            - state_reason: str (why pending)
+            - partition: str
+            - nodes: int
+            - node_list: str
+            - time_used: str
+            - time_limit: str
+            - tres: str (for GPU info, e.g., "cpu=32,gres/gpu=1")
+            - submit_time: str
+            - start_time: str
+        """
+        try:
+            async with self.connection_manager.get_connection(self.cluster_id) as conn:
+                # Build squeue command
+                cmd_parts = ["squeue"]
+
+                if user_only:
+                    cmd_parts.append("--me")
+
+                if partition:
+                    cmd_parts.extend(["-p", shlex.quote(partition)])
+
+                if states:
+                    # Validate states against allowed SLURM job states
+                    allowed_states = {
+                        "RUNNING", "PENDING", "COMPLETING", "COMPLETED",
+                        "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL",
+                        "PREEMPTED", "SUSPENDED", "CONFIGURING", "BOOT_FAIL",
+                        "DEADLINE", "OUT_OF_MEMORY", "REQUEUED", "RESIZING",
+                        "REVOKED", "SIGNALING", "SPECIAL_EXIT", "STAGE_OUT",
+                    }
+                    valid_states = [s for s in states if s.upper() in allowed_states]
+                    if valid_states:
+                        state_str = ",".join(valid_states)
+                        cmd_parts.extend(["-t", shlex.quote(state_str)])
+
+                # Try JSON format first (SLURM >= 21.08)
+                json_cmd = " ".join(cmd_parts) + " --json"
+                result = await conn.run(json_cmd, check=False)
+
+                if result.exit_status == 0 and result.stdout.strip():
+                    try:
+                        import json
+                        data = json.loads(result.stdout)
+                        jobs = data.get("jobs", [])
+                        return self._parse_squeue_json(jobs)
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(f"Failed to parse squeue JSON: {e}")
+
+                # Fallback to formatted output for older clusters
+                # Format: job_id|name|user|state|reason|partition|nodes|nodelist|time|timelimit
+                format_str = "%i|%j|%u|%T|%r|%P|%D|%N|%M|%l"
+                fallback_cmd = " ".join(cmd_parts) + f" -h -o '{format_str}'"
+                result = await conn.run(fallback_cmd, check=False)
+
+                if result.exit_status == 0:
+                    return self._parse_squeue_formatted(result.stdout)
+
+                logger.warning(f"squeue failed: {result.stderr}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Failed to get queue status: {e}")
+            return []
+
+    def _parse_squeue_json(self, jobs: List[Dict]) -> List[Dict[str, Any]]:
+        """Parse squeue --json output into standardized format."""
+        result = []
+        for j in jobs:
+            # Handle job_state which may be string or dict in different SLURM versions
+            state = j.get("job_state", "UNKNOWN")
+            if isinstance(state, dict):
+                state = state.get("current", ["UNKNOWN"])[0] if isinstance(state.get("current"), list) else str(state)
+            elif isinstance(state, list):
+                state = state[0] if state else "UNKNOWN"
+
+            # Extract node_count from wrapped structure (SLURM 21.08+)
+            node_count = j.get("node_count", 1)
+            if isinstance(node_count, dict):
+                node_count = node_count.get("number", 1)
+
+            # Calculate elapsed time from start_time (Unix timestamp)
+            import time as time_module
+            start_time_obj = j.get("start_time", {})
+            elapsed = 0
+            if isinstance(start_time_obj, dict) and start_time_obj.get("set"):
+                start_ts = start_time_obj.get("number", 0)
+                if start_ts > 0:
+                    elapsed = int(time_module.time()) - start_ts
+                    if elapsed < 0:
+                        elapsed = 0
+
+            time_limit_obj = j.get("time_limit", 0)
+            time_limit = 0
+            if isinstance(time_limit_obj, dict):
+                time_limit = time_limit_obj.get("number", 0)
+            elif isinstance(time_limit_obj, int):
+                time_limit = time_limit_obj
+
+            # Get TRES string (GPU allocation info)
+            tres_alloc = j.get("tres_alloc_str", "") or j.get("tres_req_str", "")
+            # Also check gres field for GPU info
+            gres = j.get("gres_detail", [])
+            if isinstance(gres, list) and gres:
+                gres_str = ",".join(gres)
+            else:
+                gres_str = ""
+
+            result.append({
+                "job_id": j.get("job_id"),
+                "name": str(j.get("name", ""))[:50],  # Truncate long names
+                "user": j.get("user_name", j.get("user", "")),
+                "state": str(state),
+                "state_reason": j.get("state_reason", ""),
+                "partition": j.get("partition", ""),
+                "nodes": node_count,
+                "node_list": j.get("nodes", ""),
+                "time_used": self._format_time(elapsed),
+                "time_limit": self._format_time(time_limit * 60),  # time_limit in minutes
+                "tres": tres_alloc,
+                "submit_time": j.get("submit_time", ""),
+                "start_time": j.get("start_time", ""),
+                "gpus": self._parse_gpu_count(tres_alloc) or self._parse_gpu_count(gres_str),
+            })
+        return result
+
+    def _parse_squeue_formatted(self, output: str) -> List[Dict[str, Any]]:
+        """Parse formatted squeue output into standardized format."""
+        result = []
+        for line in output.strip().splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("|")
+            if len(parts) >= 10:
+                result.append({
+                    "job_id": int(parts[0]) if parts[0].isdigit() else parts[0],
+                    "name": parts[1][:50],
+                    "user": parts[2],
+                    "state": parts[3],
+                    "state_reason": parts[4] if parts[4] != "(null)" else "",
+                    "partition": parts[5],
+                    "nodes": int(parts[6]) if parts[6].isdigit() else 1,
+                    "node_list": parts[7],
+                    "time_used": parts[8],
+                    "time_limit": parts[9],
+                    "tres": "",  # Not available in compact format
+                    "submit_time": "",
+                    "start_time": "",
+                    "gpus": 0,
+                })
+        return result
+
+    @staticmethod
+    def _format_time(seconds: int) -> str:
+        """Format seconds into HH:MM:SS or D-HH:MM:SS."""
+        if not seconds or seconds < 0:
+            return "0:00"
+        days, remainder = divmod(int(seconds), 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if days > 0:
+            return f"{days}-{hours:02d}:{minutes:02d}:{secs:02d}"
+        elif hours > 0:
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        else:
+            return f"{minutes}:{secs:02d}"
+
+    @staticmethod
+    def _parse_gpu_count(tres_str: str) -> int:
+        """Extract GPU count from TRES allocation string."""
+        if not tres_str:
+            return 0
+        # Match patterns like "gres/gpu=2" or "gres/gpu:v100s=1"
+        match = re.search(r'gres/gpu[^=]*=(\d+)', tres_str)
+        return int(match.group(1)) if match else 0
+
+    async def get_job_details(self, slurm_job_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed information for a specific SLURM job.
+
+        Uses scontrol show job for comprehensive job details.
+
+        Args:
+            slurm_job_id: SLURM job ID
+
+        Returns:
+            Dictionary with full job details, or None if not found
+        """
+        try:
+            async with self.connection_manager.get_connection(self.cluster_id) as conn:
+                # Try JSON format first
+                result = await conn.run(
+                    f"scontrol show job {shlex.quote(slurm_job_id)} --json",
+                    check=False
+                )
+
+                if result.exit_status == 0 and result.stdout.strip():
+                    try:
+                        import json
+                        data = json.loads(result.stdout)
+                        jobs = data.get("jobs", [])
+                        if jobs:
+                            return jobs[0]
+                    except json.JSONDecodeError:
+                        pass
+
+                # Fallback to text format
+                result = await conn.run(
+                    f"scontrol show job {shlex.quote(slurm_job_id)}",
+                    check=False
+                )
+
+                if result.exit_status == 0:
+                    return self._parse_scontrol_output(result.stdout)
+
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to get job details for {slurm_job_id}: {e}")
+            return None
+
+    def _parse_scontrol_output(self, output: str) -> Dict[str, str]:
+        """Parse scontrol show job output into a dictionary."""
+        result = {}
+        # scontrol output is space-separated key=value pairs
+        for line in output.splitlines():
+            for part in line.split():
+                if "=" in part:
+                    key, _, value = part.partition("=")
+                    result[key] = value
+        return result
+
+    @staticmethod
+    def _expand_slurm_path(path: str, job_id: str, job_name: str = "job") -> str:
+        """
+        Expand SLURM filename placeholders in output path.
+
+        Common placeholders:
+            %j - job ID
+            %x - job name
+            %A - array job ID (same as %j for non-array)
+            %a - array task ID
+            %u - username
+            %N - short hostname
+        """
+        if not path:
+            return path
+
+        # Expand common placeholders
+        expanded = path.replace("%j", str(job_id))
+        expanded = expanded.replace("%x", job_name)
+        expanded = expanded.replace("%A", str(job_id))  # Array job ID fallback
+        # %a, %u, %N would need more context - leave them for now
+
+        return expanded
+
+    async def get_job_logs(
+        self,
+        slurm_job_id: str,
+        log_type: str = "stdout",
+        tail_lines: int = 100
+    ) -> AsyncIterator[str]:
+        """
+        Stream job log output (stdout or stderr).
+
+        Args:
+            slurm_job_id: SLURM job ID
+            log_type: "stdout" or "stderr"
+            tail_lines: Number of lines to tail (default 100)
+
+        Yields:
+            Log lines from the job output file
+        """
+        try:
+            async with self.connection_manager.get_connection(self.cluster_id) as conn:
+                log_path = None
+
+                # Try scontrol first (for running/recent jobs)
+                details = await self.get_job_details(slurm_job_id)
+                job_name = details.get("JobName", details.get("name", "job")) if details else "job"
+
+                if details:
+                    if log_type == "stderr":
+                        log_path = details.get("StdErr", details.get("stderr", ""))
+                    else:
+                        log_path = details.get("StdOut", details.get("stdout", ""))
+
+                    # Expand SLURM placeholders in path
+                    if log_path:
+                        log_path = self._expand_slurm_path(log_path, slurm_job_id, job_name)
+
+                # If no path from scontrol, try sacct (for completed jobs)
+                if not log_path or log_path == "(null)" or log_path == "":
+                    field = "StdErr" if log_type == "stderr" else "StdOut"
+                    sacct_cmd = f"sacct -j {shlex.quote(slurm_job_id)} --format={field},WorkDir,JobName --noheader --parsable2 2>/dev/null | head -1"
+                    result = await conn.run(sacct_cmd, check=False)
+                    if result.exit_status == 0 and result.stdout.strip():
+                        parts = result.stdout.strip().split("|")
+                        sacct_job_name = parts[2] if len(parts) >= 3 else job_name
+                        if len(parts) >= 1 and parts[0] and parts[0] != "(null)":
+                            log_path = self._expand_slurm_path(parts[0], slurm_job_id, sacct_job_name)
+                        elif len(parts) >= 2 and parts[1]:
+                            # Use WorkDir to construct default path
+                            work_dir = parts[1]
+                            ext = ".err" if log_type == "stderr" else ".out"
+                            log_path = f"{work_dir}/slurm-{slurm_job_id}{ext}"
+
+                # Still no path? Try common patterns in home directory
+                if not log_path or log_path == "(null)" or log_path == "":
+                    # Get user's home directory
+                    home_result = await conn.run("echo $HOME", check=False)
+                    home_dir = home_result.stdout.strip() if home_result.exit_status == 0 else "/home"
+                    ext = ".err" if log_type == "stderr" else ".out"
+
+                    # Try common locations
+                    candidates = [
+                        f"{home_dir}/slurm-{slurm_job_id}{ext}",
+                        f"/tmp/slurm-{slurm_job_id}{ext}",
+                    ]
+
+                    for candidate in candidates:
+                        result = await conn.run(f"test -f {shlex.quote(candidate)}", check=False)
+                        if result.exit_status == 0:
+                            log_path = candidate
+                            break
+
+                if not log_path:
+                    yield f"Could not determine log file path for job {slurm_job_id}"
+                    yield "Try checking: sacct -j {job_id} --format=StdOut,WorkDir"
+                    return
+
+                # Check if file exists
+                result = await conn.run(f"test -f {shlex.quote(log_path)}", check=False)
+                if result.exit_status != 0:
+                    yield f"Log file not found: {log_path}"
+                    yield ""
+                    yield "The log file may not exist yet (job still starting) or has been cleaned up."
+                    return
+
+                # Tail the log file
+                result = await conn.run(
+                    f"tail -n {tail_lines} {shlex.quote(log_path)}",
+                    check=False
+                )
+
+                if result.exit_status == 0:
+                    for line in result.stdout.splitlines():
+                        yield line
+                else:
+                    yield f"Failed to read log: {result.stderr}"
+
+        except Exception as e:
+            logger.error(f"Failed to get job logs for {slurm_job_id}: {e}")
+            yield f"Error: {e}"
+
+    async def get_partition_info(self) -> List[Dict[str, Any]]:
+        """
+        Get information about available SLURM partitions.
+
+        Returns:
+            List of partition dictionaries with keys:
+            - name: str
+            - state: str (UP/DOWN)
+            - nodes: int
+            - timelimit: str
+            - default: bool
+        """
+        try:
+            async with self.connection_manager.get_connection(self.cluster_id) as conn:
+                result = await conn.run(
+                    "sinfo -h -o '%P|%a|%D|%l'",
+                    check=False
+                )
+
+                if result.exit_status != 0:
+                    return []
+
+                partitions = []
+                for line in result.stdout.strip().splitlines():
+                    if not line.strip():
+                        continue
+                    parts = line.split("|")
+                    if len(parts) >= 4:
+                        name = parts[0]
+                        is_default = name.endswith("*")
+                        if is_default:
+                            name = name[:-1]
+                        partitions.append({
+                            "name": name,
+                            "state": parts[1],
+                            "nodes": int(parts[2]) if parts[2].isdigit() else 0,
+                            "timelimit": parts[3],
+                            "default": is_default,
+                        })
+                return partitions
+
+        except Exception as e:
+            logger.error(f"Failed to get partition info: {e}")
+            return []
+
+    async def cancel_slurm_job(self, slurm_job_id: str) -> Tuple[bool, str]:
+        """
+        Cancel a SLURM job by its SLURM job ID.
+
+        This is a direct interface for queue management (vs cancel_job which
+        uses job handles).
+
+        Args:
+            slurm_job_id: SLURM job ID to cancel
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        try:
+            async with self.connection_manager.get_connection(self.cluster_id) as conn:
+                result = await conn.run(
+                    f"scancel {shlex.quote(slurm_job_id)}",
+                    check=False
+                )
+
+                if result.exit_status == 0:
+                    logger.info(f"Cancelled SLURM job {slurm_job_id}")
+                    return True, f"Job {slurm_job_id} cancelled successfully"
+                else:
+                    msg = result.stderr.strip() or f"scancel exited with code {result.exit_status}"
+                    logger.warning(f"Failed to cancel job {slurm_job_id}: {msg}")
+                    return False, msg
+
+        except Exception as e:
+            logger.error(f"Exception cancelling job {slurm_job_id}: {e}")
+            return False, str(e)
 
     @staticmethod
     def _validate_job_name(job_name: str) -> None:

@@ -92,6 +92,7 @@ bd create "Title"          # New issue
 
 **Package Structure:**
 - `src/core/` - Business logic (database, orchestrator, queue, templates, workflow, connection manager)
+- `src/core/materials_api/` - Materials Project API integration (Phase 4)
 - `src/tui/` - Textual UI components (app, screens, widgets)
 - `src/runners/` - Job backends (local, SSH, SLURM)
 - `src/aiida/` - AiiDA integration (Phase 3, optional)
@@ -166,14 +167,18 @@ export PATH="$HOME/CRYSTAL23/crystalmath/cli/bin:$PATH"
 | CLI | ✅ Production | 100% complete, 76 tests |
 | TUI Phase 2 | ✅ Complete | SSH/SLURM/orchestration working |
 | TUI Runner Safety (ae6) | ✅ Complete | Race conditions fixed, proper cleanup |
-| TUI Phase 3 | 🔨 In Progress | AiiDA integration (optional PostgreSQL) |
+| TUI Phase 3 | ✅ Complete | AiiDA integration (optional PostgreSQL) |
+| TUI Phase 4 | 🔨 In Progress | Materials Project API integration |
 
-**Recent Sprint (ae6 - Runner Correctness):**
-- Fixed orchestrator atexit cleanup (no longer deletes active workflow dirs)
-- Fixed LocalRunner result isolation (per-job storage, no race conditions)
-- Added subprocess cleanup with SIGTERM→SIGKILL escalation
-- Implemented output parser registry with energy/bandgap/lattice parsers
-- Enforced concurrency limits via semaphore in LocalRunner
+**Current Sprint (Materials API - crystalmath-7mw):**
+- ✅ MP API async client with `asyncio.to_thread()` wrapper
+- ✅ MPContribs async client for user contributions
+- ✅ OPTIMADE native async client (httpx) for cross-database queries
+- ✅ SQLite cache with 30-day TTL (Migration V6)
+- ✅ MaterialsService orchestrator with rate limiting
+- ✅ pymatgen → CRYSTAL23 .d12 converter
+- 🔲 TUI MaterialsSearchScreen component
+- 🔲 Unit/integration tests
 
 ## Troubleshooting
 
@@ -190,4 +195,6 @@ export PATH="$HOME/CRYSTAL23/crystalmath/cli/bin:$PATH"
 - CLI Architecture: `cli/docs/ARCHITECTURE.md`
 - CLI Module Details: `cli/CLAUDE.md`
 - TUI Project Status: `tui/docs/PROJECT_STATUS.md`
+- Materials API Guide: `tui/docs/MATERIALS_API.md`
+- AiiDA Setup: `tui/docs/AIIDA_SETUP.md`
 - CRYSTAL23 Compilation: `docs/CRYSTAL23_COMPILATION_GUIDE.md`

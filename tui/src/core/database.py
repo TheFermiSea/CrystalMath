@@ -122,7 +122,7 @@ class Database:
     """Manages the SQLite database for DFT-TUI project."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
 
     # Base schema (version 1 - Phase 1)
     # Note: CANCELLED added in v4, but included here for new databases
@@ -283,6 +283,49 @@ class Database:
     WHERE key_results IS NOT NULL;
     """
 
+    # Migration to version 6 (Materials database cache tables)
+    # These tables cache materials data from external APIs (Materials Project, MPContribs, OPTIMADE)
+    MIGRATION_V5_TO_V6 = """
+    -- Raw query cache for API responses
+    CREATE TABLE IF NOT EXISTS materials_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL CHECK(source IN ('mp', 'mpcontribs', 'optimade')),
+        cache_key TEXT NOT NULL,
+        query_json TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        base_url TEXT,
+        etag TEXT,
+        fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_materials_cache_key ON materials_cache (source, cache_key);
+
+    -- Canonical structure cache for parsed material structures
+    CREATE TABLE IF NOT EXISTS materials_structures (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL CHECK(source IN ('mp', 'mpcontribs', 'optimade')),
+        material_id TEXT NOT NULL,
+        formula TEXT,
+        structure_json TEXT NOT NULL,
+        cif_text TEXT,
+        d12_text TEXT,
+        fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_materials_structures_unique ON materials_structures (source, material_id);
+
+    -- MPContribs project data cache
+    CREATE TABLE IF NOT EXISTS mpcontribs_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project TEXT NOT NULL,
+        contribution_id TEXT,
+        material_id TEXT,
+        data_json TEXT NOT NULL,
+        fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_mpcontribs_project ON mpcontribs_cache (project);
+    """
+
     def __init__(self, db_path: Path, pool_size: int = 4):
         """
         Initialize database with connection pooling for concurrent access.
@@ -413,6 +456,12 @@ class Database:
 
         if current_version < 5:
             self._migrate_v4_to_v5(conn)
+
+        if current_version < 6:
+            self._migrate_v5_to_v6(conn)
+
+        if current_version < 7:
+            self._migrate_v6_to_v7(conn)
 
     def _get_schema_version(self, conn: sqlite3.Connection) -> int:
         """Get current schema version."""
@@ -593,6 +642,86 @@ class Database:
         except sqlite3.OperationalError as e:
             # Migration may have been partially applied
             if "table job_results already exists" not in str(e).lower():
+                raise
+
+    def _migrate_v5_to_v6(self, conn: sqlite3.Connection) -> None:
+        """Migrate from version 5 to version 6 (add materials cache tables).
+
+        Creates three tables for caching materials data from external APIs:
+        - materials_cache: Raw API query/response cache
+        - materials_structures: Parsed structure data cache
+        - mpcontribs_cache: MPContribs project data cache
+        """
+        try:
+            # Check if materials_cache table already exists
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='materials_cache'"
+            )
+            if cursor.fetchone():
+                # Table already exists - just record version 6
+                try:
+                    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (6,))
+                    conn.commit()
+                except sqlite3.IntegrityError:
+                    pass  # Version already recorded
+                return
+
+            # Migration is needed - create tables
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                # Parse and execute each statement individually
+                # First remove comment lines, then split by semicolon
+                lines = [
+                    line for line in self.MIGRATION_V5_TO_V6.split('\n')
+                    if not line.strip().startswith('--')
+                ]
+                sql_no_comments = '\n'.join(lines)
+                statements = [
+                    stmt.strip() for stmt in sql_no_comments.split(';')
+                    if stmt.strip()
+                ]
+                for stmt in statements:
+                    conn.execute(stmt)
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (6,)
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        except sqlite3.OperationalError as e:
+            # Migration may have been partially applied
+            if "table materials_cache already exists" not in str(e).lower():
+                raise
+
+    def _migrate_v6_to_v7(self, conn: sqlite3.Connection) -> None:
+        """Migrate from version 6 to version 7 (add TTL to structure/contrib caches).
+
+        Adds expires_at column to materials_structures and mpcontribs_cache tables
+        for consistent TTL-based cache invalidation.
+        """
+        try:
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                # Add expires_at to materials_structures
+                conn.execute(
+                    "ALTER TABLE materials_structures ADD COLUMN expires_at TEXT"
+                )
+                # Add expires_at to mpcontribs_cache
+                conn.execute(
+                    "ALTER TABLE mpcontribs_cache ADD COLUMN expires_at TEXT"
+                )
+                # Record version
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (7,)
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        except sqlite3.OperationalError as e:
+            # Column may already exist from partial migration
+            if "duplicate column name" not in str(e).lower():
                 raise
 
     def get_schema_version(self) -> int:

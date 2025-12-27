@@ -1,0 +1,88 @@
+version: '3.8'
+
+# AiiDA Infrastructure Stack for CRYSTAL-TUI
+# Provides PostgreSQL and RabbitMQ services for AiiDA workflows
+#
+# Usage:
+#   docker-compose up -d              # Start services
+#   docker-compose logs -f             # Watch logs
+#   docker-compose down -v             # Stop and remove (keeps volumes by default)
+#
+# Environment variables are loaded from .env file
+
+services:
+  # PostgreSQL database for AiiDA
+  postgres:
+    image: postgres:14-alpine
+    container_name: crystal-tui-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aiida_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-aiida_crystal_tui}
+      POSTGRES_INITDB_ARGS: ${POSTGRES_INITDB_ARGS:--c max_connections=200 -c shared_buffers=256MB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Named volume for data persistence
+      - postgres_data:/var/lib/postgresql/data
+      # Optional: initialization scripts
+      - ./scripts/postgres_init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      # Configure PostgreSQL for AiiDA
+      PGDATA: /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aiida_user}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - crystal-network
+
+  # RabbitMQ message broker for AiiDA daemon
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: crystal-tui-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-aiida_user}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-changeme}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:-/aiida}
+    ports:
+      # AMQP protocol (message broker)
+      - "${RABBITMQ_PORT:-5672}:5672"
+      # Management UI HTTP
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      # Named volume for data persistence
+      - rabbitmq_data:/var/lib/rabbitmq
+      # RabbitMQ configuration (optional)
+      - ./scripts/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - crystal-network
+    # Enable management plugin
+    labels:
+      - "management_ui=http://localhost:${RABBITMQ_MANAGEMENT_PORT:-15672}"
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+  rabbitmq_data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+
+networks:
+  crystal-network:
+    driver: bridge

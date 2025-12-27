@@ -8,6 +8,12 @@ from .environment import (
     reset_config_cache,
 )
 from .database import Database
+from .config_loader import (
+    ClusterConfig,
+    ConfigLoader,
+    load_cluster_config,
+    import_cluster_configs,
+)
 
 __all__ = [
     'CrystalConfig',
@@ -16,4 +22,8 @@ __all__ = [
     'get_crystal_config',
     'reset_config_cache',
     'Database',
+    'ClusterConfig',
+    'ConfigLoader',
+    'load_cluster_config',
+    'import_cluster_configs',
 ]

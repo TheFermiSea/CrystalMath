@@ -517,8 +517,14 @@ class SSHRunner(RemoteBaseRunner):
                 # Download output files
                 await self._download_files(conn, remote_work_dir, work_dir)
 
-                # Parse results locally using CRYSTALpytools
-                output_file = work_dir / "output.log"
+                # Determine output file based on DFT code
+                if self.dft_code == DFTCode.VASP:
+                    # VASP outputs to OUTCAR
+                    output_file = work_dir / "OUTCAR"
+                else:
+                    # CRYSTAL and others use our standardized output.log
+                    output_file = work_dir / "output.log"
+
                 result = await self._parse_results(output_file, status)
 
                 return result
@@ -565,6 +571,74 @@ class SSHRunner(RemoteBaseRunner):
         if not job_info:
             return None
         return job_info.get("pid")
+
+    async def get_vasp_progress(self, job_handle: str) -> Optional[Any]:
+        """
+        Get real-time VASP calculation progress by parsing OUTCAR.
+
+        Only applicable for VASP jobs. Downloads the last ~500 lines of OUTCAR
+        and parses current progress (ionic steps, SCF iterations, energies).
+
+        Args:
+            job_handle: Handle returned by submit_job()
+
+        Returns:
+            VASPProgress object with current status, or None if not a VASP job
+            or OUTCAR not yet available
+
+        Raises:
+            JobNotFoundError: If job_handle is invalid
+        """
+        from ..runners.vasp_progress import VASPProgressParser
+
+        # Only applicable for VASP jobs
+        if self.dft_code != DFTCode.VASP:
+            return None
+
+        job_info = self._active_jobs.get(job_handle)
+        if not job_info:
+            raise JobNotFoundError(f"Job handle not found: {job_handle}")
+
+        cluster_id, pid, remote_work_dir = self._parse_job_handle(job_handle)
+
+        try:
+            async with self.connection_manager.get_connection(cluster_id) as conn:
+                # OUTCAR path
+                quoted_work_dir = shlex.quote(remote_work_dir)
+                outcar_path = f"{quoted_work_dir}/OUTCAR"
+
+                # Check if OUTCAR exists
+                check_cmd = f"test -f {outcar_path} && echo OK"
+                result = await conn.run(check_cmd, check=False)
+
+                if "OK" not in result.stdout:
+                    logger.debug(f"OUTCAR not yet created for job {pid}")
+                    return None
+
+                # Download last 500 lines of OUTCAR
+                tail_cmd = f"tail -500 {outcar_path}"
+                result = await conn.run(tail_cmd, check=False, timeout=10)
+
+                if result.exit_status != 0 or not result.stdout:
+                    logger.warning(f"Failed to read OUTCAR tail for job {pid}")
+                    return None
+
+                # Parse progress
+                parser = VASPProgressParser()
+                progress = parser.parse_outcar_tail(result.stdout)
+
+                # Store progress in job info for caching
+                job_info["vasp_progress"] = progress.to_dict()
+                job_info["last_progress_update"] = time.time()
+
+                return progress
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout while fetching VASP progress for job {pid}")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting VASP progress: {e}")
+            return None
 
     async def cleanup(self, job_handle: str, remove_files: bool = False) -> None:
         """
@@ -792,6 +866,7 @@ exit $EXIT_CODE
         Upload input files to remote machine via SFTP.
 
         Uploads all relevant input files based on DFT code configuration.
+        For VASP jobs, also retrieves POTCAR from cluster's VASP_PP_PATH.
 
         Args:
             conn: SSH connection
@@ -825,7 +900,87 @@ exit $EXIT_CODE
                 await sftp.put(str(local_file), remote_file)
                 logger.debug(f"Uploaded: {local_file.name}")
 
+        # VASP-specific: Retrieve POTCAR from cluster
+        if self.dft_code == DFTCode.VASP:
+            await self._retrieve_vasp_potcar(conn, local_dir, remote_dir)
+
         logger.info("File upload complete")
+
+    async def _retrieve_vasp_potcar(
+        self,
+        conn: asyncssh.SSHClientConnection,
+        local_dir: Path,
+        remote_dir: PurePosixPath
+    ) -> None:
+        """
+        Retrieve POTCAR from cluster's VASP_PP_PATH for VASP calculations.
+
+        Reads vasp_metadata.json to determine which element POTCAR to retrieve,
+        then copies the appropriate POTCAR file from VASP_PP_PATH to the work directory.
+
+        Args:
+            conn: SSH connection
+            local_dir: Local directory containing vasp_metadata.json
+            remote_dir: Remote work directory
+
+        Raises:
+            FileNotFoundError: If vasp_metadata.json or POTCAR not found
+            JobSubmissionError: If POTCAR retrieval fails
+        """
+        import json
+
+        # Read metadata to get POTCAR element
+        metadata_file = local_dir / "vasp_metadata.json"
+        if not metadata_file.exists():
+            raise FileNotFoundError(f"VASP metadata file not found: {metadata_file}")
+
+        metadata = json.loads(metadata_file.read_text())
+        element = metadata.get("potcar_element", "Si")
+
+        # Get VASP_PP_PATH from cluster configuration
+        # This should be set in the cluster's connection_config
+        cluster_config = self.connection_manager._configs.get(self.cluster_id)
+        if not cluster_config:
+            raise ValueError(f"Cluster {self.cluster_id} not found in ConnectionManager")
+
+        # VASP_PP_PATH should be in the environment or cluster metadata
+        # For now, assume it's set as an environment variable on the cluster
+        # Users configure this in the cluster manager UI
+
+        logger.info(f"Retrieving POTCAR for element: {element}")
+
+        # Try multiple common POTCAR library paths
+        potcar_paths = [
+            f"$VASP_PP_PATH/potpaw_PBE/{element}/POTCAR",  # Standard PBE
+            f"$VASP_PP_PATH/{element}/POTCAR",  # Alternate
+            f"$VASP_PP_PATH/PAW_PBE/{element}/POTCAR",  # Another common structure
+        ]
+
+        # Try each path
+        potcar_found = False
+        for potcar_path in potcar_paths:
+            try:
+                # Check if POTCAR exists at this path
+                check_cmd = f"test -f {potcar_path} && echo OK"
+                result = await conn.run(check_cmd)
+
+                if "OK" in result.stdout:
+                    # Copy POTCAR to work directory
+                    copy_cmd = f"cp {potcar_path} {shlex.quote(str(remote_dir))}/POTCAR"
+                    await conn.run(copy_cmd, check=True)
+                    logger.info(f"Retrieved POTCAR from: {potcar_path}")
+                    potcar_found = True
+                    break
+
+            except Exception as e:
+                logger.debug(f"POTCAR not found at {potcar_path}: {e}")
+                continue
+
+        if not potcar_found:
+            raise JobSubmissionError(
+                f"POTCAR not found for element '{element}'. "
+                f"Ensure VASP_PP_PATH is set on cluster and contains POTCAR for {element}."
+            )
 
     async def _download_files(
         self,

@@ -1,0 +1,219 @@
+name: SLURM VASP GPU Job
+version: "1.0"
+description: |
+  SLURM batch script template for VASP GPU calculations.
+  Optimized for Tesla V100S GPUs with InfiniBand interconnect.
+  Supports GPUDirect RDMA via UCX.
+author: Crystal-TUI
+dft_code: vasp
+tags:
+  - slurm
+  - vasp
+  - gpu
+  - hpc
+  - batch
+
+parameters:
+  job_name:
+    type: string
+    required: true
+    description: Name for the SLURM job
+
+  nodes:
+    type: integer
+    default: 1
+    min: 1
+    max: 3
+    description: Number of compute nodes (max 3)
+
+  tasks_per_node:
+    type: integer
+    default: 1
+    min: 1
+    description: MPI tasks per node (typically 1 for GPU VASP)
+
+  cpus_per_task:
+    type: integer
+    default: 8
+    min: 1
+    max: 40
+    description: CPUs per task for OpenMP threads
+
+  gpus_per_node:
+    type: integer
+    default: 1
+    min: 1
+    max: 1
+    description: GPUs per node (1 V100S per node)
+
+  time_limit:
+    type: string
+    default: "24:00:00"
+    description: Job time limit (HH:MM:SS or D-HH:MM:SS)
+
+  partition:
+    type: string
+    default: "vasp"
+    description: SLURM partition (vasp, debug, benchmark)
+
+  memory:
+    type: string
+    default: "64G"
+    description: Memory allocation per node
+
+  work_dir:
+    type: string
+    required: true
+    description: Working directory path
+
+  vasp_executable:
+    type: select
+    options:
+      - label: "Standard (vasp_std)"
+        value: "vasp_std"
+      - label: "Gamma-only (vasp_gam)"
+        value: "vasp_gam"
+      - label: "Non-collinear (vasp_ncl)"
+        value: "vasp_ncl"
+    default: "vasp_std"
+    description: VASP executable variant
+
+  # VASP parallelization parameters
+  ncore:
+    type: integer
+    default: 4
+    min: 1
+    max: 20
+    description: NCORE - cores per band (4-8 typical for GPU)
+
+  kpar:
+    type: integer
+    default: 1
+    min: 1
+    description: KPAR - k-point parallelization
+
+  nsim:
+    type: integer
+    default: 4
+    min: 1
+    max: 16
+    description: NSIM - bands processed in parallel on GPU
+
+  constraint:
+    type: string
+    description: Node constraint specification (optional)
+
+  exclusive:
+    type: boolean
+    default: true
+    description: Request exclusive node access
+
+  dependencies:
+    type: multiselect
+    description: List of job IDs to depend on
+
+input_template: |
+  #!/bin/bash
+  #SBATCH --job-name={{ job_name }}
+  #SBATCH --nodes={{ nodes }}
+  #SBATCH --ntasks-per-node={{ tasks_per_node }}
+  #SBATCH --cpus-per-task={{ cpus_per_task }}
+  #SBATCH --gres=gpu:v100s:{{ gpus_per_node }}
+  #SBATCH --time={{ time_limit }}
+  #SBATCH --partition={{ partition }}
+  #SBATCH --mem={{ memory }}
+  #SBATCH --output=slurm-%j.out
+  #SBATCH --error=slurm-%j.err
+  {% if constraint %}
+  #SBATCH --constraint={{ constraint }}
+  {% endif %}
+  {% if exclusive %}
+  #SBATCH --exclusive
+  {% endif %}
+  {% if dependencies %}
+  #SBATCH --dependency=afterok:{{ dependencies | join(':') }}
+  {% endif %}
+
+  echo "========================================"
+  echo "VASP GPU Job: {{ job_name }}"
+  echo "Started: $(date)"
+  echo "Nodes: $SLURM_JOB_NODELIST"
+  echo "GPUs per node: {{ gpus_per_node }}"
+  echo "========================================"
+
+  # Load VASP environment
+  source /opt/vasp-env.sh
+
+  # UCX settings for GPUDirect RDMA
+  export UCX_TLS="rc,sm,cuda_copy,cuda_ipc,gdr_copy"
+  export UCX_RNDV_SCHEME="put_zcopy"
+  export UCX_MEMTYPE_CACHE="n"
+  export UCX_IB_GPU_DIRECT_RDMA="yes"
+
+  # OpenMPI settings for UCX
+  export OMPI_MCA_pml="ucx"
+  export OMPI_MCA_osc="ucx"
+  export OMPI_MCA_btl="^vader,openib"
+
+  # OpenMP settings
+  export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+  export OMP_PLACES="cores"
+  export OMP_PROC_BIND="close"
+
+  # CUDA settings
+  export CUDA_VISIBLE_DEVICES="0"
+
+  # Change to working directory
+  cd {{ work_dir }}
+
+  echo "Working directory: $(pwd)"
+  echo "VASP executable: /opt/vasp/bin/{{ vasp_executable }}"
+  echo "OMP_NUM_THREADS: $OMP_NUM_THREADS"
+  echo ""
+
+  # Verify GPU is available
+  nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+  echo ""
+
+  # Create INCAR parallelization snippet if not present
+  if ! grep -q "NCORE" INCAR 2>/dev/null; then
+      echo "Adding parallelization settings to INCAR..."
+      cat >> INCAR << EOF
+
+  ! GPU parallelization settings (added by job script)
+  NCORE = {{ ncore }}
+  KPAR = {{ kpar }}
+  NSIM = {{ nsim }}
+  EOF
+  fi
+
+  # Run VASP
+  echo "Starting VASP calculation..."
+  {% if nodes > 1 %}
+  # Multi-node: use srun with PMIx
+  srun --mpi=pmix /opt/vasp/bin/{{ vasp_executable }}
+  {% else %}
+  # Single node: direct execution
+  /opt/vasp/bin/{{ vasp_executable }}
+  {% endif %}
+
+  exit_code=$?
+
+  echo ""
+  echo "========================================"
+  echo "Job finished: $(date)"
+  echo "Exit code: $exit_code"
+
+  # Extract key results if successful
+  if [ $exit_code -eq 0 ] && [ -f OUTCAR ]; then
+      echo ""
+      echo "Final Energy:"
+      grep "free  energy   TOTEN" OUTCAR | tail -1
+      echo ""
+      echo "Timing:"
+      grep "Total CPU time" OUTCAR | tail -1
+      grep "Elapsed time" OUTCAR | tail -1
+  fi
+
+  echo "========================================"
+  exit $exit_code

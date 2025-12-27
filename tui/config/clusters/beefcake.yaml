@@ -1,0 +1,120 @@
+# Beefcake VASP GPU Cluster Configuration
+# 3-node VASP cluster with Tesla V100S GPUs and InfiniBand
+# SLURM-managed via slurm-ctl controller
+
+name: beefcake
+description: "3-node VASP GPU cluster with Tesla V100S and InfiniBand HDR100"
+dft_code: vasp
+type: slurm
+
+# Connection settings for SLURM controller
+connection:
+  hostname: 10.0.0.5  # slurm-ctl (LXC 500)
+  port: 22
+  username: root
+  # SSH key authentication (recommended)
+  key_file: ~/.ssh/id_ed25519
+  # Password fallback (not recommended for production)
+  # password: adminadmin
+
+# SLURM scheduler settings
+slurm:
+  partitions:
+    - name: vasp
+      default: true
+      description: "Main VASP production queue"
+      max_time: "7-00:00:00"  # 7 days
+      max_nodes: 3
+    - name: debug
+      description: "Quick debugging jobs"
+      max_time: "01:00:00"  # 1 hour
+      max_nodes: 1
+    - name: benchmark
+      description: "Performance benchmarking"
+      max_time: "04:00:00"  # 4 hours
+      max_nodes: 3
+
+  default_partition: vasp
+  mpi_command: "srun --mpi=pmix"
+
+# Compute node specifications
+nodes:
+  - name: vasp-01
+    hostname: 10.0.0.20
+    ib_hostname: 10.100.0.20  # InfiniBand
+    vm_id: 600  # Proxmox VM on pve1
+  - name: vasp-02
+    hostname: 10.0.0.21
+    ib_hostname: 10.100.0.21
+    vm_id: 601  # Proxmox VM on pve2
+  - name: vasp-03
+    hostname: 10.0.0.22
+    ib_hostname: 10.100.0.22
+    vm_id: 602  # Proxmox VM on pve3
+
+# Hardware specifications (per node)
+hardware:
+  cpus: 40          # vCPUs per node
+  memory_gb: 256    # RAM per node
+  gpus: 1           # GPUs per node
+  gpu_type: "Tesla V100S-32GB"
+  interconnect: "InfiniBand HDR100 (ConnectX-6)"
+
+# GRES (Generic Resources) configuration for SLURM
+gres:
+  gpu: "v100s:1"    # GPU type:count per node
+
+# Software environment
+software:
+  vasp_version: "6.5.1"
+  vasp_bin: /opt/vasp/bin
+  vasp_executables:
+    std: /opt/vasp/bin/vasp_std
+    gam: /opt/vasp/bin/vasp_gam
+    ncl: /opt/vasp/bin/vasp_ncl
+
+  # Environment setup script
+  environment_script: /opt/vasp-env.sh
+
+  # Or explicit module loads/environment variables
+  modules: []  # No modules on this cluster
+
+  environment:
+    # NVIDIA HPC SDK 24.11
+    NVHPC_ROOT: /opt/nvidia/hpc_sdk/Linux_x86_64/24.11
+    CUDA_HOME: /opt/nvidia/hpc_sdk/Linux_x86_64/24.11/cuda/12.6
+
+    # UCX settings for GPUDirect RDMA
+    UCX_TLS: "rc,sm,cuda_copy,cuda_ipc,gdr_copy"
+    UCX_RNDV_SCHEME: "put_zcopy"
+    UCX_MEMTYPE_CACHE: "n"
+    UCX_IB_GPU_DIRECT_RDMA: "yes"
+
+    # OpenMPI settings
+    OMPI_MCA_pml: "ucx"
+    OMPI_MCA_osc: "ucx"
+    OMPI_MCA_btl: "^vader,openib"
+
+    # CUDA settings
+    CUDA_VISIBLE_DEVICES: "0"
+
+# Default job settings
+defaults:
+  nodes: 1
+  tasks_per_node: 1  # 1 GPU per task for VASP
+  cpus_per_task: 8   # CPU cores for hybrid parallelization
+  gpus_per_node: 1
+  time_limit: "24:00:00"
+  memory: "64G"
+
+  # VASP-specific parallelization defaults
+  vasp_settings:
+    NCORE: 4    # Cores per band (typically 4-8 for GPU)
+    KPAR: 1     # K-point parallelization
+    NSIM: 4     # Number of bands in parallel
+
+# Working directory configuration
+directories:
+  scratch: /scratch/$USER
+  work: /home/$USER/vasp_work
+  potcar: /opt/vasp/potentials

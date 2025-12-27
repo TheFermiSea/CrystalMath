@@ -301,17 +301,20 @@ class ConnectionManager:
         )
 
         # Build connection options with host key verification
+        # Include SSH config file path to support ProxyJump and other SSH config options
+        ssh_config_path = Path.home() / ".ssh" / "config"
         connect_kwargs = {
             "host": config.host,
             "port": config.port,
             "username": config.username,
             "known_hosts": known_hosts,
             "keepalive_interval": config.keepalive_interval,
+            "config": [ssh_config_path] if ssh_config_path.exists() else [],
         }
 
         # Configure host key verification behavior
         if not config.strict_host_key_checking:
-            connect_kwargs["known_hosts"] = ()  # Accept unknown hosts with warning
+            connect_kwargs["known_hosts"] = None  # Disable host key verification completely
 
         # Add authentication options
         if config.key_file:

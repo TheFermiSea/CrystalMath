@@ -16,12 +16,16 @@ from textual.binding import Binding
 
 from ..core.database import Database
 from ..core.environment import CrystalConfig, get_crystal_config
+from ..core.connection_manager import ConnectionManager
 from ..runners import LocalRunner, LocalRunnerError, InputFileError
-from .screens import NewJobScreen, BatchSubmissionScreen, TemplateBrowserScreen
+from ..runners.ssh_runner import SSHRunner
+from ..core.codes import DFTCode
+from .screens import NewJobScreen, BatchSubmissionScreen, TemplateBrowserScreen, ClusterManagerScreen, VASPFilesReady, SLURMQueueScreen
 from .screens.new_job import JobCreated
 from .screens.batch_submission import BatchJobsCreated
 from .screens.template_browser import TemplateSelected
 from .widgets import InputPreview, ResultsSummary
+from .messages import JobProgressUpdate
 
 
 # --- Custom Messages ---
@@ -97,6 +101,8 @@ class CrystalTUI(App):
         Binding("n", "new_job", "New Job", show=True),
         Binding("t", "template_browser", "Templates", show=True),
         Binding("b", "batch_submission", "Batch", show=True),
+        Binding("c", "cluster_manager", "Clusters", show=True),
+        Binding("u", "slurm_queue", "Queue", show=True),
         Binding("r", "run_job", "Run", show=True),
         Binding("s", "stop_job", "Stop", show=True),
     ]
@@ -110,6 +116,11 @@ class CrystalTUI(App):
         self.active_workers: dict[int, Worker] = {}
         self.config = config
         self.runner: Optional[LocalRunner] = None
+        self.connection_manager: Optional[ConnectionManager] = None
+        # Track active SSH runners for remote jobs (job_id -> (runner, job_handle))
+        self._active_ssh_jobs: dict[int, tuple[SSHRunner, str]] = {}
+        # Track progress monitoring tasks
+        self._progress_monitors: dict[int, asyncio.Task] = {}
 
     def compose(self) -> ComposeResult:
         """Compose the UI layout."""
@@ -130,7 +141,7 @@ class CrystalTUI(App):
 
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Initialize the application on startup."""
         # Ensure project structure exists
         self.calculations_dir.mkdir(parents=True, exist_ok=True)
@@ -140,6 +151,27 @@ class CrystalTUI(App):
 
         # Initialize database
         self.db = Database(self.db_path)
+
+        # Initialize connection manager for remote execution
+        self.connection_manager = ConnectionManager()
+        await self.connection_manager.start()
+
+        # Register existing clusters from database
+        clusters = self.db.get_active_clusters()
+        for cluster in clusters:
+            if cluster.id is None:
+                continue
+            config = cluster.connection_config
+            key_file = Path(config.get("key_file")).expanduser() if config.get("key_file") else None
+            self.connection_manager.register_cluster(
+                cluster_id=cluster.id,
+                host=cluster.hostname,
+                port=cluster.port,
+                username=cluster.username,
+                key_file=key_file,
+                use_agent=config.get("use_agent", True),
+                strict_host_key_checking=config.get("strict_host_key_checking", True),
+            )
 
         # Set up job table with explicit column keys for reliable updates
         table = self.query_one("#job_list", DataTable)
@@ -158,6 +190,12 @@ class CrystalTUI(App):
         log.write_line(f"Project: {self.project_dir}")
         log.write_line(f"Database: {self.db_path}")
         log.write_line("")
+
+    async def on_unmount(self) -> None:
+        """Clean up resources when shutting down."""
+        # Stop connection manager
+        if self.connection_manager:
+            await self.connection_manager.stop()
 
     def _ensure_runner(self) -> LocalRunner:
         """Instantiate the LocalRunner once and propagate env configuration."""
@@ -277,6 +315,52 @@ class CrystalTUI(App):
             callback=handle_template_result
         )
 
+    def action_cluster_manager(self) -> None:
+        """Open cluster manager screen."""
+        if not self.db or not self.connection_manager:
+            return
+
+        # Push the cluster manager screen
+        self.push_screen(
+            ClusterManagerScreen(
+                db=self.db,
+                connection_manager=self.connection_manager
+            )
+        )
+
+    def action_slurm_queue(self) -> None:
+        """Open SLURM queue management screen."""
+        if not self.db or not self.connection_manager:
+            return
+
+        log = self.query_one("#log_view", Log)
+
+        # Get available SLURM clusters
+        clusters = self.db.get_active_clusters()
+        slurm_clusters = [c for c in clusters if c.type == "slurm"]
+
+        if not slurm_clusters:
+            log.write_line("[yellow]No SLURM clusters configured. Press 'c' to add a cluster.[/yellow]")
+            return
+
+        # For now, use the first SLURM cluster
+        # TODO: Add cluster selection if multiple SLURM clusters exist
+        cluster = slurm_clusters[0]
+        if cluster.id is None:
+            log.write_line("[red]Invalid cluster configuration[/red]")
+            return
+
+        log.write_line(f"[cyan]Opening SLURM queue for: {cluster.name}[/cyan]")
+
+        # Push the SLURM queue screen
+        self.push_screen(
+            SLURMQueueScreen(
+                db=self.db,
+                connection_manager=self.connection_manager,
+                cluster_id=cluster.id
+            )
+        )
+
     def _create_job_from_template(self, template_name: str, input_content: str, params: dict) -> None:
         """Create a job from a template."""
         if not self.db:
@@ -344,14 +428,63 @@ class CrystalTUI(App):
             log.write_line(f"[yellow]Job {job_id} is already {status}[/yellow]")
             return
 
-        # Update status to queued
+        # Get job details to check DFT code
+        job = self.db.get_job(job_id) if self.db else None
+        if not job:
+            return
+
+        # Check if this is a VASP job (requires remote execution)
+        is_vasp = False
+        if hasattr(job, 'dft_code') and job.dft_code == "vasp":
+            is_vasp = True
+        elif Path(job.work_dir).joinpath("POSCAR").exists():
+            is_vasp = True
+
+        if is_vasp:
+            # VASP jobs require a cluster selection
+            self._run_vasp_job_with_cluster_selection(job_id)
+            return
+
+        # Update status to queued for local jobs
         if self.db:
             self.db.update_status(job_id, "QUEUED")
 
-        # Start worker
+        # Start worker for CRYSTAL (local execution)
         self.run_worker(
             self._run_crystal_job(job_id),
             name=f"job_{job_id}",
+            group=f"job_{job_id}"
+        )
+
+    def _run_vasp_job_with_cluster_selection(self, job_id: int) -> None:
+        """Handle VASP job execution with cluster selection."""
+        if not self.db:
+            return
+
+        log = self.query_one("#log_view", Log)
+
+        # Get available clusters
+        clusters = self.db.get_active_clusters()
+        if not clusters:
+            log.write_line("[bold red]No clusters configured. Press 'c' to add a cluster.[/bold red]")
+            return
+
+        # For now, use the first available cluster
+        # TODO: Add cluster selection UI
+        cluster = clusters[0]
+        if cluster.id is None:
+            log.write_line("[bold red]Invalid cluster configuration[/bold red]")
+            return
+
+        log.write_line(f"[cyan]Using cluster: {cluster.name} ({cluster.hostname})[/cyan]")
+
+        # Update status to queued
+        self.db.update_status(job_id, "QUEUED")
+
+        # Start remote VASP worker
+        self.run_worker(
+            self._run_remote_vasp_job(job_id, cluster.id),
+            name=f"vasp_job_{job_id}",
             group=f"job_{job_id}"
         )
 
@@ -454,6 +587,67 @@ class CrystalTUI(App):
         """Handle template selection - create job from template."""
         log = self.query_one("#log_view", Log)
         log.write_line(f"[cyan]Template selected: {message.template.name}[/cyan]")
+
+    def on_vasp_files_ready(self, message: VASPFilesReady) -> None:
+        """Handle VASP multi-file input ready - create job with all files."""
+        if not self.db:
+            return
+
+        log = self.query_one("#log_view", Log)
+        log.write_line(f"[cyan]Creating VASP job: {message.job_name}[/cyan]")
+
+        try:
+            # Generate next job ID
+            existing_jobs = self.db.get_all_jobs()
+            next_id = max([job.id for job in existing_jobs], default=0) + 1
+
+            # Create work directory
+            work_dir_name = f"{next_id:04d}_{message.job_name}"
+            work_dir = self.calculations_dir / work_dir_name
+            work_dir.mkdir(parents=True, exist_ok=False)
+
+            # Write all VASP input files
+            (work_dir / "POSCAR").write_text(message.poscar)
+            (work_dir / "INCAR").write_text(message.incar)
+            (work_dir / "KPOINTS").write_text(message.kpoints)
+
+            # Note: POTCAR will be retrieved from cluster during job submission
+            # Store POTCAR element in job metadata
+            import json
+            metadata = {
+                "potcar_element": message.potcar_element,
+                "dft_code": "vasp"
+            }
+            (work_dir / "vasp_metadata.json").write_text(json.dumps(metadata, indent=2))
+
+            # Create combined input content for database storage
+            input_content = f"# VASP Job: {message.job_name}\n"
+            input_content += f"# POTCAR Element: {message.potcar_element}\n\n"
+            input_content += "=== POSCAR ===\n" + message.poscar + "\n\n"
+            input_content += "=== INCAR ===\n" + message.incar + "\n\n"
+            input_content += "=== KPOINTS ===\n" + message.kpoints
+
+            # Add job to database
+            job_id = self.db.create_job(
+                name=message.job_name,
+                work_dir=str(work_dir),
+                input_content=input_content,
+                dft_code="vasp"
+            )
+
+            # Refresh job list and log
+            self._refresh_job_list()
+            log.write_line(f"[bold green]Created VASP job {job_id}: {message.job_name}[/bold green]")
+            log.write_line(f"  POSCAR: {len(message.poscar.split(chr(10)))} lines")
+            log.write_line(f"  INCAR: {len(message.incar.split(chr(10)))} lines")
+            log.write_line(f"  KPOINTS: {len(message.kpoints.split(chr(10)))} lines")
+            log.write_line(f"  POTCAR: {message.potcar_element} (will retrieve from cluster)")
+            log.write_line(f"  Work dir: {work_dir_name}")
+
+        except Exception as e:
+            log.write_line(f"[red]Failed to create VASP job: {str(e)}[/red]")
+            import traceback
+            log.write_line(f"[red]{traceback.format_exc()}[/red]")
 
     def on_job_log(self, message: JobLog) -> None:
         """Write a line to the log viewer."""
@@ -579,4 +773,295 @@ class CrystalTUI(App):
             self.post_message(JobStatus(job_id, "FAILED"))
         finally:
             # Refresh grid to reflect final status and results
+            self._refresh_job_list()
+
+    # --- VASP Progress Monitoring ---
+    async def _monitor_vasp_progress(
+        self,
+        job_id: int,
+        runner: SSHRunner,
+        job_handle: str,
+        poll_interval: float = 10.0
+    ) -> None:
+        """
+        Background task that monitors VASP job progress.
+
+        Periodically polls the remote OUTCAR file and posts progress updates.
+
+        Args:
+            job_id: Database ID of the job
+            runner: SSHRunner instance for this job
+            job_handle: Handle returned by submit_job()
+            poll_interval: Seconds between progress checks
+        """
+        log = self.query_one("#log_view", Log)
+        log.write_line(f"[cyan]Starting VASP progress monitor for job {job_id}[/cyan]")
+
+        try:
+            while True:
+                # Check if job is still running
+                try:
+                    status = await runner.get_status(job_handle)
+                    if status not in ("running", "RUNNING"):
+                        log.write_line(
+                            f"[cyan]VASP job {job_id} finished with status: {status}[/cyan]"
+                        )
+                        break
+                except Exception as e:
+                    log.write_line(f"[yellow]Error checking job status: {e}[/yellow]")
+                    break
+
+                # Get progress update
+                try:
+                    progress = await runner.get_vasp_progress(job_handle)
+                    if progress:
+                        # Post progress message
+                        self.post_message(JobProgressUpdate(
+                            job_id=job_id,
+                            job_handle=job_handle,
+                            progress_data=progress.to_dict(),
+                            status_text=progress.status_summary()
+                        ))
+                except Exception as e:
+                    log.write_line(f"[yellow]Error getting VASP progress: {e}[/yellow]")
+
+                # Wait before next check
+                await asyncio.sleep(poll_interval)
+
+        except asyncio.CancelledError:
+            log.write_line(f"[cyan]VASP progress monitor for job {job_id} cancelled[/cyan]")
+            raise
+        finally:
+            # Cleanup
+            self._progress_monitors.pop(job_id, None)
+
+    def _start_vasp_progress_monitor(
+        self,
+        job_id: int,
+        runner: SSHRunner,
+        job_handle: str
+    ) -> None:
+        """Start background progress monitoring for a VASP job."""
+        # Cancel existing monitor if any
+        if job_id in self._progress_monitors:
+            self._progress_monitors[job_id].cancel()
+
+        # Create and track new monitor task
+        task = asyncio.create_task(
+            self._monitor_vasp_progress(job_id, runner, job_handle)
+        )
+        self._progress_monitors[job_id] = task
+
+    def _stop_vasp_progress_monitor(self, job_id: int) -> None:
+        """Stop progress monitoring for a job."""
+        if job_id in self._progress_monitors:
+            self._progress_monitors[job_id].cancel()
+            self._progress_monitors.pop(job_id, None)
+
+    def on_job_progress_update(self, message: JobProgressUpdate) -> None:
+        """Handle VASP job progress updates."""
+        log = self.query_one("#log_view", Log)
+
+        # Extract progress data
+        data = message.progress_data
+        ionic_step = data.get("ionic_step", 0)
+        scf_iter = data.get("scf_iteration", 0)
+        energy = data.get("current_energy")
+        progress_pct = data.get("progress_percentage", 0)
+
+        # Format progress line
+        if energy is not None:
+            progress_line = (
+                f"[dim]Job {message.job_id}:[/dim] "
+                f"Ion:{ionic_step} SCF:{scf_iter} "
+                f"E={energy:.6f} eV ({progress_pct:.1f}%)"
+            )
+        else:
+            progress_line = (
+                f"[dim]Job {message.job_id}:[/dim] "
+                f"Ion:{ionic_step} SCF:{scf_iter} ({progress_pct:.1f}%)"
+            )
+
+        log.write_line(progress_line)
+
+        # Check for errors
+        if data.get("error_detected"):
+            error_msg = data.get("error_message", "Unknown error")
+            log.write_line(f"[bold red]VASP Error detected: {error_msg}[/bold red]")
+
+        # Update table status with progress info if job is selected
+        table = self.query_one("#job_list", DataTable)
+        row_key = str(message.job_id)
+        if row_key in table.rows:
+            status_text = f"RUNNING ({progress_pct:.0f}%)"
+            table.update_cell(row_key, "status", status_text)
+
+    # --- Remote VASP Job Execution ---
+    async def _run_remote_vasp_job(self, job_id: int, cluster_id: int) -> None:
+        """
+        Worker that runs a VASP job on a remote cluster via SSH.
+
+        Args:
+            job_id: Database ID of the job
+            cluster_id: Database ID of the cluster to run on
+        """
+        if not self.db or not self.connection_manager:
+            return
+
+        job = self.db.get_job(job_id)
+        if not job:
+            return
+
+        work_dir = Path(job.work_dir)
+        log = self.query_one("#log_view", Log)
+
+        self.post_message(JobStatus(job_id, "RUNNING"))
+        self.post_message(JobLog(job_id, f"[bold green]Starting VASP job {job_id}: {job.name}[/bold green]"))
+        self.post_message(JobLog(job_id, f"[cyan]Cluster: {cluster_id}[/cyan]"))
+
+        runner = None
+        job_handle = None
+
+        try:
+            # Create SSH runner for VASP
+            runner = SSHRunner(
+                connection_manager=self.connection_manager,
+                cluster_id=cluster_id,
+                dft_code=DFTCode.VASP,
+                cleanup_on_success=False,
+            )
+
+            # Find input file (POSCAR is the main input for VASP)
+            input_file = work_dir / "POSCAR"
+            if not input_file.exists():
+                raise FileNotFoundError(f"POSCAR not found in {work_dir}")
+
+            # Submit job
+            self.post_message(JobLog(job_id, "[cyan]Uploading files to cluster...[/cyan]"))
+            job_handle = await runner.submit_job(
+                job_id=job_id,
+                work_dir=work_dir,
+                input_file=input_file,
+                threads=4,  # Default OpenMP threads
+            )
+
+            self.post_message(JobLog(job_id, f"[cyan]Job submitted with handle: {job_handle}[/cyan]"))
+
+            # Track active SSH job
+            self._active_ssh_jobs[job_id] = (runner, job_handle)
+
+            # Start progress monitoring
+            self._start_vasp_progress_monitor(job_id, runner, job_handle)
+
+            # Poll for completion
+            while True:
+                await asyncio.sleep(30)  # Check every 30 seconds
+
+                status = await runner.get_status(job_handle)
+                if status not in ("running", "RUNNING"):
+                    self.post_message(JobLog(job_id, f"[cyan]Job finished with status: {status}[/cyan]"))
+                    break
+
+            # Stop progress monitor
+            self._stop_vasp_progress_monitor(job_id)
+
+            # Retrieve results
+            self.post_message(JobLog(job_id, "[cyan]Retrieving results...[/cyan]"))
+            result = await runner.retrieve_results(job_handle, work_dir)
+
+            # Persist results
+            if self.db:
+                key_results = {
+                    "convergence": result.convergence_status,
+                    "errors": result.errors,
+                    "warnings": result.warnings,
+                    "metadata": result.metadata,
+                }
+                self.db.update_results(
+                    job_id,
+                    final_energy=result.final_energy,
+                    key_results=key_results,
+                )
+
+            if result.success:
+                self.post_message(JobLog(job_id, "[bold green]VASP job completed successfully[/bold green]"))
+                if result.final_energy is not None:
+                    self.post_message(JobLog(job_id, f"[cyan]Final energy: {result.final_energy:.10f} eV[/cyan]"))
+                self.post_message(JobLog(job_id, f"[cyan]Convergence: {result.convergence_status}[/cyan]"))
+
+                # Display benchmark data if available
+                benchmark = result.metadata.get("benchmark", {})
+                if benchmark:
+                    self.post_message(JobLog(job_id, "[cyan]─── Benchmark Data ───[/cyan]"))
+                    if "elapsed_time_sec" in benchmark:
+                        elapsed = benchmark["elapsed_time_sec"]
+                        mins, secs = divmod(elapsed, 60)
+                        self.post_message(JobLog(job_id, f"  Wall time: {int(mins)}m {secs:.1f}s"))
+                    if "total_cpu_time_sec" in benchmark:
+                        cpu = benchmark["total_cpu_time_sec"]
+                        mins, secs = divmod(cpu, 60)
+                        self.post_message(JobLog(job_id, f"  CPU time: {int(mins)}m {secs:.1f}s"))
+                    if "cpu_to_wall_ratio" in benchmark:
+                        self.post_message(JobLog(job_id, f"  Efficiency ratio: {benchmark['cpu_to_wall_ratio']:.2f}x"))
+                    if "loop_count" in benchmark:
+                        self.post_message(JobLog(job_id, f"  SCF loops: {benchmark['loop_count']}"))
+                    parallel_info = []
+                    if "npar" in benchmark:
+                        parallel_info.append(f"NPAR={benchmark['npar']}")
+                    if "ncore" in benchmark:
+                        parallel_info.append(f"NCORE={benchmark['ncore']}")
+                    if "kpar" in benchmark:
+                        parallel_info.append(f"KPAR={benchmark['kpar']}")
+                    if parallel_info:
+                        self.post_message(JobLog(job_id, f"  Parallel: {', '.join(parallel_info)}"))
+
+                for warning in result.warnings:
+                    self.post_message(JobLog(job_id, f"[yellow]Warning: {warning}[/yellow]"))
+                self.post_message(JobStatus(job_id, "COMPLETED"))
+                self.post_message(JobResults(job_id, result.final_energy))
+            else:
+                self.post_message(JobLog(job_id, "[bold red]VASP job failed[/bold red]"))
+                for error in result.errors:
+                    self.post_message(JobLog(job_id, f"[red]Error: {error}[/red]"))
+
+                # Analyze VASP errors and provide recovery suggestions
+                outcar_path = work_dir / "OUTCAR"
+                if outcar_path.exists():
+                    try:
+                        from ..runners.vasp_errors import analyze_vasp_errors
+                        outcar_content = outcar_path.read_text()
+                        vasp_errors, _ = analyze_vasp_errors(outcar_content)
+
+                        if vasp_errors:
+                            self.post_message(JobLog(job_id, "[yellow]─── Error Analysis ───[/yellow]"))
+                            for verr in vasp_errors:
+                                severity_color = "red" if verr.severity.value == "fatal" else "yellow"
+                                self.post_message(JobLog(
+                                    job_id,
+                                    f"[{severity_color}][{verr.code}] {verr.message}[/{severity_color}]"
+                                ))
+                                for suggestion in verr.suggestions[:3]:  # Limit to 3 suggestions
+                                    self.post_message(JobLog(job_id, f"  → {suggestion}"))
+                                if verr.incar_changes:
+                                    changes = ", ".join(f"{k}={v}" for k, v in verr.incar_changes.items())
+                                    self.post_message(JobLog(job_id, f"  [cyan]Try: {changes}[/cyan]"))
+                    except Exception as e:
+                        log.write_line(f"[dim]Error analysis failed: {e}[/dim]")
+
+                self.post_message(JobStatus(job_id, "FAILED"))
+
+        except asyncio.CancelledError:
+            self._stop_vasp_progress_monitor(job_id)
+            if runner and job_handle:
+                await runner.cancel_job(job_handle)
+            self.post_message(JobLog(job_id, "[red]VASP job was cancelled[/red]"))
+            self.post_message(JobStatus(job_id, "FAILED"))
+            raise
+        except Exception as e:
+            self._stop_vasp_progress_monitor(job_id)
+            self.post_message(JobLog(job_id, f"[bold red]VASP job error: {e}[/bold red]"))
+            self.post_message(JobStatus(job_id, "FAILED"))
+        finally:
+            # Cleanup tracking
+            self._active_ssh_jobs.pop(job_id, None)
             self._refresh_job_list()

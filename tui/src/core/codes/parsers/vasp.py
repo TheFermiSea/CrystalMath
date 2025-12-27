@@ -39,6 +39,20 @@ class VASPParser(OutputParser):
     # Forces: "  TOTAL-FORCE (eV/Angst)"
     MAX_FORCE_PATTERN = re.compile(r"RMS\s+([-\d.E+]+)")
 
+    # Timing patterns for benchmarking
+    # "   LOOP:  cpu time  123.45: real time  234.56"
+    LOOP_TIME_PATTERN = re.compile(r"LOOP:\s+cpu time\s+([\d.]+):\s+real time\s+([\d.]+)")
+    # " Total CPU time used (sec):     1234.567"
+    TOTAL_CPU_PATTERN = re.compile(r"Total CPU time used \(sec\):\s+([\d.]+)")
+    # " Elapsed time (sec):     2345.678"
+    ELAPSED_TIME_PATTERN = re.compile(r"Elapsed time \(sec\):\s+([\d.]+)")
+    # "   NPAR = 4"
+    NPAR_PATTERN = re.compile(r"NPAR\s*=\s*(\d+)")
+    # "   NCORE = 2"
+    NCORE_PATTERN = re.compile(r"NCORE\s*=\s*(\d+)")
+    # "   KPAR = 2"
+    KPAR_PATTERN = re.compile(r"KPAR\s*=\s*(\d+)")
+
     # Warning patterns
     WARNING_PATTERNS = [
         re.compile(r"WARNING.*", re.IGNORECASE),
@@ -188,6 +202,11 @@ class VASPParser(OutputParser):
                 except ValueError:
                     pass
 
+        # Extract benchmark/timing data
+        benchmark_metrics = self._extract_benchmark_data(content)
+        if benchmark_metrics:
+            metadata["benchmark"] = benchmark_metrics
+
         return ParsingResult(
             success=success,
             final_energy=final_energy,
@@ -203,6 +222,77 @@ class VASPParser(OutputParser):
     def get_energy_unit(self) -> str:
         """Return the energy unit (eV for VASP)."""
         return "eV"
+
+    def _extract_benchmark_data(self, content: str) -> dict:
+        """Extract timing and parallelization data for benchmarking.
+
+        Args:
+            content: OUTCAR file content.
+
+        Returns:
+            Dictionary with benchmark metrics.
+        """
+        benchmark = {}
+
+        # Extract total CPU time
+        cpu_match = self.TOTAL_CPU_PATTERN.search(content)
+        if cpu_match:
+            try:
+                benchmark["total_cpu_time_sec"] = float(cpu_match.group(1))
+            except ValueError:
+                pass
+
+        # Extract elapsed (wall) time
+        elapsed_match = self.ELAPSED_TIME_PATTERN.search(content)
+        if elapsed_match:
+            try:
+                benchmark["elapsed_time_sec"] = float(elapsed_match.group(1))
+            except ValueError:
+                pass
+
+        # Extract loop timing (sum of all LOOP times)
+        loop_matches = self.LOOP_TIME_PATTERN.findall(content)
+        if loop_matches:
+            try:
+                total_loop_cpu = sum(float(m[0]) for m in loop_matches)
+                total_loop_real = sum(float(m[1]) for m in loop_matches)
+                benchmark["loop_cpu_time_sec"] = total_loop_cpu
+                benchmark["loop_real_time_sec"] = total_loop_real
+                benchmark["loop_count"] = len(loop_matches)
+            except (ValueError, IndexError):
+                pass
+
+        # Extract parallelization settings
+        npar_match = self.NPAR_PATTERN.search(content)
+        if npar_match:
+            try:
+                benchmark["npar"] = int(npar_match.group(1))
+            except ValueError:
+                pass
+
+        ncore_match = self.NCORE_PATTERN.search(content)
+        if ncore_match:
+            try:
+                benchmark["ncore"] = int(ncore_match.group(1))
+            except ValueError:
+                pass
+
+        kpar_match = self.KPAR_PATTERN.search(content)
+        if kpar_match:
+            try:
+                benchmark["kpar"] = int(kpar_match.group(1))
+            except ValueError:
+                pass
+
+        # Calculate efficiency if we have both CPU and elapsed time
+        if "total_cpu_time_sec" in benchmark and "elapsed_time_sec" in benchmark:
+            elapsed = benchmark["elapsed_time_sec"]
+            if elapsed > 0:
+                # Parallel efficiency: CPU time / (elapsed time * num_procs)
+                # Without knowing num_procs, we estimate from the ratio
+                benchmark["cpu_to_wall_ratio"] = benchmark["total_cpu_time_sec"] / elapsed
+
+        return benchmark
 
 
 # Singleton instance

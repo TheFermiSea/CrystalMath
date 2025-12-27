@@ -407,6 +407,13 @@ class NewJobScreen(ModalScreen):
         error_message = self.query_one("#error_message", Static)
         dft_code_select = self.query_one("#dft_code_select", Select)
 
+        dft_code = str(dft_code_select.value) if dft_code_select.value else "crystal"
+
+        # For VASP, open multi-file input manager
+        if dft_code == "vasp":
+            self._open_vasp_input_manager()
+            return
+
         # Auxiliary files
         gui_checkbox = self.query_one("#gui_checkbox", Checkbox)
         gui_file_input = self.query_one("#gui_file_input", Input)
@@ -421,7 +428,6 @@ class NewJobScreen(ModalScreen):
 
         job_name = job_name_input.value.strip()
         input_content = input_textarea.text.strip()
-        dft_code = str(dft_code_select.value) if dft_code_select.value else "crystal"
 
         # Clear previous error
         error_message.update("")
@@ -666,3 +672,20 @@ class NewJobScreen(ModalScreen):
             return "POSCAR file too short - needs at least comment, scale, lattice vectors"
 
         return None
+
+    def _open_vasp_input_manager(self) -> None:
+        """Open VASP multi-file input manager screen."""
+        from .vasp_input_manager import VASPInputManagerScreen
+
+        # Get initial POSCAR content from text area if provided
+        input_textarea = self.query_one("#input_textarea", TextArea)
+        initial_poscar = input_textarea.text.strip() if input_textarea.text else None
+
+        # Open VASP input manager
+        self.app.push_screen(
+            VASPInputManagerScreen(
+                db=self.database,
+                calculations_dir=self.calculations_dir,
+                initial_poscar=initial_poscar
+            )
+        )
