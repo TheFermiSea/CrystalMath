@@ -8,6 +8,7 @@ from .template_browser import TemplateBrowserScreen
 from .cluster_manager import ClusterManagerScreen
 from .vasp_input_manager import VASPInputManagerScreen, VASPFilesReady
 from .slurm_queue import SLURMQueueScreen
+from .materials_search import MaterialsSearchScreen, StructureSelected
 
 __all__ = [
     "NewJobScreen",
@@ -17,4 +18,6 @@ __all__ = [
     "VASPInputManagerScreen",
     "VASPFilesReady",
     "SLURMQueueScreen",
+    "MaterialsSearchScreen",
+    "StructureSelected",
 ]

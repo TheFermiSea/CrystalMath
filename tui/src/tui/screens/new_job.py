@@ -168,6 +168,16 @@ class NewJobScreen(ModalScreen):
         padding: 1 0;
         text-style: italic;
     }
+
+    #input_buttons {
+        width: 100%;
+        height: auto;
+        padding: 1 0 0 0;
+    }
+
+    #input_buttons Button {
+        margin: 0 1 0 0;
+    }
     """
 
     BINDINGS = [
@@ -229,7 +239,9 @@ class NewJobScreen(ModalScreen):
                         theme="monokai",
                         show_line_numbers=True
                     )
-                    yield Button("Browse Files...", variant="default", id="browse_button")
+                    with Horizontal(id="input_buttons"):
+                        yield Button("Browse Files...", variant="default", id="browse_button")
+                        yield Button("Import from MP", variant="primary", id="import_mp_button")
 
                 # Section 3: Auxiliary Files
                 with Vertical(classes="form_section"):
@@ -372,6 +384,8 @@ class NewJobScreen(ModalScreen):
             self.action_cancel()
         elif event.button.id == "browse_button":
             self._browse_for_input_file()
+        elif event.button.id == "import_mp_button":
+            self._open_materials_search()
 
     def _update_work_dir_preview(self) -> None:
         """Update the working directory preview based on job name."""
@@ -689,3 +703,41 @@ class NewJobScreen(ModalScreen):
                 initial_poscar=initial_poscar
             )
         )
+
+    def _open_materials_search(self) -> None:
+        """Open Materials Project search screen."""
+        from .materials_search import MaterialsSearchScreen
+
+        def handle_result(result: str | None) -> None:
+            """Handle the result from the materials search screen."""
+            if result:
+                # result is the .d12 content
+                input_textarea = self.query_one("#input_textarea", TextArea)
+                input_textarea.load_text(result)
+
+                # Show success message
+                info_message = self.query_one("#info_message", Static)
+                info_message.update("Structure imported from Materials Project")
+
+        self.app.push_screen(MaterialsSearchScreen(), handle_result)
+
+    def on_structure_selected(self, event: "StructureSelected") -> None:
+        """Handle structure selection from MaterialsSearchScreen."""
+        from .materials_search import StructureSelected
+
+        if isinstance(event, StructureSelected):
+            # Populate the input textarea with the .d12 content
+            input_textarea = self.query_one("#input_textarea", TextArea)
+            input_textarea.load_text(event.d12_content)
+
+            # Update job name suggestion based on formula
+            job_name_input = self.query_one("#job_name_input", Input)
+            if not job_name_input.value:
+                # Suggest a job name based on material ID and formula
+                suggested_name = f"{event.formula}_{event.material_id}".replace("-", "_")
+                job_name_input.value = suggested_name
+                self._update_work_dir_preview()
+
+            # Show success message
+            info_message = self.query_one("#info_message", Static)
+            info_message.update(f"Imported {event.formula} ({event.material_id}) from Materials Project")

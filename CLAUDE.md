@@ -8,8 +8,9 @@ CRYSTAL-TOOLS is a unified monorepo containing complementary tools for CRYSTAL23
 
 1. **CLI** (`cli/`) - Production-ready Bash tool for executing calculations
 2. **TUI** (`tui/`) - Python terminal UI for interactive job management with remote execution
+3. **Rust TUI** (`src/`) - High-performance Rust TUI with PyO3 Python bridge (in development)
 
-**Design Philosophy:** CLI for execution, TUI for management. Both tools work independently but share CRYSTAL23 environment.
+**Design Philosophy:** CLI for execution, TUI for management. The Rust TUI provides 60fps rendering with embedded Python for scientific backends.
 
 ## Core Commands
 
@@ -52,6 +53,27 @@ pytest -k "test_job_create"         # Single test
 
 # Code quality
 black src/ tests/ && ruff check src/ tests/ && mypy src/
+```
+
+### Rust TUI
+
+```bash
+# From crystalmath/ root
+
+# Build (release mode recommended)
+cargo build --release
+
+# Run tests
+cargo test                    # All tests (25 tests)
+cargo test lsp                # LSP module tests only
+cargo test models             # Model tests only
+
+# Run TUI (requires Python backend)
+cargo run --release
+
+# Check code quality
+cargo clippy
+cargo fmt --check
 ```
 
 ### Issue Tracking (bd/beads)
@@ -121,6 +143,48 @@ clusters (id, name, hostname, username, queue_type, max_concurrent)
 workflows (id, name, dag_json, status)
 ```
 
+### Rust TUI (Hybrid PyO3)
+
+**Entry Point:** `src/main.rs` → `src/app.rs`
+
+**Module Structure:**
+| Module | Purpose |
+|--------|---------|
+| `main.rs` | Entry point, terminal setup, 60fps event loop |
+| `app.rs` | Application state, tab navigation, dirty-flag rendering |
+| `models.rs` | Data models matching Python Pydantic (serde) |
+| `bridge.rs` | PyO3 FFI to Python backend |
+| `lsp.rs` | LSP client for dft-language-server (JSON-RPC over stdio) |
+| `ui/` | Ratatui view components (jobs, editor, results, log) |
+
+**Key Technologies:**
+- Ratatui (TUI rendering framework)
+- PyO3 (Rust-Python FFI bridge)
+- Crossterm (terminal events)
+- tui-textarea (editor widget)
+- serde (JSON serialization)
+
+**LSP Integration:**
+- Spawns `dft-language-server` as subprocess
+- JSON-RPC 2.0 over stdio with Content-Length framing
+- Async diagnostics via `mpsc` channel
+- Graceful degradation if server unavailable
+
+**Architecture Pattern:**
+```
+┌─────────────┐    PyO3     ┌─────────────┐
+│  Rust TUI   │◄──────────►│   Python    │
+│  (60fps)    │   bridge   │  Backend    │
+└──────┬──────┘            └─────────────┘
+       │
+       │ JSON-RPC
+       ▼
+┌─────────────┐
+│  LSP Server │
+│ (Node.js)   │
+└─────────────┘
+```
+
 ## Development Guidelines
 
 ### CLI Development
@@ -130,12 +194,12 @@ workflows (id, name, dag_json, status)
 3. Write tests in `tests/unit/<module>_test.bats`
 4. Dependencies: config/logging have none; core depends on them; others can depend on all three
 
-### TUI Development
+### TUI Development (Python)
 
-1. UI → `src/tui/screens/` or `src/tui/widgets/`
-2. Business logic → `src/core/`
-3. Execution backends → `src/runners/`
-4. Database changes → `src/core/database.py` (add `migrate_*` methods)
+1. UI → `tui/src/tui/screens/` or `tui/src/tui/widgets/`
+2. Business logic → `tui/src/core/`
+3. Execution backends → `tui/src/runners/`
+4. Database changes → `tui/src/core/database.py` (add `migrate_*` methods)
 
 **Code style:** Black (100 chars), Ruff (E, F, W, I, N, UP, B, A, C4, SIM), MyPy, Python 3.10+
 
@@ -143,6 +207,21 @@ workflows (id, name, dag_json, status)
 - Jinja2: Use `jinja2.sandbox.SandboxedEnvironment`
 - SSH: Enable host key verification (never `known_hosts=None`)
 - Commands: Escape shell when building SLURM scripts or remote commands
+
+### Rust TUI Development
+
+1. UI components → `src/ui/` (ratatui widgets)
+2. State management → `src/app.rs` (central `App` struct)
+3. Data models → `src/models.rs` (must match Python Pydantic)
+4. Python FFI → `src/bridge.rs` (PyO3 calls)
+5. LSP client → `src/lsp.rs` (JSON-RPC over stdio)
+
+**Code style:** `cargo fmt`, `cargo clippy` (no warnings)
+
+**Key patterns:**
+- Dirty-flag rendering: only redraw when `app.needs_redraw()` is true
+- Non-fatal errors: use `app.set_error()` instead of propagating
+- LSP async: poll `lsp_receiver` in event loop, handle events without blocking
 
 ## Environment Setup
 
@@ -169,6 +248,10 @@ export PATH="$HOME/CRYSTAL23/crystalmath/cli/bin:$PATH"
 | TUI Runner Safety (ae6) | ✅ Complete | Race conditions fixed, proper cleanup |
 | TUI Phase 3 | ✅ Complete | AiiDA integration (optional PostgreSQL) |
 | TUI Phase 4 | 🔨 In Progress | Materials Project API integration |
+| **Rust TUI Refactor** | | |
+| Phase 1-4: Core TUI | ✅ Complete | Event loop, app state, bridge, UI |
+| Phase 5: LSP | ✅ Complete | JSON-RPC client, diagnostics display |
+| Phase 6: Testing | ✅ Complete | 25 unit tests, documentation |
 
 **Current Sprint (Materials API - crystalmath-7mw):**
 - ✅ MP API async client with `asyncio.to_thread()` wrapper
@@ -190,6 +273,12 @@ export PATH="$HOME/CRYSTAL23/crystalmath/cli/bin:$PATH"
 
 **TUI: SSH "Connection refused"** → SSH manually first to add host key, or check asyncssh version
 
+**Rust TUI: PyO3 "Python 3.x not supported"** → Update PyO3 to 0.24+ in Cargo.toml
+
+**Rust TUI: "LSP server not found"** → Ensure `dft-language-server/out/server.js` exists (run `npm run build` in dft-language-server/)
+
+**Rust TUI: No diagnostics in editor** → Check LSP server is running (graceful degradation if unavailable)
+
 ## Key Files
 
 - CLI Architecture: `cli/docs/ARCHITECTURE.md`
@@ -197,4 +286,7 @@ export PATH="$HOME/CRYSTAL23/crystalmath/cli/bin:$PATH"
 - TUI Project Status: `tui/docs/PROJECT_STATUS.md`
 - Materials API Guide: `tui/docs/MATERIALS_API.md`
 - AiiDA Setup: `tui/docs/AIIDA_SETUP.md`
+- Rust TUI Entry: `src/main.rs`
+- Rust TUI State: `src/app.rs`
+- Rust TUI LSP: `src/lsp.rs`
 - CRYSTAL23 Compilation: `docs/CRYSTAL23_COMPILATION_GUIDE.md`
