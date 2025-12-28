@@ -16,6 +16,12 @@ use pyo3::prelude::*;
 use crate::models::{JobDetails, JobStatus, JobSubmission};
 
 /// Initialize the Python backend and return the controller object.
+///
+/// Searches for database in order:
+/// 1. CRYSTAL_TUI_DB environment variable
+/// 2. ~/.local/share/crystal-tui/jobs.db
+/// 3. ./tui/jobs.db (development)
+/// Falls back to demo mode if no database found.
 pub fn init_python_backend() -> Result<PyObject> {
     Python::with_gil(|py| {
         // Import the crystalmath.api module
@@ -23,20 +29,82 @@ pub fn init_python_backend() -> Result<PyObject> {
             .import("crystalmath.api")
             .context("Failed to import crystalmath.api - is the Python package installed?")?;
 
+        // Try to find a database path
+        let db_path = find_database_path();
+
         // Call create_controller() factory function
         let controller = api_module
             .call_method1(
                 "create_controller",
                 (
                     "default",  // profile_name
-                    false,      // use_aiida (use demo mode for now)
-                    Option::<&str>::None,  // db_path
+                    false,      // use_aiida
+                    db_path,    // db_path (Some or None)
                 ),
             )
             .context("Failed to create CrystalController")?;
 
         Ok(controller.into())
     })
+}
+
+/// Find the database path from environment or default locations.
+fn find_database_path() -> Option<String> {
+    use std::path::PathBuf;
+
+    // 1. Environment variable
+    if let Ok(path) = std::env::var("CRYSTAL_TUI_DB") {
+        let p = PathBuf::from(&path);
+        if p.exists() {
+            tracing::info!("Using database from CRYSTAL_TUI_DB: {}", path);
+            return Some(path);
+        }
+        // If specified but doesn't exist, create it
+        if let Some(parent) = p.parent() {
+            if parent.exists() || std::fs::create_dir_all(parent).is_ok() {
+                tracing::info!("Creating database at CRYSTAL_TUI_DB: {}", path);
+                return Some(path);
+            }
+        }
+    }
+
+    // 2. XDG/Linux location (~/.local/share/crystal-tui/)
+    if let Some(home) = dirs::home_dir() {
+        let xdg_db = home.join(".local/share/crystal-tui/jobs.db");
+        if xdg_db.exists() {
+            tracing::info!("Using database: {}", xdg_db.display());
+            return Some(xdg_db.to_string_lossy().to_string());
+        }
+    }
+
+    // 3. Platform data directory (macOS: ~/Library/Application Support/)
+    if let Some(data_dir) = dirs::data_dir() {
+        let platform_db = data_dir.join("crystal-tui").join("jobs.db");
+        if platform_db.exists() {
+            tracing::info!("Using database: {}", platform_db.display());
+            return Some(platform_db.to_string_lossy().to_string());
+        }
+        // Create if doesn't exist (only for platform location)
+        if let Some(parent) = platform_db.parent() {
+            if std::fs::create_dir_all(parent).is_ok() {
+                tracing::info!("Creating database: {}", platform_db.display());
+                return Some(platform_db.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    // 4. Development location
+    if let Ok(cwd) = std::env::current_dir() {
+        let dev_db = cwd.join("tui").join("jobs.db");
+        if dev_db.exists() {
+            tracing::info!("Using development database: {}", dev_db.display());
+            return Some(dev_db.to_string_lossy().to_string());
+        }
+    }
+
+    tracing::warn!("No database found - running in demo mode");
+    tracing::warn!("Set CRYSTAL_TUI_DB=/path/to/jobs.db to use a persistent database");
+    None
 }
 
 /// Fetch the list of jobs from the Python backend.

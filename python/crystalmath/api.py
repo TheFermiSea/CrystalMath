@@ -119,8 +119,10 @@ class CrystalController:
         """Initialize SQLite database for fallback mode."""
         try:
             # Import the existing TUI database module
+            # Path: python/crystalmath/api.py -> need to go up 3 levels to repo root
             import sys
-            tui_path = Path(__file__).parent.parent.parent.parent / "tui" / "src"
+            repo_root = Path(__file__).parent.parent.parent  # crystalmath/
+            tui_path = repo_root / "tui" / "src"
             if str(tui_path) not in sys.path:
                 sys.path.insert(0, str(tui_path))
 
