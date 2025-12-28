@@ -2,6 +2,7 @@
 //!
 //! These Rust structs match the Pydantic models in `python/crystalmath/models.py`.
 //! They use serde for JSON deserialization from the Python backend.
+#![allow(dead_code)]
 
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};

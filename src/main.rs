@@ -10,8 +10,10 @@ mod lsp;
 mod models;
 mod ui;
 
+use std::fs;
 use std::io::{self, Write};
 use std::panic;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -82,6 +84,276 @@ fn install_panic_hook() {
     }));
 }
 
+/// Configure Python home/path before initializing PyO3.
+///
+/// This avoids runtime failures when the embedded Python prefix points at a
+/// non-existent location (e.g. `/install`) by preferring an active venv.
+fn configure_python_env() {
+    if std::env::var_os("PYTHONHOME").is_some() {
+        tracing::info!("PYTHONHOME already set; using existing value");
+        return;
+    }
+
+    let mut candidates = Vec::new();
+    push_env_candidate(&mut candidates, "CRYSTAL_PYTHON_HOME");
+    push_env_candidate(&mut candidates, "CRYSTAL_PYTHON");
+    push_env_candidate(&mut candidates, "PYTHON_SYS_EXECUTABLE");
+    push_env_candidate(&mut candidates, "VIRTUAL_ENV");
+
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join(".venv"));
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(".venv"));
+            if let Some(parent) = dir.parent() {
+                candidates.push(parent.join(".venv"));
+            }
+        }
+    }
+
+    for candidate in candidates {
+        if let Some(root) = normalize_venv_root(candidate) {
+            if apply_python_env(&root) {
+                return;
+            }
+        }
+    }
+
+    tracing::warn!(
+        "Python stdlib not configured; set PYTHONHOME or CRYSTAL_PYTHON_HOME/VIRTUAL_ENV"
+    );
+}
+
+fn push_env_candidate(candidates: &mut Vec<PathBuf>, var: &str) {
+    if let Ok(value) = std::env::var(var) {
+        candidates.push(PathBuf::from(value));
+    }
+}
+
+fn normalize_venv_root(candidate: PathBuf) -> Option<PathBuf> {
+    if candidate.is_dir() {
+        return Some(candidate);
+    }
+
+    if candidate.is_file() {
+        if let Some(parent) = candidate.parent() {
+            let parent_name = parent.file_name().and_then(|name| name.to_str());
+            if matches!(parent_name, Some("bin") | Some("Scripts")) {
+                if let Some(root) = parent.parent() {
+                    return Some(root.to_path_buf());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn apply_python_env(venv_root: &Path) -> bool {
+    if !venv_root.is_dir() {
+        return false;
+    }
+
+    // Check if this is a venv by looking for pyvenv.cfg
+    let pyvenv_cfg = venv_root.join("pyvenv.cfg");
+    let base_prefix = if pyvenv_cfg.exists() {
+        // Read pyvenv.cfg to find the base Python installation
+        if let Some(base) = read_pyvenv_home(&pyvenv_cfg) {
+            base
+        } else {
+            venv_root.to_path_buf()
+        }
+    } else {
+        venv_root.to_path_buf()
+    };
+
+    std::env::set_var("PYTHONHOME", &base_prefix);
+
+    if std::env::var_os("PYTHONPATH").is_none() {
+        if let Some(paths) = build_pythonpath_with_venv(&base_prefix, venv_root) {
+            if let Ok(joined) = std::env::join_paths(paths) {
+                std::env::set_var("PYTHONPATH", joined);
+            }
+        }
+    }
+
+    tracing::info!("Using PYTHONHOME={}", base_prefix.display());
+    if let Ok(path) = std::env::var("PYTHONPATH") {
+        tracing::info!("Using PYTHONPATH={}", path);
+    }
+    true
+}
+
+/// Read the base Python home from a venv's pyvenv.cfg file.
+fn read_pyvenv_home(pyvenv_cfg: &Path) -> Option<PathBuf> {
+    let content = fs::read_to_string(pyvenv_cfg).ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(value) = line.strip_prefix("home") {
+            let value = value.trim_start_matches(|c| c == ' ' || c == '=').trim();
+            // The 'home' value points to bin/, so get parent for prefix
+            let bin_path = PathBuf::from(value);
+            return bin_path.parent().map(|p| p.to_path_buf());
+        }
+    }
+    None
+}
+
+/// Build PYTHONPATH with base Python stdlib and venv site-packages.
+///
+/// For venvs, we need BOTH:
+/// - Base Python's stdlib (e.g., /usr/lib/python3.12/)
+/// - Venv's site-packages (e.g., .venv/lib/python3.12/site-packages/)
+/// - Paths from .pth files (for editable installs)
+fn build_pythonpath_with_venv(base_prefix: &Path, venv_root: &Path) -> Option<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+
+    // Find base Python's stdlib directory
+    let base_lib = ["lib", "Lib"]
+        .iter()
+        .map(|base| base_prefix.join(base))
+        .find(|path| path.is_dir());
+
+    if let Some(lib_dir) = base_lib {
+        // Find python version directory (e.g., python3.12)
+        if let Ok(entries) = fs::read_dir(&lib_dir) {
+            let mut python_dirs: Vec<PathBuf> = entries
+                .flatten()
+                .filter_map(|e| {
+                    let path = e.path();
+                    if path.is_dir() {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            if name.starts_with("python") {
+                                return Some(path);
+                            }
+                        }
+                    }
+                    None
+                })
+                .collect();
+            python_dirs.sort();
+            if let Some(python_dir) = python_dirs.pop() {
+                paths.push(python_dir);
+            }
+        }
+    }
+
+    // Add venv's site-packages and process .pth files
+    let venv_lib = ["lib", "Lib"]
+        .iter()
+        .map(|base| venv_root.join(base))
+        .find(|path| path.is_dir());
+
+    if let Some(lib_dir) = venv_lib {
+        if let Ok(entries) = fs::read_dir(&lib_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if name.starts_with("python") {
+                            let site_packages = path.join("site-packages");
+                            if site_packages.is_dir() {
+                                // Add site-packages itself
+                                paths.push(site_packages.clone());
+
+                                // Process .pth files for editable installs
+                                if let Some(pth_paths) = read_pth_files(&site_packages) {
+                                    paths.extend(pth_paths);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
+}
+
+/// Read .pth files from site-packages and return paths they contain.
+///
+/// .pth files are used by pip for editable installs to point to the actual
+/// package source directory. PyO3's embedded Python doesn't process these
+/// automatically, so we need to handle them manually.
+fn read_pth_files(site_packages: &Path) -> Option<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(site_packages) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    // Only process .pth files (skip __editable__ ones that contain code)
+                    if name.ends_with(".pth") && !name.starts_with("__editable__") {
+                        if let Ok(content) = fs::read_to_string(&path) {
+                            for line in content.lines() {
+                                let line = line.trim();
+                                // Skip empty lines and comments
+                                if line.is_empty() || line.starts_with('#') {
+                                    continue;
+                                }
+                                // Skip lines that look like Python code (import statements)
+                                if line.starts_with("import ") {
+                                    continue;
+                                }
+                                let pth_path = PathBuf::from(line);
+                                if pth_path.is_dir() {
+                                    tracing::debug!("Adding path from {}: {}", name, line);
+                                    paths.push(pth_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
+}
+
+fn build_pythonpath(venv_root: &Path) -> Option<Vec<PathBuf>> {
+    let lib_dir = ["lib", "Lib"]
+        .iter()
+        .map(|base| venv_root.join(base))
+        .find(|path| path.is_dir())?;
+
+    let mut python_dirs = Vec::new();
+    let entries = fs::read_dir(&lib_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                if name.starts_with("python") {
+                    python_dirs.push(path);
+                }
+            }
+        }
+    }
+
+    python_dirs.sort();
+    let python_dir = python_dirs.pop()?;
+
+    let mut paths = vec![python_dir.clone()];
+    let site_packages = python_dir.join("site-packages");
+    if site_packages.is_dir() {
+        paths.push(site_packages);
+    }
+
+    Some(paths)
+}
+
 /// Target frame rate for UI rendering (60fps = ~16ms per frame)
 const FRAME_DURATION: Duration = Duration::from_millis(16);
 
@@ -101,6 +373,7 @@ fn main() -> Result<()> {
 
     // Initialize Python interpreter
     tracing::info!("Initializing Python backend...");
+    configure_python_env();
     pyo3::prepare_freethreaded_python();
     let py_controller = bridge::init_python_backend()?;
     tracing::info!("Python backend initialized");
