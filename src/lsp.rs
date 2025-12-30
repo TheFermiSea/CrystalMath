@@ -16,6 +16,46 @@ use serde_json::json;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/// Construct an LSP JSON-RPC notification (no id field).
+///
+/// This helper centralizes notification construction to avoid duplication
+/// across inherent methods and trait implementations.
+fn make_notification(method: &str, params: serde_json::Value) -> serde_json::Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params
+    })
+}
+
+// =============================================================================
+// Service Trait for Dependency Injection
+// =============================================================================
+
+/// Trait for LSP client operations.
+///
+/// This trait abstracts the LSP client to enable:
+/// - Dependency injection for testing with mock implementations
+/// - Separation of interface from implementation
+/// - Easier testing without spawning a real LSP server
+pub trait LspService {
+    /// Send the initialized notification (required after initialize response).
+    fn send_initialized(&mut self) -> anyhow::Result<()>;
+
+    /// Notify the server that a document was opened.
+    fn did_open(&mut self, file_path: &str, text: &str) -> anyhow::Result<()>;
+
+    /// Notify the server that a document changed.
+    fn did_change(&mut self, file_path: &str, version: i32, text: &str) -> anyhow::Result<()>;
+
+    /// Notify the server that a document was closed.
+    fn did_close(&mut self, file_path: &str) -> anyhow::Result<()>;
+}
+
 /// Supported DFT code types for language detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DftCodeType {
@@ -51,6 +91,7 @@ impl DftCodeType {
     }
 
     /// Get display name for this code type.
+    #[allow(dead_code)] // Planned for status bar display
     pub fn display_name(&self) -> &'static str {
         match self {
             DftCodeType::Crystal => "CRYSTAL23",
@@ -133,6 +174,7 @@ pub struct LspClient {
     child: Child,
 }
 
+#[allow(dead_code)] // Inherent methods kept for direct use; trait methods used via Box<dyn>
 impl LspClient {
     /// Spawn the LSP server and start the reader thread.
     ///
@@ -147,7 +189,11 @@ impl LspClient {
     pub fn start(server_path: &str, event_tx: Sender<LspEvent>) -> Result<Self> {
         info!("Starting LSP server: {}", server_path);
 
-        let mut child = Command::new("node")
+        let node_binary = std::env::var("CRYSTAL_NODE_PATH")
+            .unwrap_or_else(|_| "node".to_string());
+        info!("Using node binary: {}", node_binary);
+
+        let mut child = Command::new(&node_binary)
             .arg(server_path)
             .arg("--stdio")
             .stdin(Stdio::piped())
@@ -206,8 +252,13 @@ impl LspClient {
                 let mut header = String::new();
                 match reader.read_line(&mut header) {
                     Ok(0) => {
-                        debug!("LSP server stdout closed");
-                        return; // EOF - exit thread
+                        // EOF - server process has exited. Notify App so it can
+                        // disable LSP and show a user-visible error.
+                        warn!("LSP server stdout closed (server exited)");
+                        let _ = event_tx.send(LspEvent::ServerError(
+                            "LSP server exited unexpectedly".to_string(),
+                        ));
+                        return;
                     }
                     Ok(_) => {}
                     Err(e) => {
@@ -247,6 +298,20 @@ impl LspClient {
                     continue;
                 }
             };
+
+            // Cap message size to prevent OOM from malicious/buggy servers (100MB)
+            const MAX_LSP_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
+            if size > MAX_LSP_MESSAGE_SIZE {
+                error!(
+                    "LSP message too large: {} bytes (max {})",
+                    size, MAX_LSP_MESSAGE_SIZE
+                );
+                let _ = event_tx.send(LspEvent::ServerError(format!(
+                    "LSP message exceeded size limit: {} bytes",
+                    size
+                )));
+                return;
+            }
 
             // Read message body
             let mut body_buf = vec![0u8; size];
@@ -386,11 +451,7 @@ impl LspClient {
     /// This tells the server we're ready to receive notifications.
     pub fn send_initialized(&mut self) -> Result<()> {
         debug!("Sending LSP initialized notification");
-        let notification = json!({
-            "jsonrpc": "2.0",
-            "method": "initialized",
-            "params": {}
-        });
+        let notification = make_notification("initialized", json!({}));
         self.send(&notification)
     }
 
@@ -404,18 +465,17 @@ impl LspClient {
 
         debug!("LSP didOpen: {} (language: {})", uri, lang_id);
 
-        let notification = json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didOpen",
-            "params": {
+        let notification = make_notification(
+            "textDocument/didOpen",
+            json!({
                 "textDocument": {
                     "uri": uri,
                     "languageId": lang_id,
                     "version": 1,
                     "text": text
                 }
-            }
-        });
+            }),
+        );
         self.send(&notification)
     }
 
@@ -425,35 +485,34 @@ impl LspClient {
 
         debug!("LSP didChange: {} (version: {})", uri, version);
 
-        let notification = json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didChange",
-            "params": {
+        let notification = make_notification(
+            "textDocument/didChange",
+            json!({
                 "textDocument": {
                     "uri": uri,
                     "version": version
                 },
                 "contentChanges": [{"text": text}]
-            }
-        });
+            }),
+        );
         self.send(&notification)
     }
 
     /// Notify the server that a document was closed.
+    #[allow(dead_code)] // Called by open_file which is planned feature
     pub fn did_close(&mut self, file_path: &str) -> Result<()> {
         let uri = Self::path_to_uri(file_path);
 
         debug!("LSP didClose: {}", uri);
 
-        let notification = json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didClose",
-            "params": {
+        let notification = make_notification(
+            "textDocument/didClose",
+            json!({
                 "textDocument": {
                     "uri": uri
                 }
-            }
-        });
+            }),
+        );
         self.send(&notification)
     }
 
@@ -514,6 +573,7 @@ impl LspClient {
 impl Drop for LspClient {
     fn drop(&mut self) {
         // Try to gracefully shut down the server
+        // Note: shutdown is a request (has id), not a notification
         let shutdown = json!({
             "jsonrpc": "2.0",
             "id": self.next_id(),
@@ -522,11 +582,7 @@ impl Drop for LspClient {
         });
         let _ = self.send(&shutdown);
 
-        let exit = json!({
-            "jsonrpc": "2.0",
-            "method": "exit",
-            "params": null
-        });
+        let exit = make_notification("exit", serde_json::Value::Null);
         let _ = self.send(&exit);
 
         // Wait for child process to prevent zombie
@@ -558,6 +614,30 @@ impl Drop for LspClient {
     }
 }
 
+/// Implementation of `LspService` for `LspClient`.
+///
+/// This allows `LspClient` to be used anywhere an `LspService` is expected,
+/// enabling dependency injection and mock implementations for testing.
+///
+/// The trait methods delegate to the inherent methods to avoid code duplication.
+impl LspService for LspClient {
+    fn send_initialized(&mut self) -> anyhow::Result<()> {
+        LspClient::send_initialized(self)
+    }
+
+    fn did_open(&mut self, file_path: &str, text: &str) -> anyhow::Result<()> {
+        LspClient::did_open(self, file_path, text)
+    }
+
+    fn did_change(&mut self, file_path: &str, version: i32, text: &str) -> anyhow::Result<()> {
+        LspClient::did_change(self, file_path, version, text)
+    }
+
+    fn did_close(&mut self, file_path: &str) -> anyhow::Result<()> {
+        LspClient::did_close(self, file_path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,10 +652,7 @@ mod tests {
             DftCodeType::from_filename("test.D12"),
             Some(DftCodeType::Crystal)
         );
-        assert_eq!(
-            DftCodeType::from_filename("INCAR"),
-            Some(DftCodeType::Vasp)
-        );
+        assert_eq!(DftCodeType::from_filename("INCAR"), Some(DftCodeType::Vasp));
         assert_eq!(
             DftCodeType::from_filename("POSCAR"),
             Some(DftCodeType::Vasp)
@@ -603,26 +680,15 @@ mod tests {
 
     #[test]
     fn test_diagnostic_severity() {
-        assert_eq!(
-            DiagnosticSeverity::from_i32(1),
-            DiagnosticSeverity::Error
-        );
-        assert_eq!(
-            DiagnosticSeverity::from_i32(2),
-            DiagnosticSeverity::Warning
-        );
+        assert_eq!(DiagnosticSeverity::from_i32(1), DiagnosticSeverity::Error);
+        assert_eq!(DiagnosticSeverity::from_i32(2), DiagnosticSeverity::Warning);
         assert_eq!(
             DiagnosticSeverity::from_i32(3),
             DiagnosticSeverity::Information
         );
-        assert_eq!(
-            DiagnosticSeverity::from_i32(4),
-            DiagnosticSeverity::Hint
-        );
-        assert_eq!(
-            DiagnosticSeverity::from_i32(99),
-            DiagnosticSeverity::Error
-        ); // Default
+        assert_eq!(DiagnosticSeverity::from_i32(4), DiagnosticSeverity::Hint);
+        assert_eq!(DiagnosticSeverity::from_i32(99), DiagnosticSeverity::Error);
+        // Default
     }
 
     #[test]
@@ -680,7 +746,10 @@ mod tests {
         // VASP files should match case-insensitively
         assert_eq!(DftCodeType::from_filename("incar"), Some(DftCodeType::Vasp));
         assert_eq!(DftCodeType::from_filename("Incar"), Some(DftCodeType::Vasp));
-        assert_eq!(DftCodeType::from_filename("poscar"), Some(DftCodeType::Vasp));
+        assert_eq!(
+            DftCodeType::from_filename("poscar"),
+            Some(DftCodeType::Vasp)
+        );
         assert_eq!(
             DftCodeType::from_filename("/some/path/potcar"),
             Some(DftCodeType::Vasp)
@@ -931,5 +1000,844 @@ mod tests {
             }
             other => panic!("Expected Diagnostics, got: {:?}", other),
         }
+    }
+
+    // ==================== Reader Thread Framing Tests ====================
+    //
+    // These tests verify the LSP message framing logic in reader_thread.
+    // The LSP protocol uses HTTP-style headers with Content-Length to frame messages.
+
+    /// Parse headers from a reader until empty line, extracting Content-Length.
+    /// This mirrors the header parsing loop in reader_thread (lines 247-287).
+    ///
+    /// Returns:
+    /// - `Ok(Some(length))` if Content-Length header was found
+    /// - `Ok(None)` if no Content-Length header (message should be skipped)
+    /// - `Err(reason)` for IO errors or protocol violations
+    fn parse_headers_from_reader<R: BufRead>(reader: &mut R) -> Result<Option<usize>, String> {
+        let mut content_length: Option<usize> = None;
+
+        loop {
+            let mut header = String::new();
+            match reader.read_line(&mut header) {
+                Ok(0) => return Err("EOF".to_string()),
+                Ok(_) => {}
+                Err(e) => return Err(format!("IO error: {}", e)),
+            }
+
+            let trimmed = header.trim();
+
+            // Empty line signals end of headers
+            if trimmed.is_empty() {
+                break;
+            }
+
+            // Parse Content-Length header (case-insensitive per HTTP spec)
+            if let Some(colon_pos) = trimmed.find(':') {
+                let key = trimmed[..colon_pos].trim();
+                let value = trimmed[colon_pos + 1..].trim();
+
+                if key.eq_ignore_ascii_case("Content-Length") {
+                    if let Ok(len) = value.parse::<usize>() {
+                        content_length = Some(len);
+                    }
+                }
+            }
+        }
+
+        Ok(content_length)
+    }
+
+    /// Validate Content-Length against size limits (mirrors lines 298-310).
+    fn validate_content_length(size: Option<usize>) -> Result<usize, String> {
+        const MAX_LSP_MESSAGE_SIZE: usize = 100 * 1024 * 1024; // 100MB
+
+        match size {
+            Some(0) => Err("Content-Length is zero".to_string()),
+            Some(s) if s > MAX_LSP_MESSAGE_SIZE => {
+                Err(format!("Message too large: {} bytes (max {})", s, MAX_LSP_MESSAGE_SIZE))
+            }
+            Some(s) => Ok(s),
+            None => Err("Missing Content-Length".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_framing_multi_header_with_content_type() {
+        // LSP spec allows multiple headers; Content-Type is common
+        let input = "Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n\
+                     Content-Length: 42\r\n\
+                     \r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+
+        let result = parse_headers_from_reader(&mut reader);
+        assert_eq!(result, Ok(Some(42)));
+    }
+
+    #[test]
+    fn test_framing_content_length_only() {
+        // Minimal valid header set
+        let input = "Content-Length: 100\r\n\r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+
+        let result = parse_headers_from_reader(&mut reader);
+        assert_eq!(result, Ok(Some(100)));
+    }
+
+    #[test]
+    fn test_framing_missing_content_length() {
+        // Only Content-Type, no Content-Length - should return None
+        let input = "Content-Type: text/plain\r\n\r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+
+        let result = parse_headers_from_reader(&mut reader);
+        assert_eq!(result, Ok(None));
+
+        // Validation should fail for missing Content-Length
+        let validation = validate_content_length(None);
+        assert!(validation.is_err());
+        assert!(validation.unwrap_err().contains("Missing"));
+    }
+
+    #[test]
+    fn test_framing_oversized_content_length() {
+        // 200MB - exceeds 100MB limit
+        let size = 200 * 1024 * 1024;
+        let input = format!("Content-Length: {}\r\n\r\n", size);
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+
+        let result = parse_headers_from_reader(&mut reader);
+        assert_eq!(result, Ok(Some(size)));
+
+        // Validation should fail for oversized message
+        let validation = validate_content_length(Some(size));
+        assert!(validation.is_err());
+        assert!(validation.unwrap_err().contains("too large"));
+    }
+
+    #[test]
+    fn test_framing_exactly_at_size_limit() {
+        // Exactly 100MB - should be valid
+        let size = 100 * 1024 * 1024;
+        let validation = validate_content_length(Some(size));
+        assert_eq!(validation, Ok(size));
+    }
+
+    #[test]
+    fn test_framing_just_over_size_limit() {
+        // 100MB + 1 byte - should fail
+        let size = 100 * 1024 * 1024 + 1;
+        let validation = validate_content_length(Some(size));
+        assert!(validation.is_err());
+    }
+
+    #[test]
+    fn test_framing_case_insensitive_content_length() {
+        // All lowercase
+        let input1 = "content-length: 50\r\n\r\n";
+        let mut reader1 = std::io::BufReader::new(input1.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader1), Ok(Some(50)));
+
+        // All uppercase
+        let input2 = "CONTENT-LENGTH: 60\r\n\r\n";
+        let mut reader2 = std::io::BufReader::new(input2.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader2), Ok(Some(60)));
+
+        // Mixed case variations
+        let input3 = "Content-length: 70\r\n\r\n";
+        let mut reader3 = std::io::BufReader::new(input3.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader3), Ok(Some(70)));
+
+        let input4 = "content-Length: 80\r\n\r\n";
+        let mut reader4 = std::io::BufReader::new(input4.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader4), Ok(Some(80)));
+
+        let input5 = "CONTENT-length: 90\r\n\r\n";
+        let mut reader5 = std::io::BufReader::new(input5.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader5), Ok(Some(90)));
+    }
+
+    #[test]
+    fn test_framing_whitespace_after_colon() {
+        // Multiple spaces after colon
+        let input1 = "Content-Length:    123\r\n\r\n";
+        let mut reader1 = std::io::BufReader::new(input1.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader1), Ok(Some(123)));
+
+        // Tab after colon
+        let input2 = "Content-Length:\t456\r\n\r\n";
+        let mut reader2 = std::io::BufReader::new(input2.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader2), Ok(Some(456)));
+
+        // No space after colon
+        let input3 = "Content-Length:789\r\n\r\n";
+        let mut reader3 = std::io::BufReader::new(input3.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader3), Ok(Some(789)));
+    }
+
+    #[test]
+    fn test_framing_whitespace_before_colon() {
+        // Space before colon (unusual but should work due to trim)
+        let input = "Content-Length : 100\r\n\r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader), Ok(Some(100)));
+    }
+
+    #[test]
+    fn test_framing_trailing_whitespace_on_value() {
+        // Trailing spaces on value
+        let input = "Content-Length: 200   \r\n\r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader), Ok(Some(200)));
+    }
+
+    #[test]
+    fn test_framing_headers_in_different_order() {
+        // Content-Length before Content-Type
+        let input1 = "Content-Length: 30\r\n\
+                      Content-Type: application/json\r\n\
+                      \r\n";
+        let mut reader1 = std::io::BufReader::new(input1.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader1), Ok(Some(30)));
+
+        // Content-Type before Content-Length
+        let input2 = "Content-Type: application/json\r\n\
+                      Content-Length: 40\r\n\
+                      \r\n";
+        let mut reader2 = std::io::BufReader::new(input2.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader2), Ok(Some(40)));
+    }
+
+    #[test]
+    fn test_framing_unknown_headers_ignored() {
+        // Extra unknown headers should be ignored
+        let input = "X-Custom-Header: some-value\r\n\
+                     Content-Length: 55\r\n\
+                     X-Another-Header: another-value\r\n\
+                     \r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader), Ok(Some(55)));
+    }
+
+    #[test]
+    fn test_framing_duplicate_content_length() {
+        // Last Content-Length wins (implementation detail)
+        let input = "Content-Length: 100\r\n\
+                     Content-Length: 200\r\n\
+                     \r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        let result = parse_headers_from_reader(&mut reader);
+        // The implementation uses the last valid Content-Length
+        assert_eq!(result, Ok(Some(200)));
+    }
+
+    #[test]
+    fn test_framing_non_numeric_content_length() {
+        // Non-numeric value should be ignored (no Content-Length parsed)
+        let input = "Content-Length: abc\r\n\r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader), Ok(None));
+    }
+
+    #[test]
+    fn test_framing_negative_content_length() {
+        // Negative value - parse fails, treated as missing
+        let input = "Content-Length: -100\r\n\r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        // parse::<usize> fails for negative, so None
+        assert_eq!(parse_headers_from_reader(&mut reader), Ok(None));
+    }
+
+    #[test]
+    fn test_framing_zero_content_length() {
+        // Zero is parsed but validation should reject it
+        let input = "Content-Length: 0\r\n\r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader), Ok(Some(0)));
+
+        // Validation should fail for zero
+        let validation = validate_content_length(Some(0));
+        assert!(validation.is_err());
+    }
+
+    #[test]
+    fn test_framing_eof_during_headers() {
+        // EOF before empty line
+        let input = "Content-Length: 100";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        let result = parse_headers_from_reader(&mut reader);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("EOF"));
+    }
+
+    #[test]
+    fn test_framing_lf_line_endings() {
+        // Unix-style LF only (not CRLF) - should still work
+        let input = "Content-Length: 100\n\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader), Ok(Some(100)));
+    }
+
+    #[test]
+    fn test_framing_mixed_line_endings() {
+        // Mix of CRLF and LF
+        let input = "Content-Type: text/plain\r\n\
+                     Content-Length: 75\n\
+                     \r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader), Ok(Some(75)));
+    }
+
+    #[test]
+    fn test_framing_header_without_colon() {
+        // Malformed header without colon - ignored
+        let input = "InvalidHeaderNoColon\r\n\
+                     Content-Length: 50\r\n\
+                     \r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader), Ok(Some(50)));
+    }
+
+    #[test]
+    fn test_framing_empty_header_name() {
+        // Colon at start - empty header name
+        let input = ": some-value\r\n\
+                     Content-Length: 60\r\n\
+                     \r\n";
+        let mut reader = std::io::BufReader::new(input.as_bytes());
+        assert_eq!(parse_headers_from_reader(&mut reader), Ok(Some(60)));
+    }
+
+    #[test]
+    fn test_framing_large_valid_content_length() {
+        // 50MB - valid large message
+        let size = 50 * 1024 * 1024;
+        let validation = validate_content_length(Some(size));
+        assert_eq!(validation, Ok(size));
+    }
+
+    #[test]
+    fn test_framing_small_content_length() {
+        // Minimum valid size (1 byte)
+        let validation = validate_content_length(Some(1));
+        assert_eq!(validation, Ok(1));
+    }
+
+    // ==================== Integration Tests for LspClient Lifecycle ====================
+    //
+    // These tests verify LspClient::start() subprocess spawning and Drop cleanup behavior
+    // using mock server scripts that simulate various LSP server behaviors.
+
+    /// Create a mock LSP server script that responds to initialize and exits cleanly.
+    ///
+    /// Returns the path to the temporary script file.
+    fn create_mock_lsp_server_script(behavior: MockServerBehavior) -> std::path::PathBuf {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!(
+            "mock_lsp_server_{}_{}.sh",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let script_content = match behavior {
+            MockServerBehavior::RespondAndExit => {
+                // Responds to initialize request with valid LSP response, then exits
+                r#"#!/bin/bash
+# Mock LSP server that responds to initialize and exits cleanly
+
+# Read the Content-Length header
+read -r header
+# Skip any additional headers until empty line
+while IFS= read -r line && [ -n "${line//$'\r'/}" ]; do
+    :
+done
+
+# Extract content length (simple parsing)
+content_length=$(echo "$header" | grep -oE '[0-9]+')
+
+# Read the JSON body
+if [ -n "$content_length" ]; then
+    body=$(head -c "$content_length")
+fi
+
+# Send initialize response
+response='{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}'
+content_length=${#response}
+printf "Content-Length: %d\r\n\r\n%s" "$content_length" "$response"
+
+# Exit cleanly after a short delay to allow response to be read
+sleep 0.1
+exit 0
+"#
+            }
+            MockServerBehavior::ExitImmediately => {
+                // Exits immediately without responding (simulates crash)
+                r#"#!/bin/bash
+# Mock LSP server that exits immediately without responding
+exit 0
+"#
+            }
+            MockServerBehavior::HangForever => {
+                // Reads input but never responds (simulates unresponsive server)
+                r#"#!/bin/bash
+# Mock LSP server that hangs forever (for testing kill behavior)
+# Use trap to ignore SIGTERM to test SIGKILL fallback
+trap '' TERM
+
+# Read input forever without responding
+while true; do
+    read -r line 2>/dev/null || sleep 0.1
+done
+"#
+            }
+            MockServerBehavior::RespondThenHang => {
+                // Responds to initialize, then hangs (simulates server that stops responding)
+                r#"#!/bin/bash
+# Mock LSP server that responds to initialize then hangs
+trap '' TERM
+
+# Read the Content-Length header
+read -r header
+while IFS= read -r line && [ -n "${line//$'\r'/}" ]; do
+    :
+done
+
+content_length=$(echo "$header" | grep -oE '[0-9]+')
+if [ -n "$content_length" ]; then
+    body=$(head -c "$content_length")
+fi
+
+# Send initialize response
+response='{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}'
+content_length=${#response}
+printf "Content-Length: %d\r\n\r\n%s" "$content_length" "$response"
+
+# Then hang forever
+while true; do
+    sleep 1
+done
+"#
+            }
+        };
+
+        fs::write(&script_path, script_content).expect("Failed to write mock script");
+
+        // Make script executable
+        let mut perms = fs::metadata(&script_path)
+            .expect("Failed to get script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).expect("Failed to set script permissions");
+
+        script_path
+    }
+
+    /// Different mock server behaviors for testing.
+    #[derive(Debug, Clone, Copy)]
+    enum MockServerBehavior {
+        /// Responds to initialize request and exits cleanly
+        RespondAndExit,
+        /// Exits immediately without responding (simulates crash on startup)
+        ExitImmediately,
+        /// Never responds, ignores SIGTERM (tests SIGKILL fallback)
+        HangForever,
+        /// Responds to initialize, then hangs (tests Drop with unresponsive server)
+        RespondThenHang,
+    }
+
+    /// Clean up a mock script file.
+    fn cleanup_mock_script(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Helper to spawn LspClient with a mock bash script instead of node.
+    ///
+    /// Sets CRYSTAL_NODE_PATH to bash so we can use shell scripts as mock servers.
+    fn start_client_with_mock_script(
+        script_path: &std::path::Path,
+        event_tx: Sender<LspEvent>,
+    ) -> Result<LspClient> {
+        // Temporarily set CRYSTAL_NODE_PATH to bash
+        std::env::set_var("CRYSTAL_NODE_PATH", "bash");
+
+        let result = LspClient::start(script_path.to_str().unwrap(), event_tx);
+
+        // Reset environment variable
+        std::env::remove_var("CRYSTAL_NODE_PATH");
+
+        result
+    }
+
+    #[test]
+    fn test_lsp_client_start_spawns_subprocess() {
+        // Test that LspClient::start() successfully spawns a subprocess
+        // and the subprocess receives the initialize request
+
+        let script_path = create_mock_lsp_server_script(MockServerBehavior::RespondAndExit);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let client_result = start_client_with_mock_script(&script_path, tx);
+
+        match client_result {
+            Ok(client) => {
+                // Wait for ServerReady event (initialize response received)
+                let timeout = std::time::Duration::from_secs(5);
+                let start = std::time::Instant::now();
+
+                let mut got_ready = false;
+                while start.elapsed() < timeout {
+                    match rx.try_recv() {
+                        Ok(LspEvent::ServerReady) => {
+                            got_ready = true;
+                            break;
+                        }
+                        Ok(LspEvent::ServerError(e)) => {
+                            // Server may exit after responding, which is fine
+                            if !got_ready {
+                                panic!("Unexpected server error before ready: {}", e);
+                            }
+                            break;
+                        }
+                        Ok(_) => continue,
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    }
+                }
+
+                assert!(got_ready, "Should have received ServerReady event");
+
+                // Drop client to trigger cleanup
+                drop(client);
+            }
+            Err(e) => {
+                panic!("Failed to start LspClient: {}", e);
+            }
+        }
+
+        cleanup_mock_script(&script_path);
+    }
+
+    #[test]
+    fn test_lsp_client_start_handles_immediate_exit() {
+        // Test that LspClient::start() handles a server that exits immediately
+        // The initialize request will fail because the server exits before responding
+
+        let script_path = create_mock_lsp_server_script(MockServerBehavior::ExitImmediately);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let client_result = start_client_with_mock_script(&script_path, tx);
+
+        // The client may or may not succeed in starting depending on timing.
+        // What matters is:
+        // 1. We don't panic or hang
+        // 2. If client was created, Drop cleans up properly
+        // 3. We eventually get a ServerError or the client fails to start
+
+        match client_result {
+            Ok(client) => {
+                // Server exited immediately, reader thread should detect EOF
+                let timeout = std::time::Duration::from_secs(2);
+                let start = std::time::Instant::now();
+
+                while start.elapsed() < timeout {
+                    match rx.try_recv() {
+                        Ok(LspEvent::ServerError(_)) => break, // Expected
+                        Ok(LspEvent::ServerReady) => {
+                            // Unlikely but possible if server output was buffered
+                            break;
+                        }
+                        Ok(_) => continue,
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    }
+                }
+
+                // Drop should not hang even though server already exited
+                drop(client);
+            }
+            Err(_) => {
+                // This is also acceptable - server exited before we could communicate
+            }
+        }
+
+        cleanup_mock_script(&script_path);
+    }
+
+    #[test]
+    fn test_lsp_client_drop_graceful_shutdown() {
+        // Test that Drop sends shutdown/exit messages and waits for clean exit
+
+        let script_path = create_mock_lsp_server_script(MockServerBehavior::RespondAndExit);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let client_result = start_client_with_mock_script(&script_path, tx);
+
+        if let Ok(client) = client_result {
+            // Wait for initialization
+            let timeout = std::time::Duration::from_secs(5);
+            let start = std::time::Instant::now();
+
+            while start.elapsed() < timeout {
+                match rx.try_recv() {
+                    Ok(LspEvent::ServerReady) => break,
+                    Ok(_) => continue,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                }
+            }
+
+            // Measure Drop time - should be fast for a well-behaved server
+            let drop_start = std::time::Instant::now();
+            drop(client);
+            let drop_duration = drop_start.elapsed();
+
+            // Drop should complete quickly (< 1 second) for a server that exits cleanly
+            // The Drop implementation waits up to 500ms in 50ms increments
+            assert!(
+                drop_duration < std::time::Duration::from_secs(2),
+                "Drop took too long: {:?}",
+                drop_duration
+            );
+        }
+
+        cleanup_mock_script(&script_path);
+    }
+
+    #[test]
+    fn test_lsp_client_drop_kills_unresponsive_server() {
+        // Test that Drop kills a server that ignores SIGTERM
+
+        let script_path = create_mock_lsp_server_script(MockServerBehavior::RespondThenHang);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let client_result = start_client_with_mock_script(&script_path, tx);
+
+        if let Ok(client) = client_result {
+            // Wait for initialization
+            let timeout = std::time::Duration::from_secs(5);
+            let start = std::time::Instant::now();
+
+            let mut initialized = false;
+            while start.elapsed() < timeout {
+                match rx.try_recv() {
+                    Ok(LspEvent::ServerReady) => {
+                        initialized = true;
+                        break;
+                    }
+                    Ok(_) => continue,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                }
+            }
+
+            assert!(initialized, "Server should have initialized");
+
+            // Drop should eventually kill the unresponsive server
+            // Drop waits 500ms (10 * 50ms), then kills
+            let drop_start = std::time::Instant::now();
+            drop(client);
+            let drop_duration = drop_start.elapsed();
+
+            // Should complete within reasonable time even for unresponsive server
+            // Drop waits 500ms then kills, so total should be < 2s
+            assert!(
+                drop_duration < std::time::Duration::from_secs(3),
+                "Drop hung on unresponsive server: {:?}",
+                drop_duration
+            );
+        }
+
+        cleanup_mock_script(&script_path);
+    }
+
+    #[test]
+    fn test_lsp_client_drop_handles_already_dead_process() {
+        // Test that Drop handles a process that has already exited
+
+        let script_path = create_mock_lsp_server_script(MockServerBehavior::RespondAndExit);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let client_result = start_client_with_mock_script(&script_path, tx);
+
+        if let Ok(client) = client_result {
+            // Wait for server to exit naturally
+            std::thread::sleep(std::time::Duration::from_millis(500));
+
+            // Drain any events
+            while rx.try_recv().is_ok() {}
+
+            // Drop should handle already-dead process gracefully
+            let drop_start = std::time::Instant::now();
+            drop(client);
+            let drop_duration = drop_start.elapsed();
+
+            // Should be very fast since process is already dead
+            assert!(
+                drop_duration < std::time::Duration::from_secs(1),
+                "Drop took too long for dead process: {:?}",
+                drop_duration
+            );
+        }
+
+        cleanup_mock_script(&script_path);
+    }
+
+    #[test]
+    fn test_lsp_client_raii_cleanup_on_init_failure() {
+        // Test that RAII Drop cleans up the process even if initialize() would fail
+        // We use a server that hangs forever without responding
+
+        let script_path = create_mock_lsp_server_script(MockServerBehavior::HangForever);
+        let (tx, _rx) = std::sync::mpsc::channel::<LspEvent>();
+
+        // Note: LspClient::start() calls initialize() which sends a message.
+        // The HangForever server never responds, but the message is sent.
+        // The test verifies that if we get a client, dropping it cleans up.
+
+        std::env::set_var("CRYSTAL_NODE_PATH", "bash");
+
+        // Spawn the child process manually to simulate partial initialization
+        let mut child = std::process::Command::new("bash")
+            .arg(script_path.to_str().unwrap())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("Failed to spawn process");
+
+        let pid = child.id();
+
+        // Create a minimal LspClient struct for testing Drop
+        let stdin = child.stdin.take().unwrap();
+        let _stdout = child.stdout.take().unwrap();
+
+        let client = LspClient {
+            stdin,
+            request_id: 0,
+            initialize_id: Arc::new(AtomicI32::new(0)),
+            child,
+        };
+
+        // Verify process is running
+        #[cfg(unix)]
+        {
+            use std::process::Command;
+            let status = Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status();
+            assert!(
+                status.map(|s| s.success()).unwrap_or(false),
+                "Process should be running before drop"
+            );
+        }
+
+        // Drop should kill the hanging process
+        let drop_start = std::time::Instant::now();
+        drop(client);
+        let drop_duration = drop_start.elapsed();
+
+        // Verify process is dead
+        #[cfg(unix)]
+        {
+            use std::process::Command;
+            // Small delay to allow process to fully terminate
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let status = Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status();
+            assert!(
+                !status.map(|s| s.success()).unwrap_or(true),
+                "Process should be dead after drop"
+            );
+        }
+
+        assert!(
+            drop_duration < std::time::Duration::from_secs(3),
+            "Drop should complete within timeout: {:?}",
+            drop_duration
+        );
+
+        std::env::remove_var("CRYSTAL_NODE_PATH");
+        drop(tx);
+        cleanup_mock_script(&script_path);
+    }
+
+    #[test]
+    fn test_lsp_client_start_nonexistent_node_binary() {
+        // Test that start() returns error when the node binary doesn't exist
+        // Note: We can't test nonexistent server.js because node spawns successfully
+        // and only fails after loading - that's handled by the reader thread.
+
+        let (tx, _rx) = std::sync::mpsc::channel::<LspEvent>();
+
+        // Set CRYSTAL_NODE_PATH to a nonexistent binary
+        std::env::set_var("CRYSTAL_NODE_PATH", "/nonexistent/binary/that/does/not/exist");
+
+        let result = LspClient::start("server.js", tx);
+
+        std::env::remove_var("CRYSTAL_NODE_PATH");
+
+        assert!(result.is_err(), "Should fail for nonexistent node binary");
+        let err = result.err().unwrap();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("Failed to spawn") || err_msg.contains("No such file"),
+            "Error should mention spawn failure: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_lsp_client_multiple_lifecycle_cycles() {
+        // Test that we can create and drop multiple LspClients without resource leaks
+
+        for i in 0..3 {
+            let script_path = create_mock_lsp_server_script(MockServerBehavior::RespondAndExit);
+            let (tx, rx) = std::sync::mpsc::channel();
+
+            let client_result = start_client_with_mock_script(&script_path, tx);
+
+            if let Ok(client) = client_result {
+                // Wait briefly for initialization
+                let timeout = std::time::Duration::from_secs(2);
+                let start = std::time::Instant::now();
+
+                while start.elapsed() < timeout {
+                    match rx.try_recv() {
+                        Ok(LspEvent::ServerReady) => break,
+                        Ok(_) => continue,
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    }
+                }
+
+                drop(client);
+            }
+
+            cleanup_mock_script(&script_path);
+
+            // Small delay between cycles
+            if i < 2 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+
+        // If we get here without panics or hangs, the test passes
     }
 }

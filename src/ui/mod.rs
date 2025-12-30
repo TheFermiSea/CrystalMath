@@ -2,12 +2,23 @@
 //!
 //! This module contains all the rendering logic for the TUI.
 
+mod cluster_manager;
+mod editor;
+mod footer;
 mod header;
 mod jobs;
-mod editor;
-mod results;
 mod log;
-mod footer;
+mod materials;
+mod new_job;
+mod results;
+mod slurm_queue;
+mod vasp_input;
+
+pub use cluster_manager::{
+    ClusterFormField, ClusterManagerMode, ClusterManagerState, ConnectionTestResult,
+};
+pub use slurm_queue::SlurmQueueState;
+pub use vasp_input::{VaspFileTab, VaspInputFiles, VaspInputState};
 
 use ratatui::prelude::*;
 
@@ -19,9 +30,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Min(0),     // Content
-            Constraint::Length(3),  // Footer
+            Constraint::Length(3), // Header
+            Constraint::Min(0),    // Content
+            Constraint::Length(3), // Footer
         ])
         .split(frame.area());
 
@@ -38,4 +49,25 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Render footer
     footer::render(frame, app, chunks[2]);
+
+    // Render modal overlays on top of everything
+    if app.materials.active {
+        materials::render(frame, app);
+    }
+
+    if app.new_job.active {
+        new_job::render(frame, app);
+    }
+
+    if app.cluster_manager.active {
+        cluster_manager::render(frame, app);
+    }
+
+    if app.slurm_queue_state.active {
+        slurm_queue::render(frame, app);
+    }
+
+    if app.vasp_input_state.active {
+        vasp_input::render(frame, app);
+    }
 }

@@ -32,7 +32,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(" CrystalMath TUI ")
-                .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                .title_style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
         )
         .select(selected)
         .style(Style::default().fg(Color::White))

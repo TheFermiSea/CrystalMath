@@ -10,17 +10,19 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         AppTab::Jobs => {
             vec![
                 ("j/k", "Select"),
+                ("n", "New Job"),
                 ("Enter", "Details"),
-                ("Tab", "Next Tab"),
-                ("Ctrl+R", "Refresh"),
-                ("Ctrl+Q", "Quit"),
+                ("L", "Logs"),
+                ("U", "SLURM"),
+                ("C", "Cancel"),
             ]
         }
         AppTab::Editor => {
             vec![
                 ("Type", "Edit"),
+                ("Ctrl+Enter", "Submit"),
+                ("Ctrl+I", "Import"),
                 ("Tab", "Next Tab"),
-                ("Ctrl+S", "Save"),
                 ("Ctrl+Q", "Quit"),
             ]
         }
@@ -35,8 +37,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         AppTab::Log => {
             vec![
                 ("j/k", "Scroll"),
-                ("Home/End", "Top/Bottom"),
-                ("Tab", "Next Tab"),
+                ("F", "Follow"),
+                ("R", "Refresh"),
+                ("g/G", "Top/End"),
                 ("Ctrl+Q", "Quit"),
             ]
         }

@@ -140,5 +140,8 @@ fn build_diagnostic_indicator(app: &App) -> Span<'static> {
         (format!(" [{} notes] ", diag_count), Color::Blue)
     };
 
-    Span::styled(text, Style::default().fg(color).add_modifier(Modifier::BOLD))
+    Span::styled(
+        text,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
 }

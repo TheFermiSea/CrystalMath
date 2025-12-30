@@ -1,4 +1,8 @@
 //! Job results view.
+//!
+//! **LAYOUT SYNC WARNING**: The line layout in this render function MUST match
+//! `JobDetails::display_line_count()` in src/models.rs. If you change the number
+//! of lines rendered here, update that method or scrolling will break.
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
@@ -8,6 +12,8 @@ use crate::app::App;
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let content = match &app.current_job_details {
         Some(details) => {
+            // LAYOUT SYNC: Line count must match JobDetails::display_line_count()
+            // Base: 7 lines (Job, Status, empty, header, Energy, Gap, Convergence)
             let mut lines = vec![
                 Line::from(vec![
                     Span::styled("Job: ", Style::default().fg(Color::Yellow)),
@@ -23,7 +29,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 Line::from(""),
                 Line::styled(
                     "=== Results ===",
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Line::from(vec![
                     Span::styled("Final Energy: ", Style::default().fg(Color::Yellow)),
@@ -65,7 +73,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 lines.push(Line::from(""));
                 lines.push(Line::styled(
                     "=== Warnings ===",
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 ));
                 for warning in &details.warnings {
                     lines.push(Line::from(vec![

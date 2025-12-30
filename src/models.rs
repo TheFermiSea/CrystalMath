@@ -28,13 +28,19 @@ pub enum JobState {
 
 impl JobState {
     /// Get the display color for this state.
+    ///
+    /// Color scheme designed for quick visual scanning:
+    /// - Green = Running (active, needs attention)
+    /// - Blue = Completed (success, done)
+    /// - Red = Failed (error, needs investigation)
+    /// - Yellow = Queued/Submitted (waiting)
     pub fn color(&self) -> Color {
         match self {
             JobState::Created => Color::Gray,
             JobState::Submitted => Color::Yellow,
             JobState::Queued => Color::Yellow,
-            JobState::Running => Color::Blue,
-            JobState::Completed => Color::Green,
+            JobState::Running => Color::Green,  // Green = active
+            JobState::Completed => Color::Blue, // Blue = success/done
             JobState::Failed => Color::Red,
             JobState::Cancelled => Color::DarkGray,
             JobState::Unknown => Color::Magenta,
@@ -65,12 +71,21 @@ impl JobState {
 }
 
 /// DFT code type enum.
+///
+/// Represents the density functional theory software package used for calculations.
 /// Includes `Unknown` variant for forward-compatibility with new codes.
+///
+/// # Serialization
+///
+/// Uses snake_case for JSON: `"crystal"`, `"vasp"`, `"quantum_espresso"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DftCode {
+    /// CRYSTAL23 - Solid-state DFT with Gaussian basis sets
     Crystal,
+    /// VASP - Plane-wave pseudopotential DFT
     Vasp,
+    /// Quantum ESPRESSO - Plane-wave DFT suite
     QuantumEspresso,
     /// Forward-compatible fallback for unknown codes
     #[serde(other)]
@@ -78,6 +93,13 @@ pub enum DftCode {
 }
 
 impl DftCode {
+    /// Get human-readable display name for the DFT code.
+    ///
+    /// Returns short uppercase abbreviations suitable for UI display:
+    /// - `Crystal` → `"CRYSTAL"`
+    /// - `Vasp` → `"VASP"`
+    /// - `QuantumEspresso` → `"QE"`
+    /// - `Unknown` → `"Unknown"`
     pub fn as_str(&self) -> &'static str {
         match self {
             DftCode::Crystal => "CRYSTAL",
@@ -88,14 +110,51 @@ impl DftCode {
     }
 }
 
+/// SLURM queue entry for remote cluster monitoring.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SlurmQueueEntry {
+    #[serde(default)]
+    pub job_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub user: String,
+    #[serde(default)]
+    pub partition: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub nodes: Option<i32>,
+    #[serde(default)]
+    pub gpus: Option<i32>,
+    #[serde(default)]
+    pub time_used: Option<String>,
+    #[serde(default)]
+    pub time_limit: Option<String>,
+    #[serde(default)]
+    pub node_list: Option<String>,
+    #[serde(default)]
+    pub state_reason: Option<String>,
+}
+
 /// Job execution backend type.
+///
+/// Determines where and how DFT calculations are executed.
 /// Includes `Unknown` variant for forward-compatibility with new runners.
+///
+/// # Serialization
+///
+/// Uses snake_case for JSON: `"local"`, `"ssh"`, `"slurm"`, `"aiida"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunnerType {
+    /// Local execution via subprocess on the same machine
     Local,
+    /// Remote execution via SSH to a cluster headnode
     Ssh,
+    /// HPC batch scheduling via SLURM workload manager
     Slurm,
+    /// Workflow automation via AiiDA provenance framework
     Aiida,
     /// Forward-compatible fallback for unknown runners
     #[serde(other)]
@@ -103,6 +162,14 @@ pub enum RunnerType {
 }
 
 impl RunnerType {
+    /// Get human-readable display name for the runner type.
+    ///
+    /// Returns properly-cased names suitable for UI display:
+    /// - `Local` → `"Local"`
+    /// - `Ssh` → `"SSH"`
+    /// - `Slurm` → `"SLURM"`
+    /// - `Aiida` → `"AiiDA"`
+    /// - `Unknown` → `"Unknown"`
     pub fn as_str(&self) -> &'static str {
         match self {
             RunnerType::Local => "Local",
@@ -133,6 +200,10 @@ pub struct JobStatus {
     pub wall_time_seconds: Option<f64>,
     #[serde(default)]
     pub created_at: Option<String>,
+    /// Error snippet for failed jobs (human-readable message).
+    /// Examples: "SCF not converged", "Walltime exceeded", "Disk quota"
+    #[serde(default)]
+    pub error_snippet: Option<String>,
 }
 
 impl JobStatus {
@@ -157,48 +228,73 @@ impl JobStatus {
 
 /// Full job details for the Results view.
 ///
+/// Contains computed results, timing information, and diagnostics for a completed job.
 /// Matches Python's `JobDetails` model.
+///
+/// # Units
+///
+/// - `final_energy`: Total energy in **Hartree (Ha)**. 1 Ha ≈ 27.211 eV.
+/// - `bandgap_ev`: Electronic bandgap in **electronvolts (eV)**.
+/// - `cpu_time_seconds`: CPU time in **seconds**.
+/// - `wall_time_seconds`: Wall-clock time in **seconds**.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobDetails {
+    /// Database primary key
     pub pk: i32,
+    /// Unique identifier (UUID4 format)
     #[serde(default)]
     pub uuid: Option<String>,
+    /// User-provided job name
     pub name: String,
+    /// Current execution state
     pub state: JobState,
+    /// DFT software used for this calculation
     #[serde(default)]
     pub dft_code: Option<DftCode>,
 
     // Computed results
+    /// Total energy in Hartree (Ha). 1 Ha ≈ 27.211 eV.
     #[serde(default)]
     pub final_energy: Option<f64>,
+    /// Electronic bandgap in electronvolts (eV). 0.0 = metallic.
     #[serde(default)]
     pub bandgap_ev: Option<f64>,
+    /// Whether SCF convergence criteria were satisfied
     #[serde(default)]
     pub convergence_met: bool,
+    /// Number of SCF iterations performed
     #[serde(default)]
     pub scf_cycles: Option<i32>,
 
     // Timing
+    /// CPU time consumed in seconds (may exceed wall time for parallel jobs)
     #[serde(default)]
     pub cpu_time_seconds: Option<f64>,
+    /// Wall-clock elapsed time in seconds
     #[serde(default)]
     pub wall_time_seconds: Option<f64>,
 
     // Diagnostics
+    /// Non-fatal warning messages from the calculation
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// Error messages (populated if job failed)
     #[serde(default)]
     pub errors: Vec<String>,
+    /// Last N lines of stdout for debugging
     #[serde(default)]
     pub stdout_tail: Vec<String>,
 
     // Full results
+    /// Arbitrary parsed results as JSON (code-specific)
     #[serde(default)]
     pub key_results: Option<serde_json::Value>,
 
     // Paths
+    /// Working directory containing output files
     #[serde(default)]
     pub work_dir: Option<String>,
+    /// Path to the input file used
     #[serde(default)]
     pub input_file: Option<String>,
 }
@@ -219,22 +315,84 @@ impl JobDetails {
             None => "-".to_string(),
         }
     }
+
+    /// Calculate the number of lines in the results display.
+    ///
+    /// This is the single source of truth for content height,
+    /// used by both the render function and scroll calculations.
+    ///
+    /// **LAYOUT SYNC WARNING**: This logic MUST match the actual line count
+    /// in `src/ui/results.rs::render()`. If the render function changes its
+    /// layout, update this method or scrolling will break.
+    pub fn display_line_count(&self) -> usize {
+        let mut lines = 7; // Base: Job, Status, empty, header, Energy, Gap, Convergence
+
+        // Optional fields
+        if self.scf_cycles.is_some() {
+            lines += 1;
+        }
+        if self.wall_time_seconds.is_some() {
+            lines += 1;
+        }
+
+        // Warnings section
+        if !self.warnings.is_empty() {
+            lines += 2; // Empty separator + header
+            lines += self.warnings.len();
+        }
+
+        // Errors section
+        if !self.errors.is_empty() {
+            lines += 2; // Empty separator + header
+            lines += self.errors.len();
+        }
+
+        lines
+    }
 }
 
 /// Job submission request.
 ///
-/// Used when creating a new job from the UI.
+/// Used when creating a new job from the UI. Sent to Python backend as JSON.
+///
+/// # Required Fields
+///
+/// - `name`: Human-readable job name (appears in job list)
+/// - `dft_code`: Snake_case code identifier (`"crystal"`, `"vasp"`, etc.)
+/// - `parameters`: Code-specific parameters as JSON object
+///
+/// # Optional Fields
+///
+/// - `cluster_id`: Remote cluster for SSH/SLURM execution (None = local)
+/// - `runner_type`: Execution backend override (`"local"`, `"ssh"`, `"slurm"`)
+/// - `input_content`: Raw input file content (for editor submissions)
+/// - `structure_path`: Path to structure file (for template-based submissions)
+///
+/// # Example
+///
+/// ```ignore
+/// let job = JobSubmission::new("MgO relaxation", DftCode::Crystal)
+///     .with_runner_type(RunnerType::Local)
+///     .with_input_content(&d12_content);
+/// ```
 #[derive(Debug, Serialize)]
 pub struct JobSubmission {
+    /// Human-readable job name (displayed in job list)
     pub name: String,
+    /// DFT code identifier in snake_case: `"crystal"`, `"vasp"`, `"quantum_espresso"`
     pub dft_code: String,
+    /// Cluster ID for remote execution (None = local execution)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cluster_id: Option<i32>,
+    /// Code-specific parameters (basis set, k-points, etc.)
     pub parameters: serde_json::Value,
+    /// Path to structure file for template-based input generation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub structure_path: Option<String>,
+    /// Raw input file content (mutually exclusive with structure_path)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_content: Option<String>,
+    /// Execution backend: `"local"`, `"ssh"`, `"slurm"`, `"aiida"`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runner_type: Option<String>,
 }
@@ -281,10 +439,22 @@ impl JobSubmission {
         });
         self
     }
+
+    /// Set the runner type from a string.
+    pub fn with_runner_type_str(mut self, runner: &str) -> Self {
+        self.runner_type = Some(runner.to_string());
+        self
+    }
+
+    /// Set the cluster ID for remote execution.
+    pub fn with_cluster_id(mut self, id: i32) -> Self {
+        self.cluster_id = Some(id);
+        self
+    }
 }
 
 /// Cluster configuration for remote execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClusterConfig {
     #[serde(default)]
     pub id: Option<i32>,
@@ -316,6 +486,222 @@ fn default_max_concurrent() -> i32 {
 
 fn default_status() -> String {
     "active".to_string()
+}
+
+/// Result of testing a cluster SSH connection.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClusterConnectionResult {
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[serde(default)]
+    pub system_info: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+// ==================== SLURM Cancel Result ====================
+
+/// Result of a SLURM job cancellation request.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SlurmCancelResult {
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+// ==================== Materials Project API Models ====================
+
+/// Material search result from Materials Project.
+///
+/// Matches the JSON returned by Python's MaterialRecord.to_dict().
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialResult {
+    pub material_id: String,
+    #[serde(default)]
+    pub formula: Option<String>,
+    #[serde(default)]
+    pub formula_pretty: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub properties: MaterialProperties,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+    /// Raw structure data (kept as JSON for flexibility)
+    #[serde(default)]
+    pub structure: Option<serde_json::Value>,
+}
+
+impl MaterialResult {
+    /// Get the display formula (pretty if available, otherwise standard).
+    pub fn display_formula(&self) -> &str {
+        self.formula_pretty
+            .as_deref()
+            .or(self.formula.as_deref())
+            .unwrap_or("-")
+    }
+
+    /// Get band gap display string.
+    pub fn band_gap_display(&self) -> String {
+        match self.properties.band_gap {
+            Some(bg) => format!("{:.2}", bg),
+            None => "-".to_string(),
+        }
+    }
+
+    /// Get space group from metadata.
+    pub fn space_group(&self) -> String {
+        if let Some(sg) = self.metadata.get("space_group") {
+            if let Some(symbol) = sg.get("symbol").and_then(|s| s.as_str()) {
+                return symbol.to_string();
+            }
+            if let Some(s) = sg.as_str() {
+                return s.to_string();
+            }
+        }
+        "-".to_string()
+    }
+
+    /// Check if material is thermodynamically stable.
+    pub fn is_stable(&self) -> bool {
+        self.properties
+            .energy_above_hull
+            .map(|e| e < 0.025)
+            .unwrap_or(false)
+    }
+
+    /// Get stability display string.
+    pub fn stability_display(&self) -> String {
+        match self.properties.energy_above_hull {
+            Some(e) if e < 0.025 => "Stable".to_string(),
+            Some(e) => format!("+{:.3} eV", e),
+            None => "-".to_string(),
+        }
+    }
+}
+
+/// Material properties from Materials Project.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MaterialProperties {
+    #[serde(default)]
+    pub band_gap: Option<f64>,
+    #[serde(default)]
+    pub energy_above_hull: Option<f64>,
+    #[serde(default)]
+    pub formation_energy_per_atom: Option<f64>,
+    #[serde(default)]
+    pub energy_per_atom: Option<f64>,
+    #[serde(default)]
+    pub total_magnetization: Option<f64>,
+    #[serde(default)]
+    pub is_metal: Option<bool>,
+}
+
+/// Configuration for .d12 generation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct D12GenerationConfig {
+    #[serde(default = "default_functional")]
+    pub functional: String,
+    #[serde(default = "default_basis_set")]
+    pub basis_set: String,
+    #[serde(default = "default_shrink")]
+    pub shrink: (i32, i32),
+    #[serde(default)]
+    pub optimize: bool,
+}
+
+fn default_functional() -> String {
+    "PBE".to_string()
+}
+
+fn default_basis_set() -> String {
+    "POB-TZVP-REV2".to_string()
+}
+
+fn default_shrink() -> (i32, i32) {
+    (8, 8)
+}
+
+impl Default for D12GenerationConfig {
+    fn default() -> Self {
+        Self {
+            functional: default_functional(),
+            basis_set: default_basis_set(),
+            shrink: default_shrink(),
+            optimize: false,
+        }
+    }
+}
+
+/// API response wrapper matching Python's `_ok_response` / `_error_response`.
+///
+/// All Python API endpoints return this envelope structure for consistent
+/// error handling between the Rust TUI and Python backend.
+///
+/// # JSON Format
+///
+/// Success:
+/// ```json
+/// {"ok": true, "data": {...}}
+/// ```
+///
+/// Error:
+/// ```json
+/// {"ok": false, "error": {"code": "NOT_FOUND", "message": "Job 42 not found"}}
+/// ```
+///
+/// # Invariants
+///
+/// - If `ok == true`, `data` MUST be `Some(T)` (enforced by Python backend)
+/// - If `ok == false`, `error` SHOULD be `Some(ApiError)` (may be None for edge cases)
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiResponse<T> {
+    /// Success flag - determines which field contains the payload
+    pub ok: bool,
+    /// Response payload (present when `ok == true`)
+    #[serde(default)]
+    pub data: Option<T>,
+    /// Error details (present when `ok == false`)
+    #[serde(default)]
+    pub error: Option<ApiError>,
+}
+
+impl<T> ApiResponse<T> {
+    /// Convert to `Result`, extracting data or error message.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(T)` if `ok == true` and `data` is present
+    /// - `Err(String)` if `ok == false` or data is missing
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let json = r#"{"ok": true, "data": ["job1", "job2"]}"#;
+    /// let response: ApiResponse<Vec<String>> = serde_json::from_str(json)?;
+    /// let jobs = response.into_result()?;  // Vec<String>
+    /// ```
+    pub fn into_result(self) -> Result<T, String> {
+        if self.ok {
+            self.data
+                .ok_or_else(|| "Response ok but no data".to_string())
+        } else {
+            Err(self
+                .error
+                .map(|e| format!("{}: {}", e.code, e.message))
+                .unwrap_or_else(|| "Unknown error".to_string()))
+        }
+    }
+}
+
+/// API error structure.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiError {
+    pub code: String,
+    pub message: String,
 }
 
 #[cfg(test)]
@@ -362,8 +748,8 @@ mod tests {
 
     #[test]
     fn test_job_submission_serialize() {
-        let submission = JobSubmission::new("test", DftCode::Crystal)
-            .with_input_content("CRYSTAL\n0 0 0\n225");
+        let submission =
+            JobSubmission::new("test", DftCode::Crystal).with_input_content("CRYSTAL\n0 0 0\n225");
 
         let json = serde_json::to_string(&submission).unwrap();
         assert!(json.contains("\"name\":\"test\""));
@@ -383,6 +769,7 @@ mod tests {
             progress_percent: 0.0,
             wall_time_seconds: None,
             created_at: None,
+            error_snippet: None,
         };
 
         assert_eq!(status.wall_time_display(), "-");
@@ -490,8 +877,8 @@ mod tests {
 
     #[test]
     fn test_job_submission_builder() {
-        let submission = JobSubmission::new("my-job", DftCode::Vasp)
-            .with_input_content("ENCUT = 400");
+        let submission =
+            JobSubmission::new("my-job", DftCode::Vasp).with_input_content("ENCUT = 400");
 
         assert_eq!(submission.name, "my-job");
         assert_eq!(submission.dft_code, "vasp"); // Stored as String
@@ -508,8 +895,8 @@ mod tests {
 
     #[test]
     fn test_job_submission_with_runner_type() {
-        let submission = JobSubmission::new("test-job", DftCode::Crystal)
-            .with_runner_type(RunnerType::Slurm);
+        let submission =
+            JobSubmission::new("test-job", DftCode::Crystal).with_runner_type(RunnerType::Slurm);
 
         assert_eq!(submission.runner_type, Some("slurm".to_string()));
 
@@ -521,5 +908,90 @@ mod tests {
         let submission_no_runner = JobSubmission::new("test", DftCode::Vasp);
         let json_no_runner = serde_json::to_string(&submission_no_runner).unwrap();
         assert!(!json_no_runner.contains("runner_type"));
+    }
+
+    // ==================== Materials API Tests ====================
+
+    #[test]
+    fn test_material_result_deserialize() {
+        let json = r#"{
+            "material_id": "mp-2815",
+            "formula": "MoS2",
+            "formula_pretty": "MoS₂",
+            "source": "materials_project",
+            "properties": {
+                "band_gap": 1.23,
+                "energy_above_hull": 0.0
+            },
+            "metadata": {
+                "space_group": {"symbol": "P6_3/mmc"}
+            }
+        }"#;
+        let result: MaterialResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.material_id, "mp-2815");
+        assert_eq!(result.display_formula(), "MoS₂");
+        assert_eq!(result.band_gap_display(), "1.23");
+        assert_eq!(result.space_group(), "P6_3/mmc");
+        assert!(result.is_stable());
+        assert_eq!(result.stability_display(), "Stable");
+    }
+
+    #[test]
+    fn test_material_result_unstable() {
+        let json = r#"{
+            "material_id": "mp-1234",
+            "formula": "LiCoO2",
+            "properties": {
+                "energy_above_hull": 0.15
+            },
+            "metadata": {}
+        }"#;
+        let result: MaterialResult = serde_json::from_str(json).unwrap();
+        assert!(!result.is_stable());
+        assert_eq!(result.stability_display(), "+0.150 eV");
+    }
+
+    #[test]
+    fn test_material_result_minimal() {
+        let json = r#"{
+            "material_id": "mp-999",
+            "properties": {},
+            "metadata": {}
+        }"#;
+        let result: MaterialResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.material_id, "mp-999");
+        assert_eq!(result.display_formula(), "-");
+        assert_eq!(result.band_gap_display(), "-");
+        assert_eq!(result.space_group(), "-");
+        assert!(!result.is_stable());
+    }
+
+    #[test]
+    fn test_d12_generation_config_default() {
+        let config = D12GenerationConfig::default();
+        assert_eq!(config.functional, "PBE");
+        assert_eq!(config.basis_set, "POB-TZVP-REV2");
+        assert_eq!(config.shrink, (8, 8));
+        assert!(!config.optimize);
+    }
+
+    #[test]
+    fn test_api_response_success() {
+        let json = r#"{"ok": true, "data": ["item1", "item2"]}"#;
+        let response: ApiResponse<Vec<String>> = serde_json::from_str(json).unwrap();
+        assert!(response.ok);
+        let data = response.into_result().unwrap();
+        assert_eq!(data, vec!["item1", "item2"]);
+    }
+
+    #[test]
+    fn test_api_response_error() {
+        let json =
+            r#"{"ok": false, "error": {"code": "NOT_FOUND", "message": "Material not found"}}"#;
+        let response: ApiResponse<String> = serde_json::from_str(json).unwrap();
+        assert!(!response.ok);
+        let err = response.into_result().unwrap_err();
+        assert!(err.contains("NOT_FOUND"));
+        assert!(err.contains("Material not found"));
     }
 }

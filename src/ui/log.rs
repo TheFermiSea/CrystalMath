@@ -1,4 +1,4 @@
-//! Log viewer.
+//! Log viewer with follow mode support.
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
@@ -21,7 +21,22 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let clamped_scroll = app.log_scroll.min(max_scroll(total_lines, visible_height));
 
     let lines: Vec<Line> = if app.log_lines.is_empty() {
-        vec![Line::from("No log output available...")]
+        // Show helpful message when no log is loaded
+        vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "No log output available",
+                Style::default().fg(Color::Yellow),
+            )),
+            Line::from(""),
+            Line::from("Select a job and press Enter to view its log."),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("Press "),
+                Span::styled("F", Style::default().fg(Color::Cyan)),
+                Span::raw(" to toggle follow mode (auto-refresh)."),
+            ]),
+        ]
     } else {
         // Only render lines visible in the viewport (virtualization)
         let start = clamped_scroll;
@@ -41,15 +56,38 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             .collect()
     };
 
+    // Build title with follow mode indicator
     let visible_start = clamped_scroll + 1;
-    let title = format!(" Log ({}/{}) ", visible_start, total_lines.max(1));
+    let follow_indicator = if app.log_follow_mode {
+        " [FOLLOW] "
+    } else {
+        ""
+    };
+
+    let title = if app.log_job_pk.is_some() {
+        format!(
+            " Log ({}/{}){}",
+            visible_start,
+            total_lines.max(1),
+            follow_indicator
+        )
+    } else {
+        " Log ".to_string()
+    };
+
+    // Style the title - cyan normally, green when following
+    let title_style = if app.log_follow_mode {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::Cyan)
+    };
 
     // No scroll offset needed since we're only rendering visible lines
     let paragraph = Paragraph::new(Text::from(lines)).block(
         Block::default()
             .borders(Borders::ALL)
             .title(title)
-            .title_style(Style::default().fg(Color::Cyan)),
+            .title_style(title_style),
     );
 
     frame.render_widget(paragraph, area);

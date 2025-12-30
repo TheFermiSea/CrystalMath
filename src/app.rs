@@ -5,39 +5,20 @@
 
 use std::sync::mpsc::{self, Receiver};
 
-use pyo3::PyObject;
+use anyhow::Context;
+use pyo3::{Py, PyAny};
 use tracing::{debug, info, warn};
 use tui_textarea::TextArea;
 
-use crate::bridge::{BridgeHandle, BridgeRequestKind, BridgeResponse};
-use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent};
-use crate::models::{JobDetails, JobStatus};
+use crate::bridge::{BridgeHandle, BridgeRequestKind, BridgeResponse, BridgeService};
+use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
+use crate::models::{JobDetails, JobStatus, MaterialResult, SlurmQueueEntry};
+use crate::ui::{ClusterManagerState, SlurmQueueState};
 
-/// Application tabs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppTab {
-    Jobs,
-    Editor,
-    Results,
-    Log,
-}
-
-impl AppTab {
-    /// Get tab display name.
-    pub fn name(&self) -> &'static str {
-        match self {
-            AppTab::Jobs => "Jobs",
-            AppTab::Editor => "Editor",
-            AppTab::Results => "Results",
-            AppTab::Log => "Log",
-        }
-    }
-
-    /// Get all tabs in order.
-    pub fn all() -> &'static [AppTab] {
-        &[AppTab::Jobs, AppTab::Editor, AppTab::Results, AppTab::Log]
-    }
-}
+// Re-export state types for backward compatibility with existing imports from crate::app
+pub use crate::state::{
+    Action, AppTab, DiffLineType, JobsState, MaterialsSearchState, NewJobField, NewJobState,
+};
 
 /// Main application state.
 pub struct App<'a> {
@@ -58,11 +39,27 @@ pub struct App<'a> {
     needs_redraw: bool,
 
     // ===== Jobs Tab State =====
-    /// List of jobs from backend.
-    pub jobs: Vec<JobStatus>,
+    /// Jobs state (extracted domain state).
+    pub jobs_state: JobsState,
 
-    /// Currently selected job index.
-    pub selected_job_index: Option<usize>,
+    // ===== SLURM Queue State =====
+    /// SLURM queue entries from remote cluster.
+    #[allow(dead_code)] // Planned for SLURM integration
+    pub slurm_queue: Vec<SlurmQueueEntry>,
+
+    /// Whether SLURM queue view is active.
+    pub slurm_view_active: bool,
+
+    /// Request ID for the current SLURM queue fetch (to ignore stale responses).
+    pub slurm_request_id: usize,
+
+    /// Selected index in SLURM queue table.
+    #[allow(dead_code)] // Planned for SLURM integration
+    pub slurm_selected: Option<usize>,
+
+    /// Timestamp of last SLURM queue refresh.
+    #[allow(dead_code)] // Planned for SLURM integration
+    pub last_slurm_refresh: Option<std::time::Instant>,
 
     // ===== Editor Tab State =====
     /// Text editor widget.
@@ -97,16 +94,40 @@ pub struct App<'a> {
     /// Scroll offset for log view.
     pub log_scroll: usize,
 
+    /// Job PK currently being viewed in log tab.
+    pub log_job_pk: Option<i32>,
+
+    /// Whether log follow mode is active (auto-refresh every 2s).
+    pub log_follow_mode: bool,
+
+    /// Timestamp of last log refresh (for follow mode timing).
+    last_log_refresh: Option<std::time::Instant>,
+
     // ===== Python Backend (Async Bridge) =====
     /// Handle to the Python bridge worker thread.
-    bridge: BridgeHandle,
+    ///
+    /// Uses `Box<dyn BridgeService>` for dependency injection and testing.
+    bridge: Box<dyn BridgeService>,
+
+    /// Monotonically increasing counter for generating unique request IDs.
+    /// Used to correlate requests with responses and detect stale responses.
+    next_request_id: usize,
 
     /// Currently pending bridge request (for UI feedback and preventing duplicate requests).
     pub pending_bridge_request: Option<BridgeRequestKind>,
 
+    /// Request ID of the current pending bridge request.
+    /// Responses with a different ID are considered stale and ignored.
+    pending_request_id: Option<usize>,
+
+    /// Timestamp when the pending request was initiated (for timeout detection).
+    pending_bridge_request_time: Option<std::time::Instant>,
+
     // ===== LSP Integration =====
     /// LSP client for dft-language-server.
-    pub lsp_client: Option<LspClient>,
+    ///
+    /// Uses `Box<dyn LspService>` for dependency injection and testing.
+    pub lsp_client: Option<Box<dyn LspService>>,
 
     /// Receiver for LSP events.
     pub lsp_receiver: Receiver<LspEvent>,
@@ -116,20 +137,108 @@ pub struct App<'a> {
 
     /// Whether there are pending LSP changes to flush.
     pending_lsp_change: bool,
+
+    // ===== Materials Project Search Modal =====
+    /// State for the materials search modal.
+    pub materials: MaterialsSearchState<'a>,
+
+    // ===== New Job Modal =====
+    /// State for the new job creation modal.
+    pub new_job: NewJobState,
+
+    // ===== Cluster Manager Modal =====
+    /// State for the cluster manager modal.
+    pub cluster_manager: ClusterManagerState,
+
+    // ===== SLURM Queue Modal =====
+    /// State for the SLURM queue modal.
+    pub slurm_queue_state: SlurmQueueState,
+
+    // ===== VASP Input Modal =====
+    /// State for the VASP multi-file input modal.
+    pub vasp_input_state: crate::ui::VaspInputState,
 }
 
 impl<'a> App<'a> {
-    /// Default path to the dft-language-server.
-    const LSP_SERVER_PATH: &'static str = "./dft-language-server/out/server.js";
+    /// Default relative path to the dft-language-server (fallback).
+    const LSP_SERVER_PATH_DEFAULT: &'static str = "dft-language-server/out/server.js";
+
+    /// Environment variable name for LSP server path override.
+    const LSP_SERVER_PATH_ENV: &'static str = "CRYSTAL_TUI_LSP_PATH";
+
+    /// Timeout for pending bridge requests (30 seconds).
+    /// If a response is not received within this time, the request is considered failed
+    /// and the pending state is cleared to prevent deadlocks.
+    const BRIDGE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    /// Resolve the LSP server path using environment variable or relative to executable.
+    ///
+    /// Lookup order:
+    /// 1. CRYSTAL_TUI_LSP_PATH environment variable
+    /// 2. Relative to executable directory
+    /// 3. Current working directory (fallback)
+    fn resolve_lsp_path() -> String {
+        use std::path::PathBuf;
+
+        // 1. Environment variable override
+        if let Ok(env_path) = std::env::var(Self::LSP_SERVER_PATH_ENV) {
+            if PathBuf::from(&env_path).exists() {
+                info!(
+                    "Using LSP server from {}: {}",
+                    Self::LSP_SERVER_PATH_ENV,
+                    env_path
+                );
+                return env_path;
+            }
+            warn!(
+                "{} set to '{}' but file not found, trying fallbacks",
+                Self::LSP_SERVER_PATH_ENV,
+                env_path
+            );
+        }
+
+        // 2. Relative to executable directory
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let relative_path = exe_dir.join(Self::LSP_SERVER_PATH_DEFAULT);
+                if relative_path.exists() {
+                    let path_str = relative_path.to_string_lossy().to_string();
+                    info!("Using LSP server relative to executable: {}", path_str);
+                    return path_str;
+                }
+            }
+        }
+
+        // 3. Current working directory fallback
+        let cwd_path = PathBuf::from(Self::LSP_SERVER_PATH_DEFAULT);
+        if cwd_path.exists() {
+            info!(
+                "Using LSP server from current directory: {}",
+                Self::LSP_SERVER_PATH_DEFAULT
+            );
+        } else {
+            debug!("LSP server not found at {}", Self::LSP_SERVER_PATH_DEFAULT);
+        }
+
+        Self::LSP_SERVER_PATH_DEFAULT.to_string()
+    }
 
     /// Create a new application with the Python controller.
     ///
-    /// Spawns a worker thread that owns the PyObject and handles all
+    /// Spawns a worker thread that owns the Py<PyAny> and handles all
     /// Python calls asynchronously via channels.
-    pub fn new(py_controller: PyObject) -> Self {
-        // Spawn the async bridge worker thread
-        let bridge = BridgeHandle::spawn(py_controller)
-            .expect("Failed to spawn Python bridge worker");
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Python bridge worker thread fails to spawn.
+    /// This allows the caller to handle the failure gracefully (e.g., show
+    /// an error message) instead of panicking.
+    pub fn new(py_controller: Py<PyAny>) -> anyhow::Result<Self> {
+        // Spawn the async bridge worker thread and box it for DI
+        let bridge: Box<dyn BridgeService> = Box::new(
+            BridgeHandle::spawn(py_controller)
+                .context("Failed to spawn Python bridge worker thread")?,
+        );
 
         let mut editor = TextArea::default();
         editor.set_line_number_style(
@@ -139,26 +248,37 @@ impl<'a> App<'a> {
         // Create channel for LSP events
         let (lsp_tx, lsp_rx) = mpsc::channel();
 
+        // Resolve LSP server path (env var -> relative to exe -> cwd)
+        let lsp_path = Self::resolve_lsp_path();
+
         // Try to start the LSP server (graceful degradation if unavailable)
-        let lsp_client = match LspClient::start(Self::LSP_SERVER_PATH, lsp_tx) {
+        // Box it for DI
+        let lsp_client: Option<Box<dyn LspService>> = match LspClient::start(&lsp_path, lsp_tx) {
             Ok(client) => {
                 info!("LSP server started successfully");
-                Some(client)
+                Some(Box::new(client))
             }
             Err(e) => {
-                warn!("Failed to start LSP server: {}. Editor will work without validation.", e);
+                warn!(
+                    "Failed to start LSP server: {}. Editor will work without validation.",
+                    e
+                );
                 None
             }
         };
 
-        Self {
+        Ok(Self {
             should_quit: false,
             current_tab: AppTab::Jobs,
             last_error: None,
             last_error_time: None,
             needs_redraw: true, // Initial draw required
-            jobs: Vec::new(),
-            selected_job_index: None,
+            jobs_state: JobsState::default(),
+            slurm_queue: Vec::new(),
+            slurm_view_active: false,
+            slurm_request_id: 0,
+            slurm_selected: None,
+            last_slurm_refresh: None,
             editor,
             editor_file_path: None,
             editor_file_uri: None,
@@ -169,13 +289,24 @@ impl<'a> App<'a> {
             results_scroll: 0,
             log_lines: Vec::new(),
             log_scroll: 0,
+            log_job_pk: None,
+            log_follow_mode: false,
+            last_log_refresh: None,
             bridge,
+            next_request_id: 0,
             pending_bridge_request: None,
+            pending_request_id: None,
+            pending_bridge_request_time: None,
             lsp_client,
             lsp_receiver: lsp_rx,
             last_editor_change: None,
             pending_lsp_change: false,
-        }
+            materials: MaterialsSearchState::default(),
+            new_job: NewJobState::default(),
+            cluster_manager: ClusterManagerState::default(),
+            slurm_queue_state: SlurmQueueState::default(),
+            vasp_input_state: crate::ui::VaspInputState::default(),
+        })
     }
 
     // ===== Dirty Flag (Rendering Optimization) =====
@@ -191,6 +322,7 @@ impl<'a> App<'a> {
     }
 
     /// Check if redraw is needed without resetting.
+    #[allow(dead_code)] // Useful for debugging/testing
     pub fn needs_redraw(&self) -> bool {
         self.needs_redraw
     }
@@ -222,6 +354,77 @@ impl<'a> App<'a> {
             if error_time.elapsed() > ERROR_DISPLAY_DURATION {
                 self.clear_error();
             }
+        }
+    }
+
+    // ===== MVU/Reducer: Centralized State Update =====
+
+    /// Process an action and update application state.
+    ///
+    /// This is the central reducer function following the MVU pattern.
+    /// All user-initiated state mutations should go through this method
+    /// to ensure consistent state transitions and testability.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // In input handler:
+    /// match key.code {
+    ///     KeyCode::Tab => app.update(Action::TabNext),
+    ///     KeyCode::Char('j') => app.update(Action::JobSelectNext),
+    ///     // ...
+    /// }
+    /// ```
+    #[allow(dead_code)] // Public API for MVU pattern; used by callers
+    pub fn update(&mut self, action: Action) {
+        match action {
+            // Tab Navigation
+            Action::TabNext => self.next_tab(),
+            Action::TabPrev => self.prev_tab(),
+            Action::TabSet(tab) => self.set_tab(tab),
+
+            // Jobs Tab
+            Action::JobSelectNext => self.select_next_job(),
+            Action::JobSelectPrev => self.select_prev_job(),
+            Action::JobSelectFirst => self.select_first_job(),
+            Action::JobSelectLast => self.select_last_job(),
+            Action::JobViewLog => self.view_job_log(),
+            Action::JobCancelRequest => self.request_cancel_selected_job(),
+            Action::JobDiffRequest => self.request_diff_job(),
+            Action::JobsRefresh => self.request_refresh_jobs(),
+
+            // Results Tab
+            Action::ResultsScrollUp => self.scroll_results_up(),
+            Action::ResultsScrollDown => self.scroll_results_down(),
+            Action::ResultsPageUp => self.scroll_results_page_up(),
+            Action::ResultsPageDown => self.scroll_results_page_down(),
+
+            // Log Tab
+            Action::LogScrollUp => self.scroll_log_up(),
+            Action::LogScrollDown => self.scroll_log_down(),
+            Action::LogPageUp => self.scroll_log_page_up(),
+            Action::LogPageDown => self.scroll_log_page_down(),
+            Action::LogScrollTop => self.scroll_log_top(),
+            Action::LogScrollBottom => self.scroll_log_bottom(),
+            Action::LogToggleFollow => self.toggle_log_follow(),
+
+            // Editor Tab
+            Action::EditorSubmitRequest => self.request_submit_from_editor(),
+
+            // SLURM
+            Action::SlurmToggle => self.toggle_slurm_view(),
+
+            // Materials Modal
+            Action::MaterialsOpen => self.open_materials_modal(),
+            Action::MaterialsClose => self.close_materials_modal(),
+            Action::MaterialsSearch => self.request_materials_search(),
+            Action::MaterialsGenerateD12 => self.request_generate_d12(),
+            Action::MaterialsSelectNext => self.materials.select_next(),
+            Action::MaterialsSelectPrev => self.materials.select_prev(),
+
+            // General
+            Action::ErrorClear => self.clear_error(),
+            Action::Quit => self.should_quit = true,
         }
     }
 
@@ -259,6 +462,13 @@ impl<'a> App<'a> {
 
     // ===== Jobs Management (Async Bridge) =====
 
+    /// Generate a new unique request ID.
+    fn next_request_id(&mut self) -> usize {
+        let id = self.next_request_id;
+        self.next_request_id = self.next_request_id.wrapping_add(1);
+        id
+    }
+
     /// Request a job list refresh (non-blocking).
     ///
     /// The actual fetch happens on the worker thread. Results are
@@ -269,9 +479,12 @@ impl<'a> App<'a> {
             return;
         }
 
-        match self.bridge.request_fetch_jobs() {
+        let request_id = self.next_request_id();
+        match self.bridge.request_fetch_jobs(request_id) {
             Ok(()) => {
                 self.pending_bridge_request = Some(BridgeRequestKind::FetchJobs);
+                self.pending_request_id = Some(request_id);
+                self.pending_bridge_request_time = Some(std::time::Instant::now());
             }
             Err(e) => {
                 self.set_error(format!("Failed to request jobs: {}", e));
@@ -288,9 +501,12 @@ impl<'a> App<'a> {
             return;
         }
 
-        match self.bridge.request_fetch_job_details(pk) {
+        let request_id = self.next_request_id();
+        match self.bridge.request_fetch_job_details(pk, request_id) {
             Ok(()) => {
                 self.pending_bridge_request = Some(BridgeRequestKind::FetchJobDetails);
+                self.pending_request_id = Some(request_id);
+                self.pending_bridge_request_time = Some(std::time::Instant::now());
             }
             Err(e) => {
                 self.set_error(format!("Failed to request job details: {}", e));
@@ -301,26 +517,130 @@ impl<'a> App<'a> {
     /// Poll for bridge responses and update state (non-blocking).
     ///
     /// Call this each frame to receive results from async Python operations.
+    /// Also checks for request timeouts to prevent deadlocks if the Python worker crashes.
     pub fn poll_bridge_responses(&mut self) {
+        // Check for request timeout to prevent deadlock if Python worker fails
+        if let (Some(kind), Some(start_time)) = (
+            self.pending_bridge_request.as_ref(),
+            self.pending_bridge_request_time,
+        ) {
+            if start_time.elapsed() > Self::BRIDGE_REQUEST_TIMEOUT {
+                warn!(
+                    "Bridge request {:?} timed out after {:?}, clearing pending state",
+                    kind,
+                    Self::BRIDGE_REQUEST_TIMEOUT
+                );
+                self.set_error(format!(
+                    "Python backend request timed out ({}s). The backend may be unresponsive.",
+                    Self::BRIDGE_REQUEST_TIMEOUT.as_secs()
+                ));
+                self.pending_bridge_request = None;
+                self.pending_request_id = None;
+                self.pending_bridge_request_time = None;
+                self.mark_dirty();
+            }
+        }
+
         while let Some(response) = self.bridge.poll_response() {
-            self.pending_bridge_request = None;
+            // Extract request_id from response to match against pending request.
+            // Only clear pending state if BOTH type and request ID match to prevent
+            // race conditions where a stale response clears the pending state.
+            let response_request_id = match &response {
+                BridgeResponse::Jobs { request_id, .. }
+                | BridgeResponse::JobDetails { request_id, .. }
+                | BridgeResponse::JobSubmitted { request_id, .. }
+                | BridgeResponse::JobCancelled { request_id, .. }
+                | BridgeResponse::JobLog { request_id, .. }
+                | BridgeResponse::MaterialsFound { request_id, .. }
+                | BridgeResponse::D12Generated { request_id, .. }
+                | BridgeResponse::SlurmQueue { request_id, .. }
+                | BridgeResponse::SlurmJobCancelled { request_id, .. }
+                | BridgeResponse::Clusters { request_id, .. }
+                | BridgeResponse::Cluster { request_id, .. }
+                | BridgeResponse::ClusterCreated { request_id, .. }
+                | BridgeResponse::ClusterUpdated { request_id, .. }
+                | BridgeResponse::ClusterDeleted { request_id, .. }
+                | BridgeResponse::ClusterConnectionTested { request_id, .. } => Some(*request_id),
+            };
+
+            // Check if response matches pending request by BOTH type AND request ID
+            let is_pending_match = match (&response, &self.pending_bridge_request) {
+                (BridgeResponse::Jobs { .. }, Some(BridgeRequestKind::FetchJobs))
+                | (BridgeResponse::JobDetails { .. }, Some(BridgeRequestKind::FetchJobDetails))
+                | (BridgeResponse::JobSubmitted { .. }, Some(BridgeRequestKind::SubmitJob))
+                | (BridgeResponse::JobCancelled { .. }, Some(BridgeRequestKind::CancelJob))
+                | (BridgeResponse::JobLog { .. }, Some(BridgeRequestKind::FetchJobLog)) => {
+                    // Must also match request ID to prevent stale response race condition
+                    response_request_id == self.pending_request_id
+                }
+                // Materials, SLURM, and Cluster responses use their own request_id tracking and should NOT
+                // affect pending_bridge_request (which tracks Job operations)
+                (BridgeResponse::MaterialsFound { .. }, _)
+                | (BridgeResponse::D12Generated { .. }, _)
+                | (BridgeResponse::SlurmQueue { .. }, _)
+                | (BridgeResponse::SlurmJobCancelled { .. }, _)
+                | (BridgeResponse::Clusters { .. }, _)
+                | (BridgeResponse::Cluster { .. }, _)
+                | (BridgeResponse::ClusterCreated { .. }, _)
+                | (BridgeResponse::ClusterUpdated { .. }, _)
+                | (BridgeResponse::ClusterDeleted { .. }, _)
+                | (BridgeResponse::ClusterConnectionTested { .. }, _) => false,
+                // Response doesn't match pending request type
+                _ => false,
+            };
+
+            if is_pending_match {
+                self.pending_bridge_request = None;
+                self.pending_request_id = None;
+                self.pending_bridge_request_time = None;
+            } else if response_request_id.is_some()
+                && self.pending_request_id.is_some()
+                && response_request_id != self.pending_request_id
+            {
+                // Log stale responses for debugging (request ID mismatch)
+                debug!(
+                    "Ignoring stale response (request_id {:?} != pending {:?})",
+                    response_request_id, self.pending_request_id
+                );
+            }
 
             match response {
-                BridgeResponse::Jobs(result) => {
+                BridgeResponse::Jobs { result, .. } => {
                     match result {
-                        Ok(jobs) => {
-                            self.jobs = jobs;
+                        Ok(new_jobs) => {
+                            // Track which jobs changed state since last refresh
+                            self.jobs_state.changed_pks.clear();
+                            let old_states: std::collections::HashMap<i32, _> = self
+                                .jobs_state.jobs
+                                .iter()
+                                .map(|j| (j.pk, j.state))
+                                .collect();
+
+                            for job in &new_jobs {
+                                if let Some(old_state) = old_states.get(&job.pk) {
+                                    if old_state != &job.state {
+                                        self.jobs_state.changed_pks.insert(job.pk);
+                                    }
+                                } else {
+                                    // New job - highlight it
+                                    self.jobs_state.changed_pks.insert(job.pk);
+                                }
+                            }
+
+                            self.jobs_state.jobs = new_jobs;
+                            self.jobs_state.last_refresh = Some(std::time::Instant::now());
+
                             // Adjust selection if needed
-                            if !self.jobs.is_empty() {
-                                if self.selected_job_index.is_none() {
-                                    self.selected_job_index = Some(0);
-                                } else if let Some(idx) = self.selected_job_index {
-                                    if idx >= self.jobs.len() {
-                                        self.selected_job_index = Some(self.jobs.len() - 1);
+                            if !self.jobs_state.jobs.is_empty() {
+                                if self.jobs_state.selected_index.is_none() {
+                                    self.jobs_state.selected_index = Some(0);
+                                } else if let Some(idx) = self.jobs_state.selected_index {
+                                    if idx >= self.jobs_state.jobs.len() {
+                                        self.jobs_state.selected_index = Some(self.jobs_state.jobs.len() - 1);
                                     }
                                 }
                             } else {
-                                self.selected_job_index = None;
+                                self.jobs_state.selected_index = None;
                             }
                             self.clear_error();
                         }
@@ -329,23 +649,21 @@ impl<'a> App<'a> {
                         }
                     }
                 }
-                BridgeResponse::JobDetails(result) => {
-                    match result {
-                        Ok(details) => {
-                            self.current_job_details = details;
-                            self.results_scroll = 0;
-                            if let Some(ref d) = self.current_job_details {
-                                self.log_lines = d.stdout_tail.clone();
-                                self.log_scroll = 0;
-                            }
-                            self.clear_error();
+                BridgeResponse::JobDetails { result, .. } => match result {
+                    Ok(details) => {
+                        self.current_job_details = details;
+                        self.results_scroll = 0;
+                        if let Some(ref d) = self.current_job_details {
+                            self.log_lines = d.stdout_tail.clone();
+                            self.log_scroll = 0;
                         }
-                        Err(e) => {
-                            self.set_error(format!("Failed to fetch job details: {}", e));
-                        }
+                        self.clear_error();
                     }
-                }
-                BridgeResponse::JobSubmitted(result) => {
+                    Err(e) => {
+                        self.set_error(format!("Failed to fetch job details: {}", e));
+                    }
+                },
+                BridgeResponse::JobSubmitted { result, .. } => {
                     match result {
                         Ok(pk) => {
                             info!("Job submitted with pk: {}", pk);
@@ -358,7 +676,7 @@ impl<'a> App<'a> {
                         }
                     }
                 }
-                BridgeResponse::JobCancelled(result) => {
+                BridgeResponse::JobCancelled { result, .. } => {
                     match result {
                         Ok(success) => {
                             if success {
@@ -375,15 +693,247 @@ impl<'a> App<'a> {
                         }
                     }
                 }
-                BridgeResponse::JobLog(result) => {
-                    match result {
-                        Ok(log) => {
-                            self.log_lines = log.stdout;
-                            self.log_scroll = 0;
-                            self.clear_error();
+                BridgeResponse::JobLog { result, .. } => match result {
+                    Ok(log) => {
+                        let was_at_bottom = self.log_scroll >= self.log_max_scroll();
+                        self.log_lines = log.stdout;
+
+                        // In follow mode or if we were already at bottom, scroll to bottom
+                        if self.log_follow_mode || was_at_bottom {
+                            // Recalculate max scroll with new content
+                            let max = self.log_max_scroll();
+                            self.log_scroll = max;
+                        } else {
+                            // Keep current scroll position, but clamp to valid range
+                            let max = self.log_max_scroll();
+                            self.log_scroll = self.log_scroll.min(max);
                         }
-                        Err(e) => {
-                            self.set_error(format!("Failed to fetch job log: {}", e));
+                        self.clear_error();
+                    }
+                    Err(e) => {
+                        self.set_error(format!("Failed to fetch job log: {}", e));
+                    }
+                },
+                // Materials Project API responses
+                BridgeResponse::MaterialsFound { request_id, result } => {
+                    // Only process if this is the current request (ignore stale responses)
+                    if request_id == self.materials.request_id && self.materials.active {
+                        self.materials.loading = false;
+                        match result {
+                            Ok(results) => {
+                                let count = results.len();
+                                self.materials.results = results;
+                                if count > 0 {
+                                    self.materials.table_state.select(Some(0));
+                                    self.materials
+                                        .set_status(&format!("Found {} structures", count), false);
+                                } else {
+                                    self.materials.set_status("No structures found", true);
+                                }
+                            }
+                            Err(e) => {
+                                self.materials.results.clear();
+                                self.materials
+                                    .set_status(&format!("Search failed: {}", e), true);
+                            }
+                        }
+                    } else {
+                        debug!(
+                            "Ignoring stale materials response (request_id={}, current={})",
+                            request_id, self.materials.request_id
+                        );
+                    }
+                }
+                BridgeResponse::D12Generated { request_id, result } => {
+                    // Only process if this is the current request
+                    if request_id == self.materials.request_id && self.materials.active {
+                        self.materials.loading = false;
+                        match result {
+                            Ok(d12_content) => {
+                                // Generate filename from material ID
+                                let filename = self
+                                    .materials
+                                    .selected_for_import
+                                    .as_ref()
+                                    .map(|mp_id| format!("{}.d12", mp_id.replace('-', "_")))
+                                    .unwrap_or_else(|| "imported.d12".to_string());
+
+                                // Use open_file to properly set up editor with LSP support
+                                // This sets editor_file_path, editor_file_uri, editor_dft_code,
+                                // editor_version, and notifies LSP via did_open.
+                                self.open_file(&filename, &d12_content);
+
+                                self.materials.close();
+                                self.current_tab = AppTab::Editor;
+                                info!("Imported .d12 content ({} bytes)", d12_content.len());
+                            }
+                            Err(e) => {
+                                self.materials
+                                    .set_status(&format!("Generation failed: {}", e), true);
+                                self.materials.selected_for_import = None;
+                            }
+                        }
+                    } else {
+                        debug!(
+                            "Ignoring stale D12 response (request_id={}, current={})",
+                            request_id, self.materials.request_id
+                        );
+                    }
+                }
+                // SLURM queue response
+                BridgeResponse::SlurmQueue { request_id, result } => {
+                    // Handle both old slurm_request_id and new modal state
+                    if request_id == self.slurm_request_id || request_id == self.slurm_queue_state.request_id {
+                        // Update modal state before consuming result
+                        self.slurm_queue_state.loading = false;
+                        if request_id == self.slurm_queue_state.request_id {
+                            match &result {
+                                Ok(entries) => {
+                                    if entries.is_empty() {
+                                        self.slurm_queue_state.error = Some("No jobs in queue".to_string());
+                                    } else {
+                                        self.slurm_queue_state.error = None;
+                                    }
+                                }
+                                Err(e) => {
+                                    self.slurm_queue_state.error = Some(format!("Error: {}", e));
+                                }
+                            }
+                        }
+
+                        // Now consume result for the old handler
+                        self.handle_slurm_queue_response(result);
+                    } else {
+                        // Ignore stale response
+                        debug!(
+                            "Ignoring stale SLURM queue response (request_id={}, current={}, modal={})",
+                            request_id, self.slurm_request_id, self.slurm_queue_state.request_id
+                        );
+                    }
+                }
+                BridgeResponse::SlurmJobCancelled { request_id, result } => {
+                    if request_id == self.slurm_request_id || request_id == self.slurm_queue_state.request_id {
+                        self.slurm_queue_state.loading = false;
+                        match result {
+                            Ok(cancel_result) => {
+                                if cancel_result.success {
+                                    let msg = cancel_result.message.unwrap_or_else(|| "Job cancelled".to_string());
+                                    info!("SLURM job cancelled: {}", msg);
+                                    self.slurm_queue_state.error = Some(format!("Success: {}", msg));
+                                    // Refresh the queue to reflect the cancellation
+                                    if self.slurm_queue_state.active {
+                                        self.refresh_slurm_queue();
+                                    } else {
+                                        self.request_fetch_slurm_queue();
+                                    }
+                                } else {
+                                    let msg = cancel_result.message.unwrap_or_else(|| "Unknown error".to_string());
+                                    let error_msg = format!("Cancel failed: {}", msg);
+                                    self.set_error(&error_msg);
+                                    self.slurm_queue_state.error = Some(error_msg);
+                                }
+                            }
+                            Err(e) => {
+                                let error_msg = format!("Cancel error: {}", e);
+                                self.set_error(&error_msg);
+                                self.slurm_queue_state.error = Some(error_msg);
+                            }
+                        }
+                    } else {
+                        debug!(
+                            "Ignoring stale SLURM cancel response (request_id={}, current={}, modal={})",
+                            request_id, self.slurm_request_id, self.slurm_queue_state.request_id
+                        );
+                    }
+                }
+                // Cluster management responses
+                BridgeResponse::Clusters { request_id, result } => {
+                    if request_id == self.cluster_manager.request_id {
+                        self.cluster_manager.loading = false;
+                        match result {
+                            Ok(clusters) => {
+                                let count = clusters.len();
+                                self.cluster_manager.clusters = clusters;
+                                if count > 0 && self.cluster_manager.selected_index.is_none() {
+                                    self.cluster_manager.selected_index = Some(0);
+                                }
+                                self.cluster_manager.set_status(&format!("Loaded {} clusters", count), false);
+                            }
+                            Err(e) => {
+                                self.cluster_manager.set_status(&format!("Failed to load clusters: {}", e), true);
+                            }
+                        }
+                    }
+                }
+                BridgeResponse::Cluster { request_id, result } => {
+                    debug!("Cluster response (request_id={}): {:?}", request_id, result.is_ok());
+                }
+                BridgeResponse::ClusterCreated { request_id, result } => {
+                    if request_id == self.cluster_manager.request_id {
+                        self.cluster_manager.loading = false;
+                        match result {
+                            Ok(cluster) => {
+                                self.cluster_manager.set_status(&format!("Created cluster '{}'", cluster.name), false);
+                                self.cluster_manager.cancel(); // Return to list view
+                                self.request_fetch_clusters(); // Refresh the list
+                            }
+                            Err(e) => {
+                                self.cluster_manager.set_status(&format!("Failed to create cluster: {}", e), true);
+                            }
+                        }
+                    }
+                }
+                BridgeResponse::ClusterUpdated { request_id, result } => {
+                    if request_id == self.cluster_manager.request_id {
+                        self.cluster_manager.loading = false;
+                        match result {
+                            Ok(cluster) => {
+                                self.cluster_manager.set_status(&format!("Updated cluster '{}'", cluster.name), false);
+                                self.cluster_manager.cancel(); // Return to list view
+                                self.request_fetch_clusters(); // Refresh the list
+                            }
+                            Err(e) => {
+                                self.cluster_manager.set_status(&format!("Failed to update cluster: {}", e), true);
+                            }
+                        }
+                    }
+                }
+                BridgeResponse::ClusterDeleted { request_id, result } => {
+                    if request_id == self.cluster_manager.request_id {
+                        self.cluster_manager.loading = false;
+                        match result {
+                            Ok(success) => {
+                                if success {
+                                    self.cluster_manager.set_status("Cluster deleted", false);
+                                    self.cluster_manager.cancel(); // Return to list view
+                                    self.cluster_manager.selected_index = None;
+                                    self.request_fetch_clusters(); // Refresh the list
+                                } else {
+                                    self.cluster_manager.set_status("Failed to delete cluster", true);
+                                }
+                            }
+                            Err(e) => {
+                                self.cluster_manager.set_status(&format!("Failed to delete cluster: {}", e), true);
+                            }
+                        }
+                    }
+                }
+                BridgeResponse::ClusterConnectionTested { request_id, result } => {
+                    if request_id == self.cluster_manager.request_id {
+                        self.cluster_manager.loading = false;
+                        match result {
+                            Ok(conn_result) => {
+                                use crate::ui::ConnectionTestResult;
+                                self.cluster_manager.connection_result = Some(ConnectionTestResult {
+                                    success: conn_result.success,
+                                    hostname: conn_result.hostname,
+                                    system_info: conn_result.system_info,
+                                    error: conn_result.error,
+                                });
+                            }
+                            Err(e) => {
+                                self.cluster_manager.set_status(&format!("Connection test failed: {}", e), true);
+                            }
                         }
                     }
                 }
@@ -400,14 +950,14 @@ impl<'a> App<'a> {
 
     /// Get the currently selected job.
     pub fn selected_job(&self) -> Option<&JobStatus> {
-        self.selected_job_index.and_then(|idx| self.jobs.get(idx))
+        self.jobs_state.selected_index.and_then(|idx| self.jobs_state.jobs.get(idx))
     }
 
     /// Select the previous job in the list.
     pub fn select_prev_job(&mut self) {
-        if let Some(idx) = self.selected_job_index {
+        if let Some(idx) = self.jobs_state.selected_index {
             if idx > 0 {
-                self.selected_job_index = Some(idx - 1);
+                self.jobs_state.selected_index = Some(idx - 1);
                 self.mark_dirty();
             }
         }
@@ -415,9 +965,9 @@ impl<'a> App<'a> {
 
     /// Select the next job in the list.
     pub fn select_next_job(&mut self) {
-        if let Some(idx) = self.selected_job_index {
-            if idx + 1 < self.jobs.len() {
-                self.selected_job_index = Some(idx + 1);
+        if let Some(idx) = self.jobs_state.selected_index {
+            if idx + 1 < self.jobs_state.jobs.len() {
+                self.jobs_state.selected_index = Some(idx + 1);
                 self.mark_dirty();
             }
         }
@@ -425,18 +975,394 @@ impl<'a> App<'a> {
 
     /// Select the first job.
     pub fn select_first_job(&mut self) {
-        if !self.jobs.is_empty() && self.selected_job_index != Some(0) {
-            self.selected_job_index = Some(0);
+        if !self.jobs_state.jobs.is_empty() && self.jobs_state.selected_index != Some(0) {
+            self.jobs_state.selected_index = Some(0);
             self.mark_dirty();
         }
     }
 
     /// Select the last job.
     pub fn select_last_job(&mut self) {
-        let last = self.jobs.len().saturating_sub(1);
-        if !self.jobs.is_empty() && self.selected_job_index != Some(last) {
-            self.selected_job_index = Some(last);
+        let last = self.jobs_state.jobs.len().saturating_sub(1);
+        if !self.jobs_state.jobs.is_empty() && self.jobs_state.selected_index != Some(last) {
+            self.jobs_state.selected_index = Some(last);
             self.mark_dirty();
+        }
+    }
+
+    // ===== Job Cancel Confirmation =====
+
+    /// Cancel confirmation timeout (3 seconds).
+    const CANCEL_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+    /// Request to cancel the selected job.
+    ///
+    /// Two-key confirmation flow:
+    /// - First press: sets pending_cancel_pk and shows confirmation prompt
+    /// - Second press within 3s: actually cancels the job
+    /// - Different job or timeout: resets confirmation state
+    pub fn request_cancel_selected_job(&mut self) {
+        let Some(job) = self.selected_job() else {
+            return;
+        };
+
+        let pk = job.pk;
+        let job_name = job.name.clone();
+
+        // Check if this is a confirmation of the same job
+        if let Some(pending_pk) = self.jobs_state.pending_cancel_pk {
+            if pending_pk == pk {
+                // Second press - actually cancel
+                self.confirm_cancel_job(pk);
+                return;
+            }
+        }
+
+        // First press or different job - set up confirmation
+        self.jobs_state.pending_cancel_pk = Some(pk);
+        self.jobs_state.pending_cancel_time = Some(std::time::Instant::now());
+        self.set_error(format!(
+            "Press 'c' again to cancel job {} ({})",
+            pk, job_name
+        ));
+        self.mark_dirty();
+    }
+
+    /// Actually cancel the job after confirmation.
+    fn confirm_cancel_job(&mut self, pk: i32) {
+        // Clear confirmation state
+        self.jobs_state.pending_cancel_pk = None;
+        self.jobs_state.pending_cancel_time = None;
+
+        // Don't request if another request is pending
+        if self.pending_bridge_request.is_some() {
+            self.set_error("Please wait for pending operation to complete");
+            return;
+        }
+
+        let request_id = self.next_request_id();
+        match self.bridge.request_cancel_job(pk, request_id) {
+            Ok(()) => {
+                self.pending_bridge_request = Some(BridgeRequestKind::CancelJob);
+                self.pending_request_id = Some(request_id);
+                self.pending_bridge_request_time = Some(std::time::Instant::now());
+                info!("Cancel request sent for job {}", pk);
+            }
+            Err(e) => {
+                self.set_error(format!("Failed to cancel job: {}", e));
+            }
+        }
+        self.mark_dirty();
+    }
+
+    /// Clear pending cancel confirmation (on timeout or explicit clear).
+    fn clear_cancel_confirmation(&mut self) {
+        if self.jobs_state.pending_cancel_pk.is_some() {
+            self.jobs_state.pending_cancel_pk = None;
+            self.jobs_state.pending_cancel_time = None;
+            self.clear_error();
+            self.mark_dirty();
+        }
+    }
+
+    /// Check if cancel confirmation has expired.
+    fn maybe_clear_cancel_confirmation(&mut self) {
+        if let Some(cancel_time) = self.jobs_state.pending_cancel_time {
+            if cancel_time.elapsed() > Self::CANCEL_CONFIRM_TIMEOUT {
+                self.clear_cancel_confirmation();
+            }
+        }
+    }
+
+    // ===== Job Submit from Editor =====
+
+    /// Submit confirmation timeout (3 seconds).
+    const SUBMIT_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+    /// Request to submit job from editor content.
+    ///
+    /// Two-key confirmation flow:
+    /// - First Ctrl+Enter: sets pending_submit and shows confirmation prompt
+    /// - Second Ctrl+Enter within 3s: actually submits the job
+    /// - Timeout: resets confirmation state
+    pub fn request_submit_from_editor(&mut self) {
+        // Check if editor has content
+        let content = self.editor.lines().join("\n");
+        if content.trim().is_empty() {
+            self.set_error("Editor is empty - nothing to submit");
+            return;
+        }
+
+        // Check if this is a confirmation
+        if self.jobs_state.pending_submit {
+            // Second press - actually submit
+            self.confirm_submit_job();
+            return;
+        }
+
+        // First press - set up confirmation
+        self.jobs_state.pending_submit = true;
+        self.jobs_state.pending_submit_time = Some(std::time::Instant::now());
+
+        // Generate job name from file path or content
+        let job_name = self
+            .editor_file_path
+            .as_ref()
+            .map(|p| {
+                std::path::Path::new(p)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("untitled")
+                    .to_string()
+            })
+            .unwrap_or_else(|| "untitled".to_string());
+
+        self.set_error(format!(
+            "Press Ctrl+Enter again to submit '{}' ({} chars)",
+            job_name,
+            content.len()
+        ));
+        self.mark_dirty();
+    }
+
+    /// Actually submit the job after confirmation.
+    fn confirm_submit_job(&mut self) {
+        use crate::models::{DftCode, JobSubmission};
+
+        // Clear confirmation state
+        self.jobs_state.pending_submit = false;
+        self.jobs_state.pending_submit_time = None;
+
+        // Don't request if another request is pending
+        if self.pending_bridge_request.is_some() {
+            self.set_error("Please wait for pending operation to complete");
+            return;
+        }
+
+        // Build job submission
+        let content = self.editor.lines().join("\n");
+        let job_name = self
+            .editor_file_path
+            .as_ref()
+            .map(|p| {
+                std::path::Path::new(p)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("untitled")
+                    .to_string()
+            })
+            .unwrap_or_else(|| format!("job_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S")));
+
+        // Determine DFT code from file extension or editor_dft_code
+        let dft_code = self
+            .editor_dft_code
+            .as_ref()
+            .map(|code| match code {
+                DftCodeType::Crystal => DftCode::Crystal,
+                DftCodeType::Vasp => DftCode::Vasp,
+            })
+            .unwrap_or(DftCode::Crystal); // Default to Crystal
+
+        let submission = JobSubmission::new(&job_name, dft_code).with_input_content(&content);
+
+        let request_id = self.next_request_id();
+        match self.bridge.request_submit_job(&submission, request_id) {
+            Ok(()) => {
+                self.pending_bridge_request = Some(BridgeRequestKind::SubmitJob);
+                self.pending_request_id = Some(request_id);
+                self.pending_bridge_request_time = Some(std::time::Instant::now());
+                info!("Submit request sent for job '{}'", job_name);
+                self.clear_error();
+            }
+            Err(e) => {
+                self.set_error(format!("Failed to submit job: {}", e));
+            }
+        }
+        self.mark_dirty();
+    }
+
+    /// Clear pending submit confirmation (on timeout or explicit clear).
+    fn clear_submit_confirmation(&mut self) {
+        if self.jobs_state.pending_submit {
+            self.jobs_state.pending_submit = false;
+            self.jobs_state.pending_submit_time = None;
+            self.clear_error();
+            self.mark_dirty();
+        }
+    }
+
+    /// Check if submit confirmation has expired.
+    fn maybe_clear_submit_confirmation(&mut self) {
+        if let Some(submit_time) = self.jobs_state.pending_submit_time {
+            if submit_time.elapsed() > Self::SUBMIT_CONFIRM_TIMEOUT {
+                self.clear_submit_confirmation();
+            }
+        }
+    }
+
+    // ===== Job Diff View =====
+
+    /// Handle 'd' key press for job diff comparison.
+    ///
+    /// Two-step flow:
+    /// - First 'd': Select current job as diff base
+    /// - Second 'd' on different job: Show diff between base and current
+    pub fn request_diff_job(&mut self) {
+        let Some(job) = self.selected_job() else {
+            return;
+        };
+
+        let pk = job.pk;
+        let job_name = job.name.clone();
+
+        // Check if we already have a base selected
+        if let Some(base_pk) = self.jobs_state.diff_base_pk {
+            if base_pk == pk {
+                // Same job - clear selection
+                self.jobs_state.diff_base_pk = None;
+                self.clear_error();
+                self.set_error("Diff selection cleared");
+            } else {
+                // Different job - show diff
+                // For now, show a placeholder since we'd need input_content from both jobs
+                self.set_error(format!(
+                    "Diff: Job {} vs Job {} (requires input_content)",
+                    base_pk, pk
+                ));
+                // TODO: Fetch input_content for both jobs and compute diff
+                // This would require adding a request_job_input_content method to bridge
+                self.jobs_state.diff_base_pk = None;
+            }
+        } else {
+            // First selection - mark as base
+            self.jobs_state.diff_base_pk = Some(pk);
+            self.set_error(format!(
+                "Diff base: {} (pk={}). Press 'd' on another job to compare",
+                job_name, pk
+            ));
+        }
+        self.mark_dirty();
+    }
+
+    /// Close the diff view modal.
+    #[allow(dead_code)] // Planned for job diff feature
+    pub fn close_diff_view(&mut self) {
+        self.jobs_state.diff_view_active = false;
+        self.jobs_state.diff_lines.clear();
+        self.jobs_state.diff_scroll = 0;
+        self.mark_dirty();
+    }
+
+    /// Scroll diff view up.
+    #[allow(dead_code)] // Planned for job diff feature
+    pub fn scroll_diff_up(&mut self) {
+        if self.jobs_state.diff_scroll > 0 {
+            self.jobs_state.diff_scroll -= 1;
+            self.mark_dirty();
+        }
+    }
+
+    /// Scroll diff view down.
+    #[allow(dead_code)] // Planned for job diff feature
+    pub fn scroll_diff_down(&mut self) {
+        let max = self.jobs_state.diff_lines.len().saturating_sub(20);
+        if self.jobs_state.diff_scroll < max {
+            self.jobs_state.diff_scroll += 1;
+            self.mark_dirty();
+        }
+    }
+
+    // ===== SLURM Queue Management =====
+
+    /// Toggle SLURM queue view visibility.
+    pub fn toggle_slurm_view(&mut self) {
+        self.slurm_view_active = !self.slurm_view_active;
+        if self.slurm_view_active {
+            // Request SLURM queue from bridge
+            self.set_error("SLURM queue: Connecting to cluster...");
+            self.request_fetch_slurm_queue();
+        }
+        self.mark_dirty();
+    }
+
+    /// Request SLURM queue fetch from bridge.
+    pub fn request_fetch_slurm_queue(&mut self) {
+        // Use the cluster ID from new_job state if selected, otherwise default to 1
+        let cluster_id = self.new_job.cluster_id.unwrap_or(1);
+        
+        let request_id = self.next_request_id();
+        self.slurm_request_id = request_id;
+        
+        if let Err(e) = self.bridge.request_fetch_slurm_queue(cluster_id, request_id) {
+            self.set_error(format!("Failed to request SLURM queue: {}", e));
+        }
+    }
+
+    /// Handle SLURM queue response from bridge.
+    pub fn handle_slurm_queue_response(&mut self, result: anyhow::Result<Vec<SlurmQueueEntry>>) {
+        match result {
+            Ok(entries) => {
+                self.slurm_queue = entries;
+                if self.slurm_queue.is_empty() {
+                    self.set_error("SLURM queue: No jobs in queue");
+                } else {
+                    self.set_error(format!("SLURM queue: {} jobs", self.slurm_queue.len()));
+                }
+            }
+            Err(e) => {
+                self.set_error(format!("SLURM queue error: {}", e));
+            }
+        }
+        self.mark_dirty();
+    }
+
+    /// Close the SLURM queue view.
+    #[allow(dead_code)] // Planned for SLURM integration
+    pub fn close_slurm_view(&mut self) {
+        self.slurm_view_active = false;
+        self.mark_dirty();
+    }
+
+    /// Select previous entry in SLURM queue.
+    #[allow(dead_code)] // Planned for SLURM integration
+    pub fn select_prev_slurm(&mut self) {
+        if let Some(idx) = self.slurm_selected {
+            if idx > 0 {
+                self.slurm_selected = Some(idx - 1);
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Select next entry in SLURM queue.
+    #[allow(dead_code)] // Planned for SLURM integration
+    pub fn select_next_slurm(&mut self) {
+        if let Some(idx) = self.slurm_selected {
+            if idx + 1 < self.slurm_queue.len() {
+                self.slurm_selected = Some(idx + 1);
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Cancel the selected SLURM job.
+    pub fn cancel_selected_slurm_job(&mut self) {
+        let cluster_id = self.new_job.cluster_id.unwrap_or(1);
+
+        if let Some(idx) = self.slurm_selected {
+            if let Some(job) = self.slurm_queue.get(idx) {
+                let job_id = job.job_id.clone();
+                let request_id = self.next_request_id();
+                self.slurm_request_id = request_id;
+
+                if let Err(e) = self.bridge.request_cancel_slurm_job(cluster_id, &job_id, request_id) {
+                    self.set_error(format!("Failed to request SLURM cancel: {}", e));
+                }
+            } else {
+                self.set_error("No SLURM job selected".to_string());
+            }
+        } else {
+            self.set_error("No SLURM job selected".to_string());
         }
     }
 
@@ -450,45 +1376,13 @@ impl<'a> App<'a> {
     // ===== Results Scrolling =====
 
     /// Get the content length for results view (number of lines in job details).
-    /// This matches the content rendered in src/ui/results.rs.
+    ///
+    /// Delegates to `JobDetails::display_line_count()` which is the single source
+    /// of truth for content height, matching src/ui/results.rs rendering.
     fn results_content_length(&self) -> usize {
         self.current_job_details
             .as_ref()
-            .map(|details| {
-                let mut lines = 0;
-                // Base lines always present
-                lines += 1; // Job name
-                lines += 1; // Status
-                lines += 1; // Empty separator
-                lines += 1; // === Results === header
-                lines += 1; // Final Energy
-                lines += 1; // Band Gap
-                lines += 1; // Convergence
-
-                // Optional fields
-                if details.scf_cycles.is_some() {
-                    lines += 1;
-                }
-                if details.wall_time_seconds.is_some() {
-                    lines += 1;
-                }
-
-                // Warnings section
-                if !details.warnings.is_empty() {
-                    lines += 1; // Empty separator
-                    lines += 1; // === Warnings === header
-                    lines += details.warnings.len();
-                }
-
-                // Errors section
-                if !details.errors.is_empty() {
-                    lines += 1; // Empty separator
-                    lines += 1; // === Errors === header
-                    lines += details.errors.len();
-                }
-
-                lines
-            })
+            .map(|details| details.display_line_count())
             .unwrap_or(0)
     }
 
@@ -534,7 +1428,9 @@ impl<'a> App<'a> {
         // Estimate visible height as 20 lines (conservative default)
         // Actual clamping happens in ui/log.rs with real area.height
         const ESTIMATED_VISIBLE_HEIGHT: usize = 20;
-        self.log_lines.len().saturating_sub(ESTIMATED_VISIBLE_HEIGHT)
+        self.log_lines
+            .len()
+            .saturating_sub(ESTIMATED_VISIBLE_HEIGHT)
     }
 
     pub fn scroll_log_up(&mut self) {
@@ -584,9 +1480,101 @@ impl<'a> App<'a> {
         }
     }
 
+    // ===== Log Streaming =====
+
+    /// Request log refresh for a specific job (non-blocking).
+    ///
+    /// Loads the last 100 lines of the job's output log.
+    /// If follow mode is active, this is called automatically every 2s.
+    pub fn request_log_refresh(&mut self, pk: i32) {
+        // Don't request if another request is pending
+        if self.pending_bridge_request.is_some() {
+            return;
+        }
+
+        let request_id = self.next_request_id();
+        match self.bridge.request_fetch_job_log(pk, 100, request_id) {
+            Ok(()) => {
+                self.pending_bridge_request = Some(BridgeRequestKind::FetchJobLog);
+                self.pending_request_id = Some(request_id);
+                self.pending_bridge_request_time = Some(std::time::Instant::now());
+                self.log_job_pk = Some(pk);
+                self.last_log_refresh = Some(std::time::Instant::now());
+            }
+            Err(e) => {
+                self.set_error(format!("Failed to request log: {}", e));
+            }
+        }
+    }
+
+    /// Toggle log follow mode on/off.
+    ///
+    /// When enabled, the log view auto-refreshes every 2 seconds
+    /// and auto-scrolls to the bottom to show new output.
+    pub fn toggle_log_follow(&mut self) {
+        self.log_follow_mode = !self.log_follow_mode;
+        if self.log_follow_mode {
+            // Start following - immediately refresh and scroll to bottom
+            if let Some(pk) = self.log_job_pk {
+                self.request_log_refresh(pk);
+            }
+            self.scroll_log_bottom();
+            info!("Log follow mode enabled");
+        } else {
+            info!("Log follow mode disabled");
+        }
+        self.mark_dirty();
+    }
+
+    /// Check if log follow mode should trigger a refresh.
+    ///
+    /// Called by tick() to handle follow mode timing.
+    fn maybe_refresh_log(&mut self) {
+        const LOG_FOLLOW_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+        if !self.log_follow_mode {
+            return;
+        }
+
+        // Only refresh if we're on the Log tab
+        if self.current_tab != AppTab::Log {
+            return;
+        }
+
+        // Only refresh if we have a job to monitor
+        let Some(pk) = self.log_job_pk else {
+            return;
+        };
+
+        // Check if enough time has passed since last refresh
+        if let Some(last_refresh) = self.last_log_refresh {
+            if last_refresh.elapsed() < LOG_FOLLOW_INTERVAL {
+                return;
+            }
+        }
+
+        // Trigger refresh
+        self.request_log_refresh(pk);
+    }
+
+    /// Load log for the selected job and switch to Log tab.
+    ///
+    /// Called when user presses a key to view logs.
+    pub fn view_job_log(&mut self) {
+        if let Some(job) = self.selected_job() {
+            let pk = job.pk;
+            self.log_job_pk = Some(pk);
+            self.log_lines.clear();
+            self.log_scroll = 0;
+            self.request_log_refresh(pk);
+            self.set_tab(AppTab::Log);
+        }
+    }
+
     // ===== Editor =====
 
     /// Open a file in the editor with LSP support.
+    #[allow(dead_code)] // Planned for file browser feature
     pub fn open_file(&mut self, path: &str, content: &str) {
         // Close previous file in LSP if any
         if let (Some(ref mut client), Some(ref old_path)) =
@@ -632,10 +1620,11 @@ impl<'a> App<'a> {
     }
 
     /// Called each frame to handle time-based updates.
-    /// Currently handles LSP debounce - flushes changes after 200ms.
+    /// Handles LSP debounce, log follow mode auto-refresh, and cancel confirmation timeout.
     pub fn tick(&mut self) {
         const LSP_DEBOUNCE_MS: u128 = 200;
 
+        // LSP change debounce
         if self.pending_lsp_change {
             if let Some(change_time) = self.last_editor_change {
                 if change_time.elapsed().as_millis() >= LSP_DEBOUNCE_MS {
@@ -643,6 +1632,15 @@ impl<'a> App<'a> {
                 }
             }
         }
+
+        // Log follow mode auto-refresh
+        self.maybe_refresh_log();
+
+        // Cancel confirmation timeout
+        self.maybe_clear_cancel_confirmation();
+
+        // Submit confirmation timeout
+        self.maybe_clear_submit_confirmation();
     }
 
     /// Send pending LSP change notification.
@@ -661,9 +1659,436 @@ impl<'a> App<'a> {
     }
 
     /// Get the current editor content.
+    #[allow(dead_code)] // Planned for file save feature
     pub fn editor_content(&self) -> String {
         self.editor.lines().join("\n")
     }
+
+    // ===== Materials Project Modal =====
+
+    /// Open the Materials Project search modal.
+    pub fn open_materials_modal(&mut self) {
+        self.materials.open();
+        self.mark_dirty();
+    }
+
+    /// Close the Materials Project search modal.
+    pub fn close_materials_modal(&mut self) {
+        self.materials.close();
+        self.mark_dirty();
+    }
+
+    /// Request a materials search by formula (non-blocking).
+    ///
+    /// The search runs asynchronously via the Python bridge.
+    /// Results are delivered via `poll_bridge_responses()`.
+    pub fn request_materials_search(&mut self) {
+        let formula = self.materials.query();
+        if formula.is_empty() {
+            self.materials.set_status("Please enter a formula", true);
+            self.mark_dirty();
+            return;
+        }
+
+        // Increment request ID to track this search
+        self.materials.request_id += 1;
+        self.materials.loading = true;
+        self.materials
+            .set_status(&format!("Searching for {}...", formula), false);
+        self.mark_dirty();
+
+        match self.bridge.request_search_materials(
+            &formula,
+            20, // limit
+            self.materials.request_id,
+        ) {
+            Ok(()) => {
+                debug!("Materials search requested: {}", formula);
+            }
+            Err(e) => {
+                self.materials.loading = false;
+                self.materials
+                    .set_status(&format!("Search failed: {}", e), true);
+            }
+        }
+    }
+
+    /// Request D12 generation for the selected material (non-blocking).
+    ///
+    /// Generates a CRYSTAL23 .d12 input file from the selected Materials Project structure.
+    /// The result is delivered via `poll_bridge_responses()`.
+    pub fn request_generate_d12(&mut self) {
+        let Some(material) = self.materials.selected_material() else {
+            self.materials
+                .set_status("Please select a structure first", true);
+            self.mark_dirty();
+            return;
+        };
+
+        let mp_id = material.material_id.clone();
+        let formula = material
+            .formula
+            .clone()
+            .or_else(|| material.formula_pretty.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Increment request ID to track this generation
+        self.materials.request_id += 1;
+        self.materials.loading = true;
+        self.materials.selected_for_import = Some(mp_id.clone());
+        self.materials.set_status(
+            &format!("Generating CRYSTAL23 input for {}...", formula),
+            false,
+        );
+        self.mark_dirty();
+
+        // Serialize config to JSON
+        let config_json = match serde_json::to_string(&self.materials.d12_config) {
+            Ok(json) => json,
+            Err(e) => {
+                self.materials.loading = false;
+                self.materials.selected_for_import = None;
+                self.materials
+                    .set_status(&format!("Config error: {}", e), true);
+                return;
+            }
+        };
+
+        match self
+            .bridge
+            .request_generate_d12(&mp_id, &config_json, self.materials.request_id)
+        {
+            Ok(()) => {
+                info!("D12 generation requested for {}", mp_id);
+            }
+            Err(e) => {
+                self.materials.loading = false;
+                self.materials.selected_for_import = None;
+                self.materials
+                    .set_status(&format!("Generation failed: {}", e), true);
+            }
+        }
+    }
+
+    /// Check if the materials modal is active.
+    pub fn is_materials_modal_active(&self) -> bool {
+        self.materials.active
+    }
+
+    // ===== New Job Modal =====
+
+    /// Check if the new job modal is active.
+    pub fn is_new_job_modal_active(&self) -> bool {
+        self.new_job.active
+    }
+
+    /// Open the new job modal.
+    pub fn open_new_job_modal(&mut self) {
+        self.new_job.open();
+        self.mark_dirty();
+    }
+
+    /// Close the new job modal.
+    pub fn close_new_job_modal(&mut self) {
+        self.new_job.close();
+        self.mark_dirty();
+    }
+
+    /// Submit the new job from the modal.
+    ///
+    /// Uses the editor content as input and metadata from the modal form.
+    pub fn submit_new_job(&mut self) {
+        // Validate the form
+        if let Err(e) = self.new_job.validate_name() {
+            self.new_job.set_error(e);
+            self.mark_dirty();
+            return;
+        }
+
+        // Get editor content
+        let content = self.editor.lines().join("\n");
+        if content.trim().is_empty() {
+            self.new_job.set_error("Editor is empty - add input content first");
+            self.mark_dirty();
+            return;
+        }
+
+        // Build submission
+        let submission = crate::models::JobSubmission::new(&self.new_job.job_name, self.new_job.dft_code)
+            .with_input_content(&content)
+            .with_runner_type_str(&self.new_job.runner_type);
+
+        let submission = if let Some(cluster_id) = self.new_job.cluster_id {
+            submission.with_cluster_id(cluster_id)
+        } else {
+            submission
+        };
+
+        // Submit via bridge
+        let request_id = self.next_request_id();
+        if let Err(e) = self.bridge.request_submit_job(&submission, request_id) {
+            self.new_job.set_error(&format!("Failed to submit: {}", e));
+            self.mark_dirty();
+            return;
+        }
+
+        // Mark as submitting
+        self.new_job.submitting = true;
+        self.pending_bridge_request = Some(BridgeRequestKind::SubmitJob);
+        self.pending_request_id = Some(request_id);
+        self.pending_bridge_request_time = Some(std::time::Instant::now());
+        self.mark_dirty();
+
+        // Close modal (response will be handled in poll_bridge_responses)
+        self.new_job.close();
+    }
+
+    // ===== Cluster Manager Modal =====
+
+    /// Check if the cluster manager modal is active.
+    pub fn is_cluster_manager_modal_active(&self) -> bool {
+        self.cluster_manager.active
+    }
+
+    /// Open the cluster manager modal and request cluster list.
+    pub fn open_cluster_manager_modal(&mut self) {
+        self.cluster_manager.open();
+        self.request_fetch_clusters();
+        self.mark_dirty();
+    }
+
+    /// Close the cluster manager modal.
+    pub fn close_cluster_manager_modal(&mut self) {
+        self.cluster_manager.close();
+        self.mark_dirty();
+    }
+
+    /// Request the list of clusters from the backend.
+    pub fn request_fetch_clusters(&mut self) {
+        let request_id = self.next_request_id();
+        self.cluster_manager.request_id = request_id;
+        self.cluster_manager.loading = true;
+        if let Err(e) = self.bridge.request_fetch_clusters(request_id) {
+            self.cluster_manager.set_status(&format!("Failed to fetch clusters: {}", e), true);
+            self.cluster_manager.loading = false;
+        }
+        self.mark_dirty();
+    }
+
+    /// Request to create a new cluster from form data.
+    pub fn create_cluster_from_form(&mut self) {
+        match self.cluster_manager.build_config() {
+            Ok(config) => {
+                let request_id = self.next_request_id();
+                self.cluster_manager.request_id = request_id;
+                self.cluster_manager.loading = true;
+                if let Err(e) = self.bridge.request_create_cluster(&config, request_id) {
+                    self.cluster_manager.set_status(&format!("Failed to create cluster: {}", e), true);
+                    self.cluster_manager.loading = false;
+                }
+                self.mark_dirty();
+            }
+            Err(e) => {
+                self.cluster_manager.set_status(&e, true);
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Request to update an existing cluster from form data.
+    pub fn update_cluster_from_form(&mut self) {
+        let cluster_id = match self.cluster_manager.editing_cluster_id {
+            Some(id) => id,
+            None => {
+                self.cluster_manager.set_status("No cluster selected for editing", true);
+                self.mark_dirty();
+                return;
+            }
+        };
+
+        match self.cluster_manager.build_config() {
+            Ok(config) => {
+                let request_id = self.next_request_id();
+                self.cluster_manager.request_id = request_id;
+                self.cluster_manager.loading = true;
+                if let Err(e) = self.bridge.request_update_cluster(cluster_id, &config, request_id) {
+                    self.cluster_manager.set_status(&format!("Failed to update cluster: {}", e), true);
+                    self.cluster_manager.loading = false;
+                }
+                self.mark_dirty();
+            }
+            Err(e) => {
+                self.cluster_manager.set_status(&e, true);
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Request to delete the selected cluster.
+    pub fn delete_selected_cluster(&mut self) {
+        let cluster_id = match self.cluster_manager.selected_cluster() {
+            Some(c) => match c.id {
+                Some(id) => id,
+                None => {
+                    self.cluster_manager.set_status("Cluster has no ID", true);
+                    self.mark_dirty();
+                    return;
+                }
+            },
+            None => {
+                self.cluster_manager.set_status("No cluster selected", true);
+                self.mark_dirty();
+                return;
+            }
+        };
+
+        let request_id = self.next_request_id();
+        self.cluster_manager.request_id = request_id;
+        self.cluster_manager.loading = true;
+        if let Err(e) = self.bridge.request_delete_cluster(cluster_id, request_id) {
+            self.cluster_manager.set_status(&format!("Failed to delete cluster: {}", e), true);
+            self.cluster_manager.loading = false;
+        }
+        self.mark_dirty();
+    }
+
+    /// Request to test SSH connection to the selected cluster.
+    pub fn test_selected_cluster_connection(&mut self) {
+        let cluster_id = match self.cluster_manager.selected_cluster() {
+            Some(c) => match c.id {
+                Some(id) => id,
+                None => {
+                    self.cluster_manager.set_status("Cluster has no ID", true);
+                    self.mark_dirty();
+                    return;
+                }
+            },
+            None => {
+                self.cluster_manager.set_status("No cluster selected", true);
+                self.mark_dirty();
+                return;
+            }
+        };
+
+        let request_id = self.next_request_id();
+        self.cluster_manager.request_id = request_id;
+        self.cluster_manager.loading = true;
+        self.cluster_manager.connection_result = None;
+        self.cluster_manager.set_status("Testing connection...", false);
+        if let Err(e) = self.bridge.request_test_cluster_connection(cluster_id, request_id) {
+            self.cluster_manager.set_status(&format!("Failed to test connection: {}", e), true);
+            self.cluster_manager.loading = false;
+        }
+        self.mark_dirty();
+    }
+
+    // ===== SLURM Queue Modal =====
+
+    /// Check if the SLURM queue modal is active.
+    pub fn is_slurm_queue_modal_active(&self) -> bool {
+        self.slurm_queue_state.active
+    }
+
+    /// Open the SLURM queue modal for a given cluster and request queue fetch.
+    pub fn open_slurm_queue_modal(&mut self, cluster_id: i32) {
+        self.slurm_queue_state.open(cluster_id);
+        self.request_fetch_slurm_queue_for_cluster(cluster_id);
+        self.mark_dirty();
+    }
+
+    /// Close the SLURM queue modal.
+    pub fn close_slurm_queue_modal(&mut self) {
+        self.slurm_queue_state.close();
+        self.mark_dirty();
+    }
+
+    /// Request SLURM queue for a specific cluster.
+    fn request_fetch_slurm_queue_for_cluster(&mut self, cluster_id: i32) {
+        let request_id = self.next_request_id();
+        self.slurm_queue_state.request_id = request_id;
+        self.slurm_queue_state.loading = true;
+        self.slurm_queue_state.error = None;
+
+        if let Err(e) = self.bridge.request_fetch_slurm_queue(cluster_id, request_id) {
+            self.slurm_queue_state.error = Some(format!("Failed to fetch SLURM queue: {}", e));
+            self.slurm_queue_state.loading = false;
+        }
+        self.mark_dirty();
+    }
+
+    /// Refresh the SLURM queue for the currently selected cluster.
+    pub fn refresh_slurm_queue(&mut self) {
+        if let Some(cluster_id) = self.slurm_queue_state.cluster_id {
+            self.request_fetch_slurm_queue_for_cluster(cluster_id);
+        }
+    }
+
+    /// Cancel the selected SLURM job.
+    pub fn cancel_selected_slurm_job_from_modal(&mut self) {
+        if let Some(cluster_id) = self.slurm_queue_state.cluster_id {
+            if let Some(entry) = self.slurm_queue_state.selected_entry(&self.slurm_queue) {
+                let job_id = entry.job_id.clone();
+                let request_id = self.next_request_id();
+
+                self.slurm_queue_state.loading = true;
+                self.slurm_queue_state.error = Some(format!("Cancelling job {}...", job_id));
+
+                if let Err(e) = self.bridge.request_cancel_slurm_job(cluster_id, &job_id, request_id) {
+                    self.slurm_queue_state.error = Some(format!("Failed to cancel job: {}", e));
+                    self.slurm_queue_state.loading = false;
+                }
+                self.mark_dirty();
+            }
+        }
+    }
+
+    // ===== VASP Input Modal =====
+
+    /// Check if the VASP input modal is active.
+    pub fn is_vasp_input_modal_active(&self) -> bool {
+        self.vasp_input_state.active
+    }
+
+    /// Open the VASP input modal.
+    pub fn open_vasp_input_modal(&mut self) {
+        self.vasp_input_state.open();
+        self.mark_dirty();
+    }
+
+    /// Close the VASP input modal.
+    pub fn close_vasp_input_modal(&mut self) {
+        self.vasp_input_state.close();
+        self.mark_dirty();
+    }
+
+    /// Submit VASP job from the modal.
+    pub fn submit_vasp_job(&mut self) {
+        // Validate input files
+        if let Err(e) = self.vasp_input_state.validate() {
+            self.vasp_input_state.set_error(e);
+            self.mark_dirty();
+            return;
+        }
+
+        // Extract content from all editors
+        let files = self.vasp_input_state.get_contents();
+
+        // Log the submission for now (TODO: integrate with Python backend)
+        info!("Submitting VASP job:");
+        info!("  POSCAR: {} lines", files.poscar.lines().count());
+        info!("  INCAR: {} lines", files.incar.lines().count());
+        info!("  KPOINTS: {} lines", files.kpoints.lines().count());
+        info!("  POTCAR config: {}", files.potcar_config);
+
+        // Set success status (Dry-run)
+        self.vasp_input_state.set_status("VASP job validated (Submission pending backend integration)".to_string());
+        self.mark_dirty();
+
+        // TODO: Send to Python backend for actual job creation
+        // self.bridge.request_create_vasp_job(files, request_id)
+    }
+
+    // ===== LSP Events =====
 
     /// Process pending LSP events (non-blocking).
     /// Returns true if any events were processed (UI may need redraw).
@@ -706,6 +2131,11 @@ impl<'a> App<'a> {
                 }
                 LspEvent::ServerError(err) => {
                     warn!("LSP server error: {}. Disabling LSP.", err);
+                    // Show user-visible error
+                    self.set_error(format!(
+                        "Language server error: {}. Code validation disabled.",
+                        err
+                    ));
                     // Disable LSP client and clear diagnostics
                     self.lsp_client = None;
                     self.lsp_diagnostics.clear();
@@ -713,5 +2143,511 @@ impl<'a> App<'a> {
                 }
             }
         }
+    }
+}
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    // =========================================================================
+    // Mock Services for Dependency Injection
+    // =========================================================================
+
+    /// Mock implementation of BridgeService for testing.
+    ///
+    /// Captures requests and returns predetermined responses.
+    /// Uses interior mutability (RefCell) to track calls.
+    struct MockBridgeService {
+        /// Responses to return from poll_response().
+        responses: RefCell<Vec<BridgeResponse>>,
+        /// Capture of requests made to the service.
+        requests: RefCell<Vec<String>>,
+    }
+
+    impl MockBridgeService {
+        fn new() -> Self {
+            Self {
+                responses: RefCell::new(Vec::new()),
+                requests: RefCell::new(Vec::new()),
+            }
+        }
+
+        /// Add a response to be returned by poll_response().
+        #[allow(dead_code)]
+        fn add_response(&self, response: BridgeResponse) {
+            self.responses.borrow_mut().push(response);
+        }
+    }
+
+    impl BridgeService for MockBridgeService {
+        fn request_fetch_jobs(&self, request_id: usize) -> anyhow::Result<()> {
+            self.requests
+                .borrow_mut()
+                .push(format!("fetch_jobs:{}", request_id));
+            Ok(())
+        }
+
+        fn request_fetch_job_details(&self, pk: i32, request_id: usize) -> anyhow::Result<()> {
+            self.requests
+                .borrow_mut()
+                .push(format!("fetch_job_details:{}:{}", pk, request_id));
+            Ok(())
+        }
+
+        fn request_submit_job(
+            &self,
+            _submission: &crate::models::JobSubmission,
+            request_id: usize,
+        ) -> anyhow::Result<()> {
+            self.requests
+                .borrow_mut()
+                .push(format!("submit_job:{}", request_id));
+            Ok(())
+        }
+
+        fn request_cancel_job(&self, pk: i32, request_id: usize) -> anyhow::Result<()> {
+            self.requests
+                .borrow_mut()
+                .push(format!("cancel_job:{}:{}", pk, request_id));
+            Ok(())
+        }
+
+        fn request_fetch_job_log(
+            &self,
+            pk: i32,
+            tail_lines: i32,
+            request_id: usize,
+        ) -> anyhow::Result<()> {
+            self.requests.borrow_mut().push(format!(
+                "fetch_job_log:{}:{}:{}",
+                pk, tail_lines, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_search_materials(
+            &self,
+            formula: &str,
+            limit: usize,
+            request_id: usize,
+        ) -> anyhow::Result<()> {
+            self.requests.borrow_mut().push(format!(
+                "search_materials:{}:{}:{}",
+                formula, limit, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_generate_d12(
+            &self,
+            mp_id: &str,
+            _config_json: &str,
+            request_id: usize,
+        ) -> anyhow::Result<()> {
+            self.requests
+                .borrow_mut()
+                .push(format!("generate_d12:{}:{}", mp_id, request_id));
+            Ok(())
+        }
+
+        fn request_fetch_slurm_queue(
+            &self,
+            cluster_id: i32,
+            request_id: usize,
+        ) -> anyhow::Result<()> {
+            self.requests.borrow_mut().push(format!(
+                "fetch_slurm_queue:{}:{}",
+                cluster_id, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_cancel_slurm_job(
+            &self,
+            cluster_id: i32,
+            slurm_job_id: &str,
+            request_id: usize,
+        ) -> anyhow::Result<()> {
+            self.requests.borrow_mut().push(format!(
+                "cancel_slurm_job:{}:{}:{}",
+                cluster_id, slurm_job_id, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_fetch_clusters(&self, request_id: usize) -> anyhow::Result<()> {
+            self.requests
+                .borrow_mut()
+                .push(format!("fetch_clusters:{}", request_id));
+            Ok(())
+        }
+
+        fn request_fetch_cluster(&self, cluster_id: i32, request_id: usize) -> anyhow::Result<()> {
+            self.requests.borrow_mut().push(format!(
+                "fetch_cluster:{}:{}",
+                cluster_id, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_create_cluster(
+            &self,
+            _config: &crate::models::ClusterConfig,
+            request_id: usize,
+        ) -> anyhow::Result<()> {
+            self.requests
+                .borrow_mut()
+                .push(format!("create_cluster:{}", request_id));
+            Ok(())
+        }
+
+        fn request_update_cluster(
+            &self,
+            cluster_id: i32,
+            _config: &crate::models::ClusterConfig,
+            request_id: usize,
+        ) -> anyhow::Result<()> {
+            self.requests.borrow_mut().push(format!(
+                "update_cluster:{}:{}",
+                cluster_id, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> anyhow::Result<()> {
+            self.requests.borrow_mut().push(format!(
+                "delete_cluster:{}:{}",
+                cluster_id, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_test_cluster_connection(&self, cluster_id: i32, request_id: usize) -> anyhow::Result<()> {
+            self.requests.borrow_mut().push(format!(
+                "test_cluster_connection:{}:{}",
+                cluster_id, request_id
+            ));
+            Ok(())
+        }
+
+        fn poll_response(&self) -> Option<BridgeResponse> {
+            let mut responses = self.responses.borrow_mut();
+            if responses.is_empty() {
+                None
+            } else {
+                Some(responses.remove(0))
+            }
+        }
+    }
+
+    /// Mock implementation of LspService for testing.
+    struct MockLspService {
+        calls: RefCell<Vec<String>>,
+    }
+
+    impl MockLspService {
+        fn new() -> Self {
+            Self {
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl LspService for MockLspService {
+        fn send_initialized(&mut self) -> anyhow::Result<()> {
+            self.calls.borrow_mut().push("initialized".to_string());
+            Ok(())
+        }
+
+        fn did_open(&mut self, file_path: &str, _text: &str) -> anyhow::Result<()> {
+            self.calls
+                .borrow_mut()
+                .push(format!("did_open:{}", file_path));
+            Ok(())
+        }
+
+        fn did_change(&mut self, file_path: &str, version: i32, _text: &str) -> anyhow::Result<()> {
+            self.calls
+                .borrow_mut()
+                .push(format!("did_change:{}:{}", file_path, version));
+            Ok(())
+        }
+
+        fn did_close(&mut self, file_path: &str) -> anyhow::Result<()> {
+            self.calls
+                .borrow_mut()
+                .push(format!("did_close:{}", file_path));
+            Ok(())
+        }
+    }
+
+    // =========================================================================
+    // AppTab Tests
+    // =========================================================================
+
+    #[test]
+    fn test_app_tab_name() {
+        assert_eq!(AppTab::Jobs.name(), "Jobs");
+        assert_eq!(AppTab::Editor.name(), "Editor");
+        assert_eq!(AppTab::Results.name(), "Results");
+        assert_eq!(AppTab::Log.name(), "Log");
+    }
+
+    #[test]
+    fn test_app_tab_all() {
+        let tabs = AppTab::all();
+        assert_eq!(tabs.len(), 4);
+        assert_eq!(tabs[0], AppTab::Jobs);
+        assert_eq!(tabs[1], AppTab::Editor);
+        assert_eq!(tabs[2], AppTab::Results);
+        assert_eq!(tabs[3], AppTab::Log);
+    }
+
+    // =========================================================================
+    // JobsState Tests
+    // =========================================================================
+
+    #[test]
+    fn test_jobs_state_default() {
+        let state = JobsState::default();
+        assert!(state.jobs.is_empty());
+        assert!(state.selected_index.is_none());
+        assert!(state.changed_pks.is_empty());
+        assert!(state.last_refresh.is_none());
+        assert!(state.pending_cancel_pk.is_none());
+        assert!(!state.pending_submit);
+    }
+
+    #[test]
+    fn test_jobs_state_select_next_empty() {
+        let mut state = JobsState::default();
+        state.select_next();
+        assert!(state.selected_index.is_none());
+    }
+
+    #[test]
+    fn test_jobs_state_select_prev_empty() {
+        let mut state = JobsState::default();
+        state.select_prev();
+        assert!(state.selected_index.is_none());
+    }
+
+    #[test]
+    fn test_jobs_state_clear_pending_cancel() {
+        let mut state = JobsState {
+            pending_cancel_pk: Some(123),
+            pending_cancel_time: Some(std::time::Instant::now()),
+            ..Default::default()
+        };
+
+        state.clear_pending_cancel();
+
+        assert!(state.pending_cancel_pk.is_none());
+    }
+
+    #[test]
+    fn test_jobs_state_clear_pending_submit() {
+        let mut state = JobsState {
+            pending_submit: true,
+            pending_submit_time: Some(std::time::Instant::now()),
+            ..Default::default()
+        };
+
+        state.clear_pending_submit();
+
+        assert!(!state.pending_submit);
+    }
+
+    // =========================================================================
+    // MaterialsSearchState Tests
+    // =========================================================================
+
+    #[test]
+    fn test_materials_search_state_default() {
+        let state = MaterialsSearchState::default();
+        assert!(!state.active);
+        assert!(state.results.is_empty());
+        assert!(!state.loading);
+        assert!(state.status.is_some());
+        assert!(!state.status_is_error);
+    }
+
+    /// Helper to create a minimal MaterialResult for testing.
+    fn test_material(id: &str, formula: &str) -> MaterialResult {
+        MaterialResult {
+            material_id: id.to_string(),
+            formula: Some(formula.to_string()),
+            formula_pretty: None,
+            source: None,
+            properties: Default::default(),
+            metadata: serde_json::Value::Null,
+            structure: None,
+        }
+    }
+
+    #[test]
+    fn test_materials_search_state_open() {
+        let mut state = MaterialsSearchState::default();
+        state.results.push(test_material("mp-1234", "MoS2"));
+        state.loading = true;
+
+        state.open();
+
+        assert!(state.active);
+        assert!(state.results.is_empty()); // Cleared on open
+        assert!(!state.loading); // Reset on open
+    }
+
+    #[test]
+    fn test_materials_search_state_close_increments_request_id() {
+        let mut state = MaterialsSearchState::default();
+        let initial_id = state.request_id;
+
+        state.close();
+
+        assert!(!state.active);
+        assert_eq!(state.request_id, initial_id + 1);
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)] // MaterialsSearchState has complex init
+    fn test_materials_search_state_select_next() {
+        let mut state = MaterialsSearchState::default();
+        state.results = vec![test_material("mp-1", "A"), test_material("mp-2", "B")];
+
+        state.select_next();
+        assert_eq!(state.table_state.selected(), Some(0));
+
+        state.select_next();
+        assert_eq!(state.table_state.selected(), Some(1));
+
+        state.select_next(); // Wraps around
+        assert_eq!(state.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)] // MaterialsSearchState has complex init
+    fn test_materials_search_state_select_prev() {
+        let mut state = MaterialsSearchState::default();
+        state.results = vec![test_material("mp-1", "A"), test_material("mp-2", "B")];
+
+        state.select_prev();
+        assert_eq!(state.table_state.selected(), Some(0));
+
+        state.select_prev(); // Wraps around
+        assert_eq!(state.table_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn test_materials_search_state_set_status() {
+        let mut state = MaterialsSearchState::default();
+
+        state.set_status("Test error", true);
+        assert_eq!(state.status, Some("Test error".to_string()));
+        assert!(state.status_is_error);
+
+        state.set_status("Test info", false);
+        assert_eq!(state.status, Some("Test info".to_string()));
+        assert!(!state.status_is_error);
+    }
+
+    // =========================================================================
+    // Action Enum Tests
+    // =========================================================================
+
+    #[test]
+    fn test_action_debug_format() {
+        let action = Action::TabNext;
+        let debug_str = format!("{:?}", action);
+        assert_eq!(debug_str, "TabNext");
+    }
+
+    #[test]
+    fn test_action_clone() {
+        let action = Action::TabSet(AppTab::Editor);
+        let cloned = action.clone();
+        assert_eq!(action, cloned);
+    }
+
+    #[test]
+    fn test_action_equality() {
+        assert_eq!(Action::TabNext, Action::TabNext);
+        assert_ne!(Action::TabNext, Action::TabPrev);
+        assert_eq!(
+            Action::TabSet(AppTab::Jobs),
+            Action::TabSet(AppTab::Jobs)
+        );
+        assert_ne!(
+            Action::TabSet(AppTab::Jobs),
+            Action::TabSet(AppTab::Editor)
+        );
+    }
+
+    // =========================================================================
+    // Mock Service Tests (verify mocks work correctly)
+    // =========================================================================
+
+    #[test]
+    fn test_mock_bridge_service_captures_requests() {
+        let mock = MockBridgeService::new();
+
+        mock.request_fetch_jobs(1).unwrap();
+        mock.request_fetch_job_details(42, 2).unwrap();
+
+        let requests = mock.requests.borrow();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0], "fetch_jobs:1");
+        assert_eq!(requests[1], "fetch_job_details:42:2");
+    }
+
+    #[test]
+    fn test_mock_bridge_service_returns_responses() {
+        let mock = MockBridgeService::new();
+
+        // Initially no responses
+        assert!(mock.poll_response().is_none());
+
+        // Add a response
+        mock.add_response(BridgeResponse::Jobs {
+            request_id: 1,
+            result: Ok(vec![]),
+        });
+
+        // Now we get the response
+        let response = mock.poll_response();
+        assert!(response.is_some());
+        match response.unwrap() {
+            BridgeResponse::Jobs { request_id, result } => {
+                assert_eq!(request_id, 1);
+                assert!(result.is_ok());
+            }
+            _ => panic!("Expected Jobs response"),
+        }
+
+        // No more responses
+        assert!(mock.poll_response().is_none());
+    }
+
+    #[test]
+    fn test_mock_lsp_service_captures_calls() {
+        let mut mock = MockLspService::new();
+
+        mock.send_initialized().unwrap();
+        mock.did_open("test.d12", "content").unwrap();
+        mock.did_change("test.d12", 2, "new content").unwrap();
+        mock.did_close("test.d12").unwrap();
+
+        let calls = mock.calls.borrow();
+        assert_eq!(calls.len(), 4);
+        assert_eq!(calls[0], "initialized");
+        assert_eq!(calls[1], "did_open:test.d12");
+        assert_eq!(calls[2], "did_change:test.d12:2");
+        assert_eq!(calls[3], "did_close:test.d12");
     }
 }
