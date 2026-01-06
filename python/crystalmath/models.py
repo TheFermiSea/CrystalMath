@@ -1,12 +1,12 @@
 """
-Pydantic models for CrystalMath Rust-Python data exchange.
+Pydantic models for CrystalMath core data exchange.
 
-These models define the strict contract between the Rust TUI frontend and the
-Python scientific backend. All data exchange happens via JSON serialization
-to simplify the PyO3 FFI boundary.
+These models define the contract between Python components (TUI/CLI) and any
+optional Rust/IPC adapters. The core API returns native models; serialization
+is handled at the boundary when needed.
 
 Schema Compatibility:
-- These models serialize to JSON matching Rust serde structs exactly
+- JSON output matches Rust serde structs where applicable
 - Field names use snake_case (Rust convention)
 - Optional fields serialize as null (not omitted)
 """
@@ -40,19 +40,21 @@ _AIIDA_STATE_MAP: Dict[str, "JobState"] = {
 
 def _init_state_map() -> None:
     """Initialize state map after JobState is defined."""
-    _AIIDA_STATE_MAP.update({
-        "created": JobState.CREATED,
-        "waiting": JobState.QUEUED,
-        "running": JobState.RUNNING,
-        "finished": JobState.COMPLETED,
-        "excepted": JobState.FAILED,
-        "killed": JobState.CANCELLED,
-        "pending": JobState.CREATED,
-        "queued": JobState.QUEUED,
-        "completed": JobState.COMPLETED,
-        "failed": JobState.FAILED,
-        "cancelled": JobState.CANCELLED,
-    })
+    _AIIDA_STATE_MAP.update(
+        {
+            "created": JobState.CREATED,
+            "waiting": JobState.QUEUED,
+            "running": JobState.RUNNING,
+            "finished": JobState.COMPLETED,
+            "excepted": JobState.FAILED,
+            "killed": JobState.CANCELLED,
+            "pending": JobState.CREATED,
+            "queued": JobState.QUEUED,
+            "completed": JobState.COMPLETED,
+            "failed": JobState.FAILED,
+            "cancelled": JobState.CANCELLED,
+        }
+    )
 
 
 def map_to_job_state(value: Any) -> "JobState":
@@ -133,6 +135,22 @@ class RunnerType(str, Enum):
     AIIDA = "aiida"
 
 
+class SchedulerOptions(BaseModel):
+    """
+    SLURM scheduler resource configuration.
+
+    Used when runner_type is SLURM.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    walltime: str = Field(default="24:00:00", description="Walltime limit (HH:MM:SS)")
+    memory_gb: str = Field(default="32", description="Memory per node in GB")
+    cpus_per_task: int = Field(default=4, gt=0, description="CPUs per task")
+    nodes: int = Field(default=1, gt=0, description="Number of nodes")
+    partition: Optional[str] = Field(default=None, description="SLURM partition/queue")
+
+
 class JobSubmission(BaseModel):
     """
     Data required to submit a new calculation job.
@@ -145,11 +163,29 @@ class JobSubmission(BaseModel):
 
     name: str = Field(..., min_length=3, max_length=100, description="Job display name")
     dft_code: DftCode = Field(default=DftCode.CRYSTAL, description="DFT code to use")
-    cluster_id: Optional[int] = Field(default=None, description="Target cluster ID (None for local)")
+    cluster_id: Optional[int] = Field(
+        default=None, description="Target cluster ID (None for local)"
+    )
     runner_type: RunnerType = Field(default=RunnerType.LOCAL, description="Execution backend")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="DFT input parameters")
-    structure_path: Optional[str] = Field(default=None, description="Path to structure file (.cif, .xyz)")
-    input_content: Optional[str] = Field(default=None, description="Raw input file content (.d12, INCAR)")
+    structure_path: Optional[str] = Field(
+        default=None, description="Path to structure file (.cif, .xyz)"
+    )
+    input_content: Optional[str] = Field(
+        default=None, description="Raw input file content (.d12, INCAR)"
+    )
+
+    # Extended configuration
+    auxiliary_files: Optional[Dict[str, str]] = Field(
+        default=None, description="Auxiliary files map (type -> source_path)"
+    )
+    scheduler_options: Optional[SchedulerOptions] = Field(
+        default=None, description="SLURM resource settings"
+    )
+    mpi_ranks: Optional[int] = Field(default=None, gt=0, description="Number of MPI ranks")
+    parallel_mode: Optional[str] = Field(
+        default=None, description="Parallel mode ('serial' or 'parallel')"
+    )
 
     @field_validator("name")
     @classmethod
@@ -173,7 +209,7 @@ class JobStatus(BaseModel):
     Lightweight job status for the sidebar list.
 
     Optimized for frequent polling - contains only essential fields.
-    Returned from Python to Rust via get_jobs_json().
+    Returned from the core API; JSON adapters may serialize as needed.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -184,8 +220,12 @@ class JobStatus(BaseModel):
     state: JobState = Field(..., description="Current execution state")
     dft_code: DftCode = Field(default=DftCode.CRYSTAL, description="DFT code type")
     runner_type: RunnerType = Field(default=RunnerType.LOCAL, description="Execution backend")
-    progress_percent: float = Field(default=0.0, ge=0.0, le=100.0, description="Completion progress")
-    wall_time_seconds: Optional[float] = Field(default=None, ge=0.0, description="Elapsed wall time")
+    progress_percent: float = Field(
+        default=0.0, ge=0.0, le=100.0, description="Completion progress"
+    )
+    wall_time_seconds: Optional[float] = Field(
+        default=None, ge=0.0, description="Elapsed wall time"
+    )
     created_at: Optional[datetime] = Field(default=None, description="Job creation timestamp")
 
     @field_validator("state", mode="before")
@@ -200,7 +240,7 @@ class JobDetails(BaseModel):
     Full job details for the Results view.
 
     Contains computed results and output logs.
-    Returned from Python to Rust via get_job_details_json().
+    Returned from the core API; JSON adapters may serialize as needed.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -227,7 +267,9 @@ class JobDetails(BaseModel):
     stdout_tail: List[str] = Field(default_factory=list, description="Last N lines of stdout")
 
     # Full results dict (for JSON export)
-    key_results: Optional[Dict[str, Any]] = Field(default=None, description="Full results dictionary")
+    key_results: Optional[Dict[str, Any]] = Field(
+        default=None, description="Full results dictionary"
+    )
 
     # Input/output paths
     work_dir: Optional[str] = Field(default=None, description="Working directory path")
@@ -296,7 +338,9 @@ class StructureData(BaseModel):
     gamma: float = Field(default=90.0, ge=0, le=180, description="Angle gamma (degrees)")
 
     space_group: Optional[int] = Field(default=None, ge=1, le=230, description="Space group number")
-    layer_group: Optional[int] = Field(default=None, ge=1, le=80, description="Layer group (for SLAB)")
+    layer_group: Optional[int] = Field(
+        default=None, ge=1, le=80, description="Layer group (for SLAB)"
+    )
 
     # Atomic positions
     atoms: List[Dict[str, Any]] = Field(default_factory=list, description="Atomic positions")
