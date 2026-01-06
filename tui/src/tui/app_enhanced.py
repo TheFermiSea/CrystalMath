@@ -453,7 +453,7 @@ class CrystalTUI(App):
     # --- Event Handlers ---
     def on_job_list_widget_row_highlighted(self, event) -> None:
         """Handle row selection in job table - update input and results views."""
-        if not self.db or not hasattr(event, 'row_key') or event.row_key is None:
+        if not self.db or not hasattr(event, "row_key") or event.row_key is None:
             return
 
         try:
@@ -473,6 +473,15 @@ class CrystalTUI(App):
             else:
                 input_preview.display_no_input()
 
+            job_details = None
+            if self._core_client:
+                try:
+                    job_details = self._core_client.get_job_details(job_id)
+                except Exception as err:
+                    self.query_one("#log_view", Log).write_line(
+                        f"[yellow]Failed to load job details for {job_id}: {err}[/yellow]"
+                    )
+
             # Update results view based on job status
             results_view = self.query_one("#results_view", ResultsSummary)
 
@@ -485,12 +494,13 @@ class CrystalTUI(App):
                     job_id=job.id,
                     job_name=job.name,
                     work_dir=work_dir,
-                    status=job.status,
-                    final_energy=job.final_energy,
-                    key_results=job.key_results,
+                    status=job_details.state.value if job_details else job.status,
+                    final_energy=job_details.final_energy if job_details else job.final_energy,
+                    key_results=job_details.key_results if job_details else job.key_results,
                     created_at=job.created_at,
                     completed_at=job.completed_at,
                 )
+                self._display_job_log_snapshot(job_id)
             else:
                 results_view.display_no_results()
 
@@ -498,6 +508,30 @@ class CrystalTUI(App):
             # Log error but don't crash
             log = self.query_one("#log_view", Log)
             log.write_line(f"[red]Error updating views: {e}[/red]")
+
+    def _display_job_log_snapshot(self, job_id: int) -> None:
+        """Append a short log snapshot for the selected job."""
+        if not self._core_client:
+            return
+
+        try:
+            logs = self._core_client.get_job_log(job_id, tail_lines=50)
+        except Exception:
+            return
+
+        log_widget = self.query_one("#log_view", Log)
+        stdout = logs.get("stdout", [])
+        stderr = logs.get("stderr", [])
+
+        if stdout:
+            log_widget.write_line(f"[dim]Job {job_id} stdout (last {len(stdout)} lines):[/dim]")
+            for line in stdout:
+                log_widget.write_line(line.rstrip())
+
+        if stderr:
+            log_widget.write_line(f"[dim]Job {job_id} stderr (last {len(stderr)} lines):[/dim]")
+            for line in stderr:
+                log_widget.write_line(line.rstrip())
 
     # --- Message Handlers ---
     def on_job_created(self, message: JobCreated) -> None:

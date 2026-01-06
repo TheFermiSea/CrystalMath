@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 from crystalmath.api import create_controller
 from crystalmath.models import JobDetails, JobState, JobStatus
@@ -29,7 +29,7 @@ _STATE_TO_STATUS = {
 }
 
 
-def _format_created_at(value: datetime | None) -> str | None:
+def _format_created_at(value: datetime | None) -> Optional[str]:
     if value is None:
         return None
     return value.isoformat(timespec="seconds")
@@ -66,5 +66,8 @@ class CrystalCoreClient:
         jobs = self._controller.get_jobs(limit)
         return [job_status_to_job(job) for job in jobs]
 
-    def get_job_details(self, pk: int) -> JobDetails | None:
+    def get_job_details(self, pk: int) -> Optional[JobDetails]:
         return self._controller.get_job_details(pk)
+
+    def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
+        return self._controller.get_job_log(pk, tail_lines)
