@@ -27,7 +27,8 @@ A unified toolkit for quantum chemistry DFT calculations, supporting **CRYSTAL23
 ### Rust TUI - "Cockpit" (`src/`) — Secondary / Experimental
 - Optional high-performance monitoring UI (Ratatui)
 - Great for dense job/log dashboards
-- **No new feature work without a stable IPC boundary** (PyO3 embedding is being phased out)
+- **Under feature freeze** until IPC boundary replaces PyO3 — see [ADR-002](docs/architecture/adr-002-rust-tui-secondary-policy.md)
+- Permitted: bug fixes, security patches, IPC migration prep
 
 ## Quick Start
 
@@ -98,7 +99,7 @@ crystal-tui
 
 ### Rust TUI: Secondary / Experimental ⚠️
 - Optional high-performance cockpit for monitoring.
-- Feature work only after IPC boundary is defined.
+- **Feature freeze in effect** — see [ADR-002](docs/architecture/adr-002-rust-tui-secondary-policy.md) for policy.
 
 ## Architecture
 

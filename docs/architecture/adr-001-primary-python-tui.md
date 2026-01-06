@@ -42,5 +42,6 @@ We still value Rust/Ratatui for high-performance monitoring, but the project nee
 
 ## Follow-ups
 
-- ADR-002 (planned): IPC boundary design for Rust TUI.
+- [ADR-002](adr-002-rust-tui-secondary-policy.md): Rust TUI secondary/experimental policy (completed).
+- ADR-003 (planned): IPC boundary design for Rust TUI.
 - Migration plan for repo layout and core extraction.

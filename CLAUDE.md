@@ -14,6 +14,21 @@ CRYSTAL-TOOLS is a unified monorepo containing complementary tools for CRYSTAL23
 - **Python TUI (Workshop)**: Primary UI for workflows, templates, cluster config, and job submission.
 - **Rust TUI (Cockpit)**: Secondary/experimental UI focused on high-performance monitoring.
 - **Shared Database**: Both TUIs share `.crystal_tui.db`. Rust should consume data via a stable IPC boundary rather than expanding PyO3 usage.
+- **Policy Reference**: See [ADR-002](docs/architecture/adr-002-rust-tui-secondary-policy.md) for Rust TUI constraints.
+
+### Rust TUI Constraints (IMPORTANT)
+
+The Rust TUI is under a **feature freeze** until an IPC boundary replaces PyO3:
+
+| Permitted | Prohibited |
+|-----------|------------|
+| Bug fixes | New screens/components |
+| Security patches | New PyO3 bindings |
+| Performance optimizations | New Cargo dependencies |
+| Documentation | Expanding `bridge.rs` FFI |
+| IPC migration prep | New Python API extensions |
+
+**Scope**: Monitoring, diagnostics, read-only operations only. Job creation/configuration belongs in Python TUI.
 
 ## Core Commands
 

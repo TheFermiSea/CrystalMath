@@ -8,7 +8,7 @@ This is a monorepo containing a unified tool for CRYSTAL23 DFT calculations:
 
 *   **CLI** (`cli/`): Production Bash tools. Thin orchestrator (`bin/runcrystal`) loading modules (`lib/`).
 *   **Python TUI (Primary)** (`tui/`): Textual-based interface for *creating*, *configuring*, and *monitoring* jobs. Preferred UI for new features and workflows.
-*   **Rust TUI (Secondary)** (`src/` + `python/`): High-performance Ratatui interface for monitoring; treated as secondary/experimental until a stable IPC boundary replaces PyO3 coupling.
+*   **Rust TUI (Secondary)** (`src/` + `python/`): High-performance Ratatui interface for monitoring; treated as secondary/experimental until a stable IPC boundary replaces PyO3 coupling. **Under feature freeze** per [ADR-002](docs/architecture/adr-002-rust-tui-secondary-policy.md).
 
 **Crucial Philosophy**:
 *   **Primary UI (Python/Textual)**: The source of truth for user interaction and workflows.
