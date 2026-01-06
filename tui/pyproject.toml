@@ -26,6 +26,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "crystalmath>=0.2.0",  # Shared core logic (installed from ../python via uv)
     "textual>=0.50.0",      # Terminal UI framework
     "rich>=13.0.0",         # Rich text and tables
     "jinja2>=3.1.0",        # Template engine (used in templates.py)
@@ -49,6 +50,9 @@ analysis = [
 aiida = [
     "aiida-core>=2.7,<3.0",       # AiiDA workflow engine
     "psycopg2-binary>=2.9",       # PostgreSQL adapter
+    "aiida-vasp",                 # VASP plugin
+    "aiida-crystal17",            # CRYSTAL plugin
+    "aiida-quantumespresso",      # Quantum ESPRESSO plugin
 ]
 
 # Materials Project API integration (Phase 4)
@@ -79,6 +83,9 @@ dev-aiida = [
 
 [project.scripts]
 crystal-tui = "src.main:main"
+
+[tool.uv.sources]
+crystalmath = { path = "../python", editable = true }
 
 [tool.setuptools.packages.find]
 where = ["."]
