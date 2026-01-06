@@ -15,6 +15,7 @@ from textual.message import Message
 from textual.binding import Binding
 
 from ..core.backend import get_database, BackendMode
+from ..core.core_adapter import CrystalCoreClient
 from ..core.environment import CrystalConfig, get_crystal_config
 from ..core.queue_manager import QueueManager, Priority
 from ..runners import LocalRunner, LocalRunnerError, InputFileError
@@ -134,6 +135,7 @@ class CrystalTUI(App):
         # ConnectionManager for SSH connections (SLURM queue)
         self.connection_manager: Optional[ConnectionManager] = None
         self._core_db: Optional[CoreDatabase] = None
+        self._core_client: Optional[CrystalCoreClient] = None
 
     def compose(self) -> ComposeResult:
         """Compose the UI layout."""
@@ -170,6 +172,7 @@ class CrystalTUI(App):
 
         # Initialize CoreDatabase for SLURM queue (shares same db file)
         self._core_db = CoreDatabase(self.db_path)
+        self._core_client = CrystalCoreClient(self.db_path)
 
         # Initialize ConnectionManager for SSH connections
         self.connection_manager = ConnectionManager()
@@ -224,29 +227,41 @@ class CrystalTUI(App):
         return self.runner
 
     def _refresh_job_list(self) -> None:
-        """Reload all jobs from database into the table."""
-        if not self.db:
-            return
-
+        """Reload all jobs into the table using the core adapter when possible."""
         job_list = self.query_one("#job_list", JobListWidget)
         job_stats = self.query_one("#job_stats", JobStatsWidget)
 
-        jobs = self.db.get_all_jobs()
+        jobs = self._get_jobs_for_ui()
+        if jobs is None:
+            return
+
         job_list.update_jobs(jobs)
         job_stats.update_stats(jobs)
 
     def _update_running_jobs(self) -> None:
         """Update runtime display for running jobs (called every second)."""
-        if not self.db:
-            return
-
         job_list = self.query_one("#job_list", JobListWidget)
-        jobs = self.db.get_all_jobs()
+        jobs = self._get_jobs_for_ui()
+        if jobs is None:
+            return
 
         # Update runtime for all running jobs
         for job in jobs:
             if job.status == "RUNNING" and job.id:
                 job_list.update_job_runtime(job.id)
+
+    def _get_jobs_for_ui(self):
+        """Fetch jobs via core adapter, falling back to legacy database."""
+        if self._core_client is not None:
+            try:
+                return self._core_client.list_jobs()
+            except Exception:
+                pass
+
+        if self.db is not None:
+            return self.db.get_all_jobs()
+
+        return None
 
     def action_new_job(self) -> None:
         """Create a new job via modal screen."""
@@ -408,7 +423,8 @@ class CrystalTUI(App):
         cluster = slurm_clusters[0]
 
         # Register cluster with ConnectionManager (required for SSH access)
-        key_file = cluster.connection_config.get("key_file")
+        config = cluster.connection_config
+        key_file = config.get("key_file")
         if key_file:
             key_file = Path(key_file).expanduser()
 
@@ -418,7 +434,8 @@ class CrystalTUI(App):
             port=cluster.port,
             username=cluster.username,
             key_file=key_file,
-            strict_host_key_checking=False,  # TODO: Make configurable
+            use_agent=config.get("use_agent", True),
+            strict_host_key_checking=config.get("strict_host_key_checking", True),
         )
 
         log = self.query_one("#log_view", Log)

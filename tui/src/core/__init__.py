@@ -8,12 +8,18 @@ from .environment import (
     reset_config_cache,
 )
 from .database import Database
-from .config_loader import (
-    ClusterConfig,
-    ConfigLoader,
-    load_cluster_config,
-    import_cluster_configs,
-)
+try:
+    from .config_loader import (
+        ClusterConfig,
+        ConfigLoader,
+        load_cluster_config,
+        import_cluster_configs,
+    )
+except ModuleNotFoundError:
+    ClusterConfig = None  # type: ignore[assignment]
+    ConfigLoader = None  # type: ignore[assignment]
+    load_cluster_config = None  # type: ignore[assignment]
+    import_cluster_configs = None  # type: ignore[assignment]
 
 __all__ = [
     'CrystalConfig',
