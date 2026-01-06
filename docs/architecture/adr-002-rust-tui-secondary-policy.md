@@ -115,5 +115,5 @@ The Rust TUI **does not** handle:
 
 ## Related Issues
 
-- crystalmath-as6l.11: Define IPC boundary for Rust TUI
+- crystalmath-as6l.11: Define IPC boundary for Rust TUI — see [ADR-003](adr-003-ipc-boundary-design.md)
 - crystalmath-as6l.18: Freeze Rust TUI feature work until IPC is defined
