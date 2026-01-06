@@ -1,0 +1,217 @@
+name: "VASP Relaxation"
+version: "1.0"
+description: "Geometry optimization with VASP"
+author: "Crystal-TUI Team"
+dft_code: "vasp"
+tags: ["vasp", "relax", "optimization"]
+multi_file: true
+
+parameters:
+  system:
+    type: "string"
+    default: "VASP Relaxation"
+    description: "System description"
+    required: true
+
+  # INCAR parameters
+  prec:
+    type: "select"
+    options: ["Normal", "Accurate", "High"]
+    default: "Accurate"
+    description: "Precision mode"
+    required: true
+
+  encut:
+    type: "float"
+    description: "Plane wave energy cutoff (eV). If not set, uses POTCAR default * 1.3"
+
+  ibrion:
+    type: "select"
+    options:
+      - label: "Conjugate gradient (2)"
+        value: "2"
+      - label: "Quasi-Newton (1)"
+        value: "1"
+      - label: "Damped MD (3)"
+        value: "3"
+    default: "2"
+    description: "Ionic relaxation algorithm"
+    required: true
+
+  isif:
+    type: "select"
+    options:
+      - label: "Atoms only (2)"
+        value: "2"
+      - label: "Cell shape + atoms (3)"
+        value: "3"
+      - label: "Cell volume + shape + atoms (4)"
+        value: "4"
+      - label: "Fixed volume, relax shape + atoms (5)"
+        value: "5"
+      - label: "Fixed shape, relax volume + atoms (6)"
+        value: "6"
+      - label: "Volume + atoms (7)"
+        value: "7"
+    default: "2"
+    description: "Degrees of freedom to relax"
+    required: true
+
+  nsw:
+    type: "integer"
+    default: 100
+    min: 10
+    max: 1000
+    description: "Maximum ionic steps"
+    required: true
+
+  ediffg:
+    type: "float"
+    default: -0.01
+    description: "Force convergence criterion (eV/A). Negative = force-based"
+    required: true
+
+  ismear:
+    type: "select"
+    options:
+      - label: "Gaussian (0)"
+        value: "0"
+      - label: "Methfessel-Paxton (1)"
+        value: "1"
+      - label: "Tetrahedron (-5)"
+        value: "-5"
+    default: "0"
+    description: "Smearing method"
+
+  sigma:
+    type: "float"
+    default: 0.05
+    min: 0.01
+    max: 0.5
+    description: "Smearing width (eV)"
+
+  ediff:
+    type: "float"
+    default: 1.0e-6
+    min: 1.0e-9
+    max: 1.0e-4
+    description: "SCF convergence criterion (eV)"
+    required: true
+
+  nelm:
+    type: "integer"
+    default: 100
+    min: 10
+    max: 500
+    description: "Maximum SCF steps per ionic step"
+
+  algo:
+    type: "select"
+    options: ["Normal", "Fast", "VeryFast", "All"]
+    default: "Fast"
+    description: "Electronic minimization algorithm"
+
+  lreal:
+    type: "select"
+    options: [".FALSE.", "Auto", "On"]
+    default: "Auto"
+    description: "Real space projection"
+
+  lwave:
+    type: "boolean"
+    default: false
+    description: "Write WAVECAR (large file, disable for relaxation)"
+
+  lcharg:
+    type: "boolean"
+    default: false
+    description: "Write CHGCAR (can disable for relaxation)"
+
+  ispin:
+    type: "select"
+    options:
+      - label: "Non-spin-polarized (1)"
+        value: "1"
+      - label: "Spin-polarized (2)"
+        value: "2"
+    default: "1"
+    description: "Spin polarization"
+
+  potim:
+    type: "float"
+    default: 0.5
+    min: 0.01
+    max: 2.0
+    description: "Time step for ionic motion"
+
+  # KPOINTS parameters
+  kpoints_type:
+    type: "select"
+    options: ["automatic", "gamma", "monkhorst"]
+    default: "automatic"
+    description: "K-point generation scheme"
+
+  kpoints_grid:
+    type: "string"
+    default: "4 4 4"
+    description: "K-point grid (nk1 nk2 nk3)"
+    required: true
+
+  kpoints_shift:
+    type: "string"
+    default: "0 0 0"
+    description: "K-point shift"
+
+  # Structure (POSCAR content)
+  poscar_content:
+    type: "text"
+    description: "POSCAR file content"
+    required: true
+
+  # Pseudopotentials
+  potcar_elements:
+    type: "multiselect"
+    description: "Elements in order (for POTCAR concatenation)"
+    required: true
+
+files:
+  INCAR: incar_template
+  KPOINTS: kpoints_template
+  POSCAR: poscar_template
+
+incar_template: |
+  SYSTEM = {{ system }}
+  # Electronic
+  PREC = {{ prec }}
+  {% if encut %}
+  ENCUT = {{ encut }}
+  {% endif %}
+  ISMEAR = {{ ismear }}
+  SIGMA = {{ sigma }}
+  EDIFF = {{ ediff }}
+  NELM = {{ nelm }}
+  ALGO = {{ algo }}
+  LREAL = {{ lreal }}
+  ISPIN = {{ ispin }}
+  # Ionic relaxation
+  IBRION = {{ ibrion }}
+  ISIF = {{ isif }}
+  NSW = {{ nsw }}
+  EDIFFG = {{ ediffg }}
+  POTIM = {{ potim }}
+  # Output control
+  LWAVE = {{ '.TRUE.' if lwave else '.FALSE.' }}
+  LCHARG = {{ '.TRUE.' if lcharg else '.FALSE.' }}
+  # Performance
+  NCORE = 4
+  KPAR = 1
+
+kpoints_template: |
+  {{ kpoints_type | capitalize }} mesh
+  0
+  {{ 'Gamma' if kpoints_type == 'gamma' else 'Monkhorst-Pack' }}
+  {{ kpoints_grid }}
+  {{ kpoints_shift }}
+
+poscar_template: |
+  {{ poscar_content }}

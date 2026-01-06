@@ -1,0 +1,119 @@
+name: "Surface Slab Calculation"
+version: "1.0"
+description: "Surface energy calculation using slab model with vacuum"
+author: "CRYSTAL-TUI Team"
+tags: ["advanced", "surface", "slab", "interface"]
+
+parameters:
+  system_name:
+    type: "string"
+    default: "Surface Slab"
+    description: "Name/description of the surface system"
+    required: true
+
+  space_group:
+    type: "integer"
+    default: 1
+    min: 1
+    max: 230
+    description: "Space group number (often 1 for slabs)"
+    required: true
+
+  lattice_a:
+    type: "float"
+    default: 4.21
+    min: 0.1
+    max: 100.0
+    description: "Lattice parameter a (Angstroms)"
+    required: true
+
+  lattice_b:
+    type: "float"
+    default: 4.21
+    min: 0.1
+    max: 100.0
+    description: "Lattice parameter b (Angstroms)"
+    required: true
+
+  lattice_c:
+    type: "float"
+    default: 20.0
+    min: 5.0
+    max: 100.0
+    description: "Lattice parameter c with vacuum (Angstroms)"
+    required: true
+
+  n_layers:
+    type: "integer"
+    default: 5
+    min: 3
+    max: 20
+    description: "Number of atomic layers in slab"
+    required: true
+
+  basis_set:
+    type: "select"
+    options: ["sto-3g", "3-21g", "6-21g", "6-31g", "pob-tzvp", "pob-dzvp"]
+    default: "pob-tzvp"
+    description: "Basis set for all atoms"
+    required: true
+
+  shrink_xy:
+    type: "integer"
+    default: 8
+    min: 1
+    max: 32
+    description: "Shrinking factor in xy plane"
+    required: true
+
+  shrink_z:
+    type: "integer"
+    default: 1
+    min: 1
+    max: 8
+    description: "Shrinking factor in z direction (usually 1 for slabs)"
+    required: true
+
+  convergence:
+    type: "float"
+    default: 1.0e-8
+    min: 1.0e-12
+    max: 1.0e-4
+    description: "SCF convergence threshold"
+    required: true
+
+  optimize_geometry:
+    type: "boolean"
+    default: true
+    description: "Optimize atomic positions"
+
+  fix_bottom_layers:
+    type: "integer"
+    default: 2
+    min: 0
+    max: 10
+    description: "Number of bottom layers to fix (0 = all free)"
+
+input_template: |
+  {{ system_name }}
+  SLAB
+  {{ space_group }}
+  {{ lattice_a }} {{ lattice_b }} {{ lattice_c }}
+  90.0 90.0 90.0
+  {{ n_layers }}
+  12 {{ basis_set }}
+  SHRINK
+  {{ shrink_xy }} {{ shrink_z }}
+  TOLINTEG
+  7 7 7 7 14
+  TOLDEE
+  {{ convergence }}
+  {% if optimize_geometry %}
+  OPTGEOM
+  {% if fix_bottom_layers > 0 %}
+  FRAGMENT
+  {{ n_layers - fix_bottom_layers + 1 }} {{ n_layers }}
+  {% endif %}
+  ENDOPT
+  {% endif %}
+  END

@@ -1,0 +1,162 @@
+name: "VASP Relaxation + SCF Workflow"
+version: "1.0"
+description: "Two-step workflow: geometry optimization followed by precise SCF calculation"
+author: "Crystal-TUI Team"
+dft_code: "vasp"
+tags: ["workflow", "vasp", "relax", "scf"]
+multi_file: true
+
+parameters:
+  system:
+    type: "string"
+    default: "VASP Workflow"
+    description: "System description"
+    required: true
+
+  prec:
+    type: "select"
+    options: ["Normal", "Accurate", "High"]
+    default: "Accurate"
+    description: "Precision mode"
+
+  encut:
+    type: "float"
+    description: "Plane wave cutoff (eV)"
+
+  ismear:
+    type: "select"
+    options:
+      - label: "Gaussian (0)"
+        value: "0"
+      - label: "Methfessel-Paxton (1)"
+        value: "1"
+      - label: "Tetrahedron (-5)"
+        value: "-5"
+    default: "0"
+    description: "Smearing method"
+
+  sigma:
+    type: "float"
+    default: 0.05
+    description: "Smearing width (eV)"
+
+  ediff_relax:
+    type: "float"
+    default: 1.0e-5
+    description: "SCF convergence for relaxation (eV)"
+
+  ediff_scf:
+    type: "float"
+    default: 1.0e-7
+    description: "SCF convergence for final SCF (tighter)"
+
+  ediffg:
+    type: "float"
+    default: -0.01
+    description: "Force convergence (eV/A, negative = force-based)"
+
+  nsw:
+    type: "integer"
+    default: 100
+    description: "Max ionic steps for relaxation"
+
+  isif:
+    type: "select"
+    options:
+      - label: "Atoms only (2)"
+        value: "2"
+      - label: "Cell + atoms (3)"
+        value: "3"
+    default: "2"
+    description: "Relaxation degrees of freedom"
+
+  kpoints_relax:
+    type: "string"
+    default: "4 4 4"
+    description: "K-point grid for relaxation"
+
+  kpoints_scf:
+    type: "string"
+    default: "8 8 8"
+    description: "K-point grid for final SCF (denser)"
+
+  poscar_content:
+    type: "text"
+    description: "Initial POSCAR content"
+    required: true
+
+  potcar_elements:
+    type: "multiselect"
+    description: "Elements for POTCAR"
+    required: true
+
+workflow:
+  nodes:
+    - id: "relax"
+      type: "calculation"
+      template: "vasp/relax"
+      parameters:
+        system: "{{ system }} - Relaxation"
+        prec: "{{ prec }}"
+        encut: "{{ encut }}"
+        ismear: "{{ ismear }}"
+        sigma: "{{ sigma }}"
+        ediff: "{{ ediff_relax }}"
+        ediffg: "{{ ediffg }}"
+        nsw: "{{ nsw }}"
+        isif: "{{ isif }}"
+        ibrion: "2"
+        kpoints_grid: "{{ kpoints_relax }}"
+        kpoints_shift: "0 0 0"
+        poscar_content: "{{ poscar_content }}"
+        potcar_elements: "{{ potcar_elements }}"
+        lwave: false
+        lcharg: false
+
+    - id: "transfer_structure"
+      type: "data_transfer"
+      source_node: "relax"
+      source_files:
+        - "CONTCAR"  # Optimized structure
+        - "POTCAR"
+      target_node: "scf"
+      file_renames:
+        "CONTCAR": "POSCAR"  # Use relaxed structure as input
+      dependencies:
+        - "relax"
+
+    - id: "scf"
+      type: "calculation"
+      template: "vasp/scf"
+      parameters:
+        system: "{{ system }} - Final SCF"
+        prec: "{{ prec }}"
+        encut: "{{ encut }}"
+        ismear: "-5"  # Tetrahedron for accurate final energy
+        ediff: "{{ ediff_scf }}"
+        kpoints_grid: "{{ kpoints_scf }}"
+        kpoints_shift: "0 0 0"
+        # POSCAR comes from CONTCAR via data transfer
+        poscar_content: "{{ relax.final_structure }}"
+        potcar_elements: "{{ potcar_elements }}"
+        lwave: true
+        lcharg: true
+        lorbit: "11"  # Enable projected DOS
+      dependencies:
+        - "transfer_structure"
+
+  edges:
+    - from: "relax"
+      to: "transfer_structure"
+    - from: "transfer_structure"
+      to: "scf"
+
+  # Optional: condition to skip SCF if relaxation didn't converge
+  conditions:
+    - id: "check_convergence"
+      after: "relax"
+      expression: "relax.geometry_converged == True"
+      true_branch:
+        - "transfer_structure"
+        - "scf"
+      false_branch: []

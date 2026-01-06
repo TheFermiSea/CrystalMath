@@ -1,0 +1,85 @@
+name: "Single Point Energy"
+version: "1.0"
+description: "Basic single-point energy calculation for crystalline materials"
+author: "CRYSTAL-TUI Team"
+tags: ["basic", "energy", "scf"]
+
+parameters:
+  system_name:
+    type: "string"
+    default: "Crystal System"
+    description: "Name/description of the system"
+    required: true
+
+  space_group:
+    type: "integer"
+    default: 225
+    min: 1
+    max: 230
+    description: "Space group number (1-230)"
+    required: true
+
+  lattice_param:
+    type: "float"
+    default: 4.21
+    min: 0.1
+    max: 100.0
+    description: "Lattice parameter in Angstroms"
+    required: true
+
+  basis_set:
+    type: "select"
+    options: ["sto-3g", "3-21g", "6-21g", "6-31g", "pob-tzvp", "pob-dzvp"]
+    default: "sto-3g"
+    description: "Basis set for all atoms"
+    required: true
+
+  shrink:
+    type: "integer"
+    default: 8
+    min: 1
+    max: 32
+    description: "Shrinking factor for k-point mesh (Monkhorst-Pack)"
+    required: true
+
+  convergence:
+    type: "float"
+    default: 1.0e-8
+    min: 1.0e-12
+    max: 1.0e-4
+    description: "SCF convergence threshold (TOLDEE)"
+    required: true
+
+  max_cycles:
+    type: "integer"
+    default: 50
+    min: 10
+    max: 500
+    description: "Maximum SCF cycles"
+
+  mixing:
+    type: "integer"
+    default: 30
+    min: 0
+    max: 100
+    description: "Percentage of Fock/KS matrix mixing"
+
+input_template: |
+  {{ system_name }}
+  CRYSTAL
+  0 0 0
+  {{ space_group }}
+  {{ lattice_param }}
+  1
+  12 {{ basis_set }}
+  SHRINK
+  {{ shrink }} {{ shrink }}
+  TOLINTEG
+  7 7 7 7 14
+  TOLDEE
+  {{ convergence }}
+  MAXCYCLE
+  {{ max_cycles }}
+  FMIXING
+  {{ mixing }}
+  END

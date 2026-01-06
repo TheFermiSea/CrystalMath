@@ -215,14 +215,19 @@ class TemplateManager:
         """Initialize the template manager with security hardening.
 
         Args:
-            template_dir: Directory containing template files (default: templates/)
+            template_dir: Directory containing template files (default: core templates)
 
         Raises:
             ValueError: If template_dir path is invalid or contains traversal attempts
         """
         if template_dir is None:
-            # Default to templates/ directory relative to this file
-            template_dir = Path(__file__).parent.parent.parent / "templates"
+            # Use centralized templates from crystalmath core package
+            try:
+                from crystalmath.templates import get_template_dir
+                template_dir = get_template_dir()
+            except ImportError:
+                # Fallback to local templates/ directory if core not available
+                template_dir = Path(__file__).parent.parent.parent / "templates"
 
         self.template_dir = Path(template_dir)
 

@@ -1,0 +1,174 @@
+name: SLURM CRYSTAL Job
+version: "1.0"
+description: |
+  SLURM batch script template for CRYSTAL23 DFT calculations.
+  Supports both serial (OpenMP) and parallel (MPI+OpenMP) execution.
+author: Crystal-TUI
+tags:
+  - slurm
+  - crystal
+  - hpc
+  - batch
+
+parameters:
+  job_name:
+    type: string
+    required: true
+    description: Name for the SLURM job
+
+  nodes:
+    type: integer
+    default: 1
+    min: 1
+    description: Number of compute nodes
+
+  ntasks:
+    type: integer
+    default: 1
+    min: 1
+    description: Number of MPI tasks
+
+  cpus_per_task:
+    type: integer
+    default: 4
+    min: 1
+    description: CPUs per task (OpenMP threads)
+
+  time_limit:
+    type: string
+    default: "24:00:00"
+    description: Job time limit (HH:MM:SS)
+
+  partition:
+    type: string
+    description: SLURM partition name
+
+  memory:
+    type: string
+    description: Memory allocation (e.g., 32GB)
+
+  account:
+    type: string
+    description: SLURM account for charging
+
+  qos:
+    type: string
+    description: Quality of Service level
+
+  email:
+    type: string
+    description: Email address for notifications
+
+  email_type:
+    type: string
+    description: Email notification types (e.g., BEGIN,END,FAIL)
+
+  constraint:
+    type: string
+    description: Node constraint specification
+
+  exclusive:
+    type: boolean
+    default: false
+    description: Request exclusive node access
+
+  dependencies:
+    type: multiselect
+    description: List of job IDs to depend on
+
+  array:
+    type: string
+    description: Job array specification (e.g., 1-10)
+
+  modules:
+    type: multiselect
+    default:
+      - crystal23
+    description: Modules to load
+
+  environment_setup:
+    type: string
+    description: Additional environment setup commands
+
+  work_dir:
+    type: string
+    required: true
+    description: Working directory path
+
+  input_file:
+    type: string
+    default: input.d12
+    description: Input file name
+
+  output_file:
+    type: string
+    default: output.out
+    description: Output file name
+
+  use_mpi:
+    type: boolean
+    default: false
+    description: Use MPI parallelization
+
+input_template: |
+  #!/bin/bash
+  #SBATCH --job-name={{ job_name }}
+  #SBATCH --nodes={{ nodes }}
+  #SBATCH --ntasks={{ ntasks }}
+  #SBATCH --cpus-per-task={{ cpus_per_task }}
+  #SBATCH --time={{ time_limit }}
+  #SBATCH --output=slurm-%j.out
+  #SBATCH --error=slurm-%j.err
+  {% if partition %}
+  #SBATCH --partition={{ partition }}
+  {% endif %}
+  {% if memory %}
+  #SBATCH --mem={{ memory }}
+  {% endif %}
+  {% if account %}
+  #SBATCH --account={{ account }}
+  {% endif %}
+  {% if qos %}
+  #SBATCH --qos={{ qos }}
+  {% endif %}
+  {% if email %}
+  #SBATCH --mail-user={{ email }}
+  {% if email_type %}
+  #SBATCH --mail-type={{ email_type }}
+  {% endif %}
+  {% endif %}
+  {% if constraint %}
+  #SBATCH --constraint={{ constraint }}
+  {% endif %}
+  {% if exclusive %}
+  #SBATCH --exclusive
+  {% endif %}
+  {% if dependencies %}
+  #SBATCH --dependency=afterok:{{ dependencies | join(':') }}
+  {% endif %}
+  {% if array %}
+  #SBATCH --array={{ array }}
+  {% endif %}
+
+  # Environment setup
+  {% for module in modules %}
+  module load {{ module }}
+  {% endfor %}
+  {% if environment_setup %}
+  {{ environment_setup }}
+  {% endif %}
+  export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+  # Change to working directory
+  cd {{ work_dir }}
+
+  # Run CRYSTAL calculation
+  {% if use_mpi or ntasks > 1 %}
+  srun PcrystalOMP < {{ input_file }} > {{ output_file }} 2>&1
+  {% else %}
+  crystalOMP < {{ input_file }} > {{ output_file }} 2>&1
+  {% endif %}
+
+  exit_code=$?
+  echo "Job finished with exit code: $exit_code"
+  exit $exit_code

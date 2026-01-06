@@ -1,0 +1,89 @@
+name: "Basis Set Convergence Test"
+version: "1.0"
+description: "Test basis set and k-point convergence for energy calculations"
+author: "CRYSTAL-TUI Team"
+tags: ["workflow", "convergence", "testing", "quality-control"]
+
+parameters:
+  system_name:
+    type: "string"
+    default: "Convergence Test"
+    description: "Name/description of the system"
+    required: true
+
+  space_group:
+    type: "integer"
+    default: 225
+    min: 1
+    max: 230
+    description: "Space group number"
+    required: true
+
+  lattice_param:
+    type: "float"
+    default: 4.21
+    min: 0.1
+    max: 100.0
+    description: "Lattice parameter in Angstroms"
+    required: true
+
+  test_basis_set:
+    type: "select"
+    options: ["sto-3g", "3-21g", "6-21g", "6-31g", "pob-tzvp", "pob-dzvp"]
+    default: "pob-tzvp"
+    description: "Basis set to test"
+    required: true
+
+  test_shrink:
+    type: "integer"
+    default: 8
+    min: 1
+    max: 32
+    description: "K-point mesh density to test"
+    required: true
+
+  convergence:
+    type: "float"
+    default: 1.0e-10
+    min: 1.0e-12
+    max: 1.0e-4
+    description: "Tight SCF convergence for accurate energy"
+    required: true
+
+  max_cycles:
+    type: "integer"
+    default: 100
+    min: 10
+    max: 500
+    description: "Maximum SCF cycles"
+
+  test_type:
+    type: "select"
+    options: ["basis", "kpoints", "both"]
+    default: "both"
+    description: "What to test (basis set, k-points, or both)"
+
+  notes:
+    type: "string"
+    default: "Systematic convergence testing"
+    description: "Notes about this test"
+
+input_template: |
+  {{ system_name }} - {{ test_type }} convergence test
+  {{ notes }}
+  CRYSTAL
+  0 0 0
+  {{ space_group }}
+  {{ lattice_param }}
+  1
+  12 {{ test_basis_set }}
+  SHRINK
+  {{ test_shrink }} {{ test_shrink }}
+  TOLINTEG
+  7 7 7 7 14
+  TOLDEE
+  {{ convergence }}
+  MAXCYCLE
+  {{ max_cycles }}
+  PPAN
+  END

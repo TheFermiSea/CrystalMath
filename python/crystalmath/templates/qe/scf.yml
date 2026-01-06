@@ -1,0 +1,187 @@
+name: "Quantum Espresso SCF"
+version: "1.0"
+description: "Self-consistent field calculation with Quantum Espresso pw.x"
+author: "Crystal-TUI Team"
+dft_code: "quantum_espresso"
+tags: ["qe", "scf", "energy"]
+
+parameters:
+  calculation:
+    type: "string"
+    default: "scf"
+    description: "Calculation type"
+    readonly: true
+
+  prefix:
+    type: "string"
+    default: "pwscf"
+    description: "Prefix for output files"
+    required: true
+
+  pseudo_dir:
+    type: "string"
+    default: "./"
+    description: "Directory containing pseudopotential files"
+    required: true
+
+  outdir:
+    type: "string"
+    default: "./tmp"
+    description: "Directory for temporary files"
+
+  ecutwfc:
+    type: "float"
+    default: 60.0
+    min: 10.0
+    max: 200.0
+    description: "Kinetic energy cutoff for wavefunctions (Ry)"
+    required: true
+
+  ecutrho:
+    type: "float"
+    description: "Kinetic energy cutoff for charge density (Ry). Default: 4*ecutwfc"
+
+  occupations:
+    type: "select"
+    options: ["smearing", "tetrahedra", "tetrahedra_lin", "tetrahedra_opt", "fixed", "from_input"]
+    default: "smearing"
+    description: "Occupation function"
+
+  smearing:
+    type: "select"
+    options: ["gaussian", "methfessel-paxton", "marzari-vanderbilt", "fermi-dirac"]
+    default: "gaussian"
+    description: "Smearing type"
+
+  degauss:
+    type: "float"
+    default: 0.02
+    min: 0.001
+    max: 0.2
+    description: "Gaussian spreading (Ry)"
+
+  conv_thr:
+    type: "float"
+    default: 1.0e-8
+    min: 1.0e-14
+    max: 1.0e-4
+    description: "SCF convergence threshold (Ry)"
+    required: true
+
+  mixing_beta:
+    type: "float"
+    default: 0.7
+    min: 0.1
+    max: 1.0
+    description: "Mixing factor for self-consistency"
+
+  mixing_mode:
+    type: "select"
+    options: ["plain", "TF", "local-TF"]
+    default: "plain"
+    description: "Mixing mode"
+
+  electron_maxstep:
+    type: "integer"
+    default: 100
+    min: 10
+    max: 1000
+    description: "Maximum number of SCF iterations"
+
+  diagonalization:
+    type: "select"
+    options: ["david", "cg", "ppcg"]
+    default: "david"
+    description: "Diagonalization algorithm"
+
+  ntyp:
+    type: "integer"
+    default: 1
+    min: 1
+    max: 20
+    description: "Number of atomic species"
+    required: true
+
+  nat:
+    type: "integer"
+    default: 2
+    min: 1
+    max: 1000
+    description: "Number of atoms in unit cell"
+    required: true
+
+  ibrav:
+    type: "integer"
+    default: 0
+    min: 0
+    max: 14
+    description: "Bravais lattice index (0 = free)"
+
+  celldm_1:
+    type: "float"
+    description: "Lattice parameter a (Bohr)"
+
+  kpoints:
+    type: "string"
+    default: "4 4 4 0 0 0"
+    description: "K-point grid (nk1 nk2 nk3 sk1 sk2 sk3)"
+    required: true
+
+  atomic_species:
+    type: "text"
+    description: "Atomic species block (species mass pseudopotential)"
+    required: true
+
+  atomic_positions:
+    type: "text"
+    description: "Atomic positions block"
+    required: true
+
+  cell_parameters:
+    type: "text"
+    description: "Cell parameter vectors (for ibrav=0)"
+
+input_template: |
+  &CONTROL
+    calculation = '{{ calculation }}'
+    prefix = '{{ prefix }}'
+    pseudo_dir = '{{ pseudo_dir }}'
+    outdir = '{{ outdir }}'
+    verbosity = 'high'
+    tprnfor = .true.
+    tstress = .true.
+  /
+  &SYSTEM
+    ibrav = {{ ibrav }}
+  {% if celldm_1 %}
+    celldm(1) = {{ celldm_1 }}
+  {% endif %}
+    nat = {{ nat }}
+    ntyp = {{ ntyp }}
+    ecutwfc = {{ ecutwfc }}
+  {% if ecutrho %}
+    ecutrho = {{ ecutrho }}
+  {% endif %}
+    occupations = '{{ occupations }}'
+  {% if occupations == 'smearing' %}
+    smearing = '{{ smearing }}'
+    degauss = {{ degauss }}
+  {% endif %}
+  /
+  &ELECTRONS
+    conv_thr = {{ conv_thr }}
+    mixing_beta = {{ mixing_beta }}
+    mixing_mode = '{{ mixing_mode }}'
+    electron_maxstep = {{ electron_maxstep }}
+    diagonalization = '{{ diagonalization }}'
+  /
+  ATOMIC_SPECIES
+  {{ atomic_species }}
+  ATOMIC_POSITIONS crystal
+  {{ atomic_positions }}
+  {% if ibrav == 0 and cell_parameters %}
+  CELL_PARAMETERS angstrom
+  {{ cell_parameters }}
+  {% endif %}
+  K_POINTS automatic
+  {{ kpoints }}

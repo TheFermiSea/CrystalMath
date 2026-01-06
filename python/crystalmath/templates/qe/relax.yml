@@ -1,0 +1,221 @@
+name: "Quantum Espresso Relaxation"
+version: "1.0"
+description: "Geometry optimization with Quantum Espresso pw.x"
+author: "Crystal-TUI Team"
+dft_code: "quantum_espresso"
+tags: ["qe", "relax", "optimization"]
+
+parameters:
+  calculation:
+    type: "select"
+    options: ["relax", "vc-relax"]
+    default: "relax"
+    description: "Relaxation type (relax=atoms only, vc-relax=cell+atoms)"
+    required: true
+
+  prefix:
+    type: "string"
+    default: "pwscf"
+    description: "Prefix for output files"
+    required: true
+
+  pseudo_dir:
+    type: "string"
+    default: "./"
+    description: "Directory containing pseudopotential files"
+    required: true
+
+  outdir:
+    type: "string"
+    default: "./tmp"
+    description: "Directory for temporary files"
+
+  ecutwfc:
+    type: "float"
+    default: 60.0
+    min: 10.0
+    max: 200.0
+    description: "Kinetic energy cutoff for wavefunctions (Ry)"
+    required: true
+
+  ecutrho:
+    type: "float"
+    description: "Kinetic energy cutoff for charge density (Ry). Default: 4*ecutwfc"
+
+  occupations:
+    type: "select"
+    options: ["smearing", "tetrahedra", "fixed"]
+    default: "smearing"
+    description: "Occupation function"
+
+  smearing:
+    type: "select"
+    options: ["gaussian", "methfessel-paxton", "marzari-vanderbilt", "fermi-dirac"]
+    default: "gaussian"
+    description: "Smearing type"
+
+  degauss:
+    type: "float"
+    default: 0.02
+    min: 0.001
+    max: 0.2
+    description: "Gaussian spreading (Ry)"
+
+  conv_thr:
+    type: "float"
+    default: 1.0e-8
+    min: 1.0e-14
+    max: 1.0e-4
+    description: "SCF convergence threshold (Ry)"
+    required: true
+
+  forc_conv_thr:
+    type: "float"
+    default: 1.0e-4
+    min: 1.0e-8
+    max: 1.0e-2
+    description: "Force convergence threshold (Ry/Bohr)"
+    required: true
+
+  etot_conv_thr:
+    type: "float"
+    default: 1.0e-5
+    min: 1.0e-10
+    max: 1.0e-3
+    description: "Total energy convergence threshold (Ry)"
+
+  nstep:
+    type: "integer"
+    default: 50
+    min: 10
+    max: 1000
+    description: "Maximum number of ionic steps"
+
+  ion_dynamics:
+    type: "select"
+    options: ["bfgs", "damp"]
+    default: "bfgs"
+    description: "Ionic minimization algorithm"
+
+  cell_dynamics:
+    type: "select"
+    options: ["bfgs", "damp-pr", "damp-w"]
+    default: "bfgs"
+    description: "Cell minimization algorithm (for vc-relax)"
+
+  press:
+    type: "float"
+    default: 0.0
+    description: "Target pressure (kbar) for vc-relax"
+
+  press_conv_thr:
+    type: "float"
+    default: 0.5
+    min: 0.01
+    max: 10.0
+    description: "Pressure convergence threshold (kbar)"
+
+  cell_dofree:
+    type: "select"
+    options: ["all", "ibrav", "x", "y", "z", "xy", "xz", "yz", "xyz", "shape", "volume", "2Dxy", "2Dshape"]
+    default: "all"
+    description: "Degrees of freedom for cell relaxation"
+
+  ntyp:
+    type: "integer"
+    default: 1
+    min: 1
+    max: 20
+    description: "Number of atomic species"
+    required: true
+
+  nat:
+    type: "integer"
+    default: 2
+    min: 1
+    max: 1000
+    description: "Number of atoms in unit cell"
+    required: true
+
+  ibrav:
+    type: "integer"
+    default: 0
+    min: 0
+    max: 14
+    description: "Bravais lattice index (0 = free)"
+
+  kpoints:
+    type: "string"
+    default: "4 4 4 0 0 0"
+    description: "K-point grid (nk1 nk2 nk3 sk1 sk2 sk3)"
+    required: true
+
+  atomic_species:
+    type: "text"
+    description: "Atomic species block (species mass pseudopotential)"
+    required: true
+
+  atomic_positions:
+    type: "text"
+    description: "Atomic positions block"
+    required: true
+
+  cell_parameters:
+    type: "text"
+    description: "Cell parameter vectors (for ibrav=0)"
+
+input_template: |
+  &CONTROL
+    calculation = '{{ calculation }}'
+    prefix = '{{ prefix }}'
+    pseudo_dir = '{{ pseudo_dir }}'
+    outdir = '{{ outdir }}'
+    verbosity = 'high'
+    tprnfor = .true.
+    tstress = .true.
+    nstep = {{ nstep }}
+    forc_conv_thr = {{ forc_conv_thr }}
+  {% if etot_conv_thr %}
+    etot_conv_thr = {{ etot_conv_thr }}
+  {% endif %}
+  /
+  &SYSTEM
+    ibrav = {{ ibrav }}
+    nat = {{ nat }}
+    ntyp = {{ ntyp }}
+    ecutwfc = {{ ecutwfc }}
+  {% if ecutrho %}
+    ecutrho = {{ ecutrho }}
+  {% endif %}
+    occupations = '{{ occupations }}'
+  {% if occupations == 'smearing' %}
+    smearing = '{{ smearing }}'
+    degauss = {{ degauss }}
+  {% endif %}
+  /
+  &ELECTRONS
+    conv_thr = {{ conv_thr }}
+    mixing_beta = 0.7
+    electron_maxstep = 100
+  /
+  &IONS
+    ion_dynamics = '{{ ion_dynamics }}'
+  /
+  {% if calculation == 'vc-relax' %}
+  &CELL
+    cell_dynamics = '{{ cell_dynamics }}'
+    press = {{ press }}
+    press_conv_thr = {{ press_conv_thr }}
+    cell_dofree = '{{ cell_dofree }}'
+  /
+  {% endif %}
+  ATOMIC_SPECIES
+  {{ atomic_species }}
+  ATOMIC_POSITIONS crystal
+  {{ atomic_positions }}
+  {% if ibrav == 0 and cell_parameters %}
+  CELL_PARAMETERS angstrom
+  {{ cell_parameters }}
+  {% endif %}
+  K_POINTS automatic
+  {{ kpoints }}

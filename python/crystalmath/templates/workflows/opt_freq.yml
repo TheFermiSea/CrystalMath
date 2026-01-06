@@ -1,0 +1,97 @@
+name: "Optimization + Frequency Workflow"
+version: "1.0"
+description: "Combined geometry optimization followed by frequency calculation"
+author: "CRYSTAL-TUI Team"
+tags: ["workflow", "optimization", "frequency", "thermodynamics"]
+
+parameters:
+  system_name:
+    type: "string"
+    default: "Opt+Freq Workflow"
+    description: "Name/description of the system"
+    required: true
+
+  space_group:
+    type: "integer"
+    default: 225
+    min: 1
+    max: 230
+    description: "Space group number"
+    required: true
+
+  lattice_param:
+    type: "float"
+    default: 4.21
+    min: 0.1
+    max: 100.0
+    description: "Initial lattice parameter in Angstroms"
+    required: true
+
+  basis_set:
+    type: "select"
+    options: ["sto-3g", "3-21g", "6-21g", "6-31g", "pob-tzvp", "pob-dzvp"]
+    default: "6-31g"
+    description: "Basis set for all atoms"
+    required: true
+
+  shrink:
+    type: "integer"
+    default: 8
+    min: 1
+    max: 32
+    description: "Shrinking factor for k-point mesh"
+    required: true
+
+  convergence:
+    type: "float"
+    default: 1.0e-8
+    min: 1.0e-12
+    max: 1.0e-4
+    description: "SCF convergence threshold"
+    required: true
+
+  opt_type:
+    type: "select"
+    options: ["FULLOPTG", "CELLONLY", "ATOMONLY"]
+    default: "FULLOPTG"
+    description: "Optimization type"
+
+  max_opt_cycles:
+    type: "integer"
+    default: 100
+    min: 1
+    max: 1000
+    description: "Maximum optimization cycles"
+
+  temperature:
+    type: "float"
+    default: 298.15
+    min: 0.0
+    max: 5000.0
+    description: "Temperature in Kelvin for thermodynamic properties"
+
+input_template: |
+  {{ system_name }}
+  CRYSTAL
+  0 0 0
+  {{ space_group }}
+  {{ lattice_param }}
+  1
+  12 {{ basis_set }}
+  SHRINK
+  {{ shrink }} {{ shrink }}
+  TOLINTEG
+  7 7 7 7 14
+  TOLDEE
+  {{ convergence }}
+  OPTGEOM
+  {{ opt_type }}
+  MAXCYCLE
+  {{ max_opt_cycles }}
+  ENDOPT
+  FREQCALC
+  RESTART
+  TEMPERAT
+  {{ temperature }}
+  END
+  END

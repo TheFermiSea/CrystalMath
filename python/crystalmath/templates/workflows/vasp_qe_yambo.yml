@@ -1,0 +1,305 @@
+name: "VASP -> QE -> YAMBO Optical Properties"
+version: "1.0"
+description: "Complete workflow: VASP relaxation, QE bands with SOC, YAMBO GW/BSE/Shift"
+author: "Crystal-TUI Team"
+tags: ["workflow", "multi-code", "vasp", "qe", "yambo", "gw", "bse", "optics"]
+multi_code: true
+
+parameters:
+  # Structure input
+  structure_file:
+    type: "file"
+    description: "Input structure (POSCAR, CIF, or QE input)"
+    required: true
+
+  system_name:
+    type: "string"
+    default: "Material"
+    description: "System name for job labels"
+    required: true
+
+  # VASP relaxation settings
+  encut:
+    type: "float"
+    default: 520.0
+    description: "Plane-wave cutoff (eV)"
+
+  ediffg:
+    type: "float"
+    default: -0.01
+    description: "Force convergence (eV/A)"
+
+  kpoints_relax:
+    type: "string"
+    default: "6 6 6"
+    description: "K-points for VASP relaxation"
+
+  # QE settings
+  ecutwfc:
+    type: "float"
+    default: 60.0
+    description: "QE wavefunction cutoff (Ry)"
+
+  ecutrho:
+    type: "float"
+    default: 480.0
+    description: "QE density cutoff (Ry)"
+
+  kpoints_scf:
+    type: "string"
+    default: "8 8 8"
+    description: "K-points for QE SCF"
+
+  kpoints_nscf:
+    type: "string"
+    default: "12 12 12"
+    description: "K-points for QE NSCF (denser for YAMBO)"
+
+  nbnd:
+    type: "integer"
+    default: 400
+    description: "Number of bands for YAMBO"
+
+  # SOC settings
+  soc_enabled:
+    type: "boolean"
+    default: true
+    description: "Enable spin-orbit coupling"
+
+  # YAMBO calculation selection
+  yambo_calculations:
+    type: "multiselect"
+    options:
+      - label: "GW Quasiparticle"
+        value: "gw"
+      - label: "BSE Optical Absorption"
+        value: "bse"
+      - label: "Shift Current (BPVE)"
+        value: "shift_current"
+    default: ["gw", "bse"]
+    description: "YAMBO calculations to run"
+
+  # YAMBO GW settings
+  gw_bands_max:
+    type: "integer"
+    default: 200
+    description: "Max bands for GW screening"
+
+  gw_screening_cutoff:
+    type: "float"
+    default: 5.0
+    description: "Screening cutoff (Ry)"
+
+  # YAMBO BSE settings
+  bse_bands_min:
+    type: "integer"
+    default: 20
+    description: "First band for BSE"
+
+  bse_bands_max:
+    type: "integer"
+    default: 80
+    description: "Last band for BSE"
+
+  bse_energy_max:
+    type: "float"
+    default: 6.0
+    description: "Max energy for BSE spectrum (eV)"
+
+  # Container settings
+  use_containers:
+    type: "boolean"
+    default: true
+    description: "Use Apptainer containers for QE/YAMBO"
+
+  qe_container:
+    type: "string"
+    default: "qe_7.3_gpu.sif"
+    description: "QE container image"
+
+  yambo_container:
+    type: "string"
+    default: "yambo_5.2.0_gpu.sif"
+    description: "YAMBO container image"
+
+workflow:
+  nodes:
+    # Step 1: VASP Relaxation
+    - id: vasp_relax
+      type: calculation
+      code: vasp
+      template: vasp/relax
+      parameters:
+        system: "{{ system_name }} - Relaxation"
+        prec: "Accurate"
+        encut: "{{ encut }}"
+        ediffg: "{{ ediffg }}"
+        isif: "3"
+        nsw: 100
+        kpoints_grid: "{{ kpoints_relax }}"
+        lwave: false
+        lcharg: false
+
+    # Step 2: Convert VASP to QE
+    - id: structure_convert
+      type: script
+      command: |
+        python3 << 'EOF'
+        from ase.io import read, write
+        import sys
+
+        # Read VASP CONTCAR
+        atoms = read('CONTCAR', format='vasp')
+        print(f"Structure: {atoms.get_chemical_formula()}")
+
+        # Write QE input skeleton
+        # Full conversion handled by vasp_to_qe.py module
+        with open('structure.xyz', 'w') as f:
+            write(f, atoms, format='xyz')
+        EOF
+      dependencies:
+        - vasp_relax
+
+    # Step 3: QE SCF with SOC
+    - id: qe_scf
+      type: calculation
+      code: quantum_espresso
+      template: qe/scf_soc
+      container: "{{ qe_container if use_containers else '' }}"
+      parameters:
+        prefix: "{{ system_name | lower | replace(' ', '_') }}"
+        ecutwfc: "{{ ecutwfc }}"
+        ecutrho: "{{ ecutrho }}"
+        noncolin: "{{ soc_enabled }}"
+        lspinorb: "{{ soc_enabled }}"
+        kpoints: "{{ kpoints_scf }}"
+      dependencies:
+        - structure_convert
+
+    # Step 4: QE NSCF for YAMBO
+    - id: qe_nscf
+      type: calculation
+      code: quantum_espresso
+      template: qe/nscf_yambo
+      container: "{{ qe_container if use_containers else '' }}"
+      parameters:
+        prefix: "{{ system_name | lower | replace(' ', '_') }}"
+        ecutwfc: "{{ ecutwfc }}"
+        ecutrho: "{{ ecutrho }}"
+        nbnd: "{{ nbnd }}"
+        noncolin: "{{ soc_enabled }}"
+        lspinorb: "{{ soc_enabled }}"
+        nosym: true
+        noinv: true
+        wf_collect: true
+        kpoints: "{{ kpoints_nscf }}"
+      dependencies:
+        - qe_scf
+
+    # Step 5: YAMBO Setup (p2y + yambo)
+    - id: yambo_setup
+      type: script
+      container: "{{ yambo_container if use_containers else '' }}"
+      command: |
+        cd tmp/{{ system_name | lower | replace(' ', '_') }}.save
+        p2y
+        yambo
+        echo "YAMBO SAVE database created"
+        ls -la SAVE/
+      dependencies:
+        - qe_nscf
+
+    # Step 6: YAMBO GW (conditional)
+    - id: yambo_gw
+      type: calculation
+      code: yambo
+      template: yambo/gw
+      container: "{{ yambo_container if use_containers else '' }}"
+      condition: "'gw' in yambo_calculations"
+      parameters:
+        bands_screening_max: "{{ gw_bands_max }}"
+        bands_self_energy_max: "{{ gw_bands_max }}"
+        screening_cutoff: "{{ gw_screening_cutoff }}"
+        job_name: "gw"
+      dependencies:
+        - yambo_setup
+
+    # Step 7: YAMBO BSE (conditional, depends on GW)
+    - id: yambo_bse
+      type: calculation
+      code: yambo
+      template: yambo/bse
+      container: "{{ yambo_container if use_containers else '' }}"
+      condition: "'bse' in yambo_calculations"
+      parameters:
+        bse_bands_min: "{{ bse_bands_min }}"
+        bse_bands_max: "{{ bse_bands_max }}"
+        energy_max: "{{ bse_energy_max }}"
+        use_gw: true
+        job_name: "bse"
+      dependencies:
+        - yambo_gw
+
+    # Step 8: YAMBO Shift Current (conditional, parallel with BSE)
+    - id: yambo_shift
+      type: calculation
+      code: yambo
+      template: yambo/shift_current
+      container: "{{ yambo_container if use_containers else '' }}"
+      condition: "'shift_current' in yambo_calculations"
+      parameters:
+        nl_bands_max: "{{ gw_bands_max }}"
+        energy_min: 0.5
+        energy_max: 4.0
+        job_name: "shift"
+      dependencies:
+        - yambo_setup
+
+  edges:
+    - from: vasp_relax
+      to: structure_convert
+    - from: structure_convert
+      to: qe_scf
+    - from: qe_scf
+      to: qe_nscf
+    - from: qe_nscf
+      to: yambo_setup
+    - from: yambo_setup
+      to: yambo_gw
+    - from: yambo_gw
+      to: yambo_bse
+    - from: yambo_setup
+      to: yambo_shift
+
+  outputs:
+    - name: "relaxed_structure"
+      source: "vasp_relax"
+      file: "CONTCAR"
+    - name: "gw_corrections"
+      source: "yambo_gw"
+      file: "o-gw.qp"
+      condition: "'gw' in yambo_calculations"
+    - name: "optical_spectrum"
+      source: "yambo_bse"
+      file: "o-bse.eps*"
+      condition: "'bse' in yambo_calculations"
+    - name: "shift_current"
+      source: "yambo_shift"
+      file: "o-shift.YPP-SC*"
+      condition: "'shift_current' in yambo_calculations"
+
+notes: |
+  Multi-code workflow: VASP -> QE -> YAMBO
+
+  Prerequisites:
+  - VASP installation or container
+  - QE with FR pseudopotentials for SOC
+  - YAMBO with yambo_nl for shift current
+
+  Expected runtime (NbOCl2-like system):
+  - VASP relax: 2-4 hours
+  - QE SCF/NSCF: 1-2 hours
+  - YAMBO GW: 2-4 hours
+  - YAMBO BSE: 1-2 hours
+  - YAMBO Shift: 2-4 hours
+  Total: ~8-16 hours

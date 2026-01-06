@@ -1,0 +1,96 @@
+name: "Elastic Constants"
+version: "1.0"
+description: "Calculate elastic constants tensor and mechanical properties"
+author: "CRYSTAL-TUI Team"
+tags: ["advanced", "elastic", "mechanical", "properties"]
+
+parameters:
+  system_name:
+    type: "string"
+    default: "Elastic Constants Calculation"
+    description: "Name/description of the system"
+    required: true
+
+  space_group:
+    type: "integer"
+    default: 225
+    min: 1
+    max: 230
+    description: "Space group number"
+    required: true
+
+  lattice_param:
+    type: "float"
+    default: 4.21
+    min: 0.1
+    max: 100.0
+    description: "Lattice parameter in Angstroms"
+    required: true
+
+  basis_set:
+    type: "select"
+    options: ["sto-3g", "3-21g", "6-21g", "6-31g", "pob-tzvp", "pob-dzvp"]
+    default: "pob-tzvp"
+    description: "Basis set for all atoms"
+    required: true
+
+  shrink:
+    type: "integer"
+    default: 12
+    min: 1
+    max: 32
+    description: "Shrinking factor for k-point mesh"
+    required: true
+
+  convergence:
+    type: "float"
+    default: 1.0e-10
+    min: 1.0e-12
+    max: 1.0e-4
+    description: "SCF convergence threshold (tight for elastic constants)"
+    required: true
+
+  strain_amplitude:
+    type: "float"
+    default: 0.003
+    min: 0.0001
+    max: 0.01
+    description: "Strain amplitude for numerical derivatives"
+
+  use_numerical:
+    type: "boolean"
+    default: false
+    description: "Use numerical derivatives (NUMDERIV) instead of analytical"
+
+  optimize_geometry:
+    type: "boolean"
+    default: true
+    description: "Optimize geometry before calculating elastic constants"
+
+input_template: |
+  {{ system_name }}
+  CRYSTAL
+  0 0 0
+  {{ space_group }}
+  {{ lattice_param }}
+  1
+  12 {{ basis_set }}
+  SHRINK
+  {{ shrink }} {{ shrink }}
+  TOLINTEG
+  7 7 7 7 14
+  TOLDEE
+  {{ convergence }}
+  {% if optimize_geometry %}
+  OPTGEOM
+  FULLOPTG
+  ENDOPT
+  {% endif %}
+  ELASTCON
+  {% if use_numerical %}
+  NUMDERIV
+  {% endif %}
+  STRAIN
+  {{ strain_amplitude }}
+  END
+  END
