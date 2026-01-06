@@ -7,10 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 CRYSTAL-TOOLS is a unified monorepo containing complementary tools for CRYSTAL23 quantum chemistry DFT calculations:
 
 1. **CLI** (`cli/`) - Production-ready Bash tool for executing calculations
-2. **TUI** (`tui/`) - Python terminal UI for interactive job management with remote execution
-3. **Rust TUI** (`src/`) - High-performance Rust TUI with PyO3 Python bridge (in development)
+2. **Python TUI** (`tui/`) - **Primary** Textual-based UI for job creation, configuration, and workflows ("Workshop")
+3. **Rust TUI** (`src/`) - **Secondary/experimental** Ratatui-based UI for high-performance monitoring ("Cockpit")
 
-**Design Philosophy:** CLI for execution, TUI for management. The Rust TUI provides 60fps rendering with embedded Python for scientific backends.
+**Design Philosophy: "Workshop Primary, Cockpit Optional"**
+- **Python TUI (Workshop)**: Primary UI for workflows, templates, cluster config, and job submission.
+- **Rust TUI (Cockpit)**: Secondary/experimental UI focused on high-performance monitoring.
+- **Shared Database**: Both TUIs share `.crystal_tui.db`. Rust should consume data via a stable IPC boundary rather than expanding PyO3 usage.
 
 ## Core Commands
 
@@ -34,7 +37,7 @@ bats tests/integration/*.bats           # Integration tests
 bats tests/unit/cry-parallel_test.bats  # Single module
 ```
 
-### TUI Tool
+### Python TUI (Workshop)
 
 ```bash
 cd tui/
@@ -43,7 +46,7 @@ cd tui/
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 
-# Launch
+# Launch (use for job creation, cluster config, templates)
 crystal-tui
 
 # Run tests
@@ -55,26 +58,37 @@ pytest -k "test_job_create"         # Single test
 black src/ tests/ && ruff check src/ tests/ && mypy src/
 ```
 
-### Rust TUI
+### Rust TUI (Cockpit - Secondary)
 
 ```bash
-# From crystalmath/ root
+# From crystalmath/ root (IMPORTANT: must be in root, not tui/)
 
-# Build (release mode recommended)
-cargo build --release
+# Build with correct Python version (REQUIRED - see note below)
+./scripts/build-tui.sh          # Uses venv Python for PyO3
+./scripts/build-tui.sh --clean  # Force clean rebuild (use after Python updates)
+
+# Or manually:
+PYO3_PYTHON=/path/to/crystalmath/.venv/bin/python cargo build --release
 
 # Run tests
-cargo test                    # All tests (25 tests)
+cargo test                    # All tests (~103 tests)
 cargo test lsp                # LSP module tests only
 cargo test models             # Model tests only
 
-# Run TUI (requires Python backend)
-cargo run --release
+# Run TUI (optional monitoring UI)
+./target/release/crystalmath
 
 # Check code quality
 cargo clippy
 cargo fmt --check
 ```
+
+**CRITICAL: Python Version Mismatch (PyO3)**
+PyO3 must be compiled against the **exact same Python version** used at runtime.
+- The venv uses Python 3.12 (check with `.venv/bin/python --version`)
+- System Python may be 3.14+ (incompatible)
+- Always use `./scripts/build-tui.sh` or set `PYO3_PYTHON` explicitly
+- If you see "SRE module mismatch" errors, run `./scripts/build-tui.sh --clean`
 
 ### Issue Tracking (bd/beads)
 
@@ -108,9 +122,9 @@ bd create "Title"          # New issue
 - Trap-based cleanup: `trap 'scratch_cleanup' EXIT`
 - Modules return exit codes; main script handles errors
 
-### TUI (Python, Async)
+### Python TUI - "Workshop" (Textual, Async)
 
-**Entry Point:** `src/main.py` → `src/tui/app.py`
+**Entry Point:** `tui/src/main.py` → `tui/src/tui/app.py`
 
 **Package Structure:**
 - `src/core/` - Business logic (database, orchestrator, queue, templates, workflow, connection manager)
@@ -143,46 +157,75 @@ clusters (id, name, hostname, username, queue_type, max_concurrent)
 workflows (id, name, dag_json, status)
 ```
 
-### Rust TUI (Hybrid PyO3)
+### Rust TUI - "Cockpit" (Ratatui, PyO3)
 
 **Entry Point:** `src/main.rs` → `src/app.rs`
 
 **Module Structure:**
 | Module | Purpose |
 |--------|---------|
-| `main.rs` | Entry point, terminal setup, 60fps event loop |
+| `main.rs` | Entry point, terminal setup, 60fps event loop, Python env config |
 | `app.rs` | Application state, tab navigation, dirty-flag rendering |
-| `models.rs` | Data models matching Python Pydantic (serde) |
-| `bridge.rs` | PyO3 FFI to Python backend |
+| `models.rs` | Data models matching Python Pydantic (serde), ClusterType enum, VaspInputFiles |
+| `bridge.rs` | PyO3 FFI to Python backend, async request/response via channels |
 | `lsp.rs` | LSP client for dft-language-server (JSON-RPC over stdio) |
-| `ui/` | Ratatui view components (jobs, editor, results, log) |
+| `ui/` | Ratatui view components (jobs, editor, results, log, materials, cluster_manager, slurm_queue, vasp_input) |
+
+**Key Data Models (`models.rs`):**
+- `ClusterType` enum: `Ssh`/`Slurm` with serde serialization (`#[serde(rename_all = "lowercase")]`)
+- `VaspInputFiles`: VASP multi-file input (POSCAR, INCAR, KPOINTS, POTCAR config) for `JobSubmission.parameters`
+- `ClusterConfig`: Cluster configuration with typed `cluster_type: ClusterType`
+- `JobSubmission`: Job creation with `with_parameters()` builder for DFT-specific data
 
 **Key Technologies:**
-- Ratatui (TUI rendering framework)
+- Ratatui (TUI rendering framework, 60fps)
 - PyO3 (Rust-Python FFI bridge)
 - Crossterm (terminal events)
-- tui-textarea (editor widget)
-- serde (JSON serialization)
+- tui-textarea (editor widget with line numbers)
+- serde (JSON serialization for bridge)
+- tracing (structured logging)
+
+**Database Sharing:**
+The Rust TUI finds the shared `.crystal_tui.db` via `find_database_path()` in `bridge.rs`:
+1. `CRYSTAL_TUI_DB` environment variable (highest priority)
+2. `.crystal_tui.db` in project root (where Cargo.toml is)
+3. `.crystal_tui.db` in `tui/` subdirectory
+4. XDG/platform data directories (fallback)
 
 **LSP Integration:**
 - Spawns `dft-language-server` as subprocess
 - JSON-RPC 2.0 over stdio with Content-Length framing
 - Async diagnostics via `mpsc` channel
+- 200ms debounce on editor changes
 - Graceful degradation if server unavailable
 
 **Architecture Pattern:**
 ```
-┌─────────────┐    PyO3     ┌─────────────┐
-│  Rust TUI   │◄──────────►│   Python    │
-│  (60fps)    │   bridge   │  Backend    │
-└──────┬──────┘            └─────────────┘
-       │
-       │ JSON-RPC
+┌─────────────────────────────────────────────────────┐
+│                   Rust TUI (60fps)                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────┐  │
+│  │   Jobs   │  │  Editor  │  │ Results  │  │ Log │  │
+│  │  Table   │  │  +LSP    │  │  Detail  │  │View │  │
+│  └──────────┘  └──────────┘  └──────────┘  └─────┘  │
+└───────────────────────┬─────────────────────────────┘
+                        │
+        ┌───────────────┼───────────────┐
+        │               │               │
+        ▼               ▼               ▼
+┌──────────────┐ ┌─────────────┐ ┌─────────────┐
+│ Python Bridge│ │ LSP Server  │ │   Shared    │
+│   (PyO3)     │ │  (Node.js)  │ │  Database   │
+│ Worker Thread│ │ JSON-RPC    │ │ .crystal_   │
+└──────┬───────┘ └─────────────┘ │  tui.db     │
+       │                         └─────────────┘
        ▼
-┌─────────────┐
-│  LSP Server │
-│ (Node.js)   │
-└─────────────┘
+┌─────────────────────┐
+│  crystalmath.api    │
+│  (Python Backend)   │
+│  - SQLite queries   │
+│  - Materials API    │
+│  - AiiDA (optional) │
+└─────────────────────┘
 ```
 
 ## Development Guidelines
@@ -207,6 +250,8 @@ workflows (id, name, dag_json, status)
 - Jinja2: Use `jinja2.sandbox.SandboxedEnvironment`
 - SSH: Enable host key verification (never `known_hosts=None`)
 - Commands: Escape shell when building SLURM scripts or remote commands
+- Workflow conditions: Use `_safe_eval_condition()` with AST whitelisting (never raw `eval()`)
+- Stub execution: Require explicit `metadata["allow_stub_execution"] = True` for test workflows
 
 ### Rust TUI Development
 
@@ -244,49 +289,132 @@ export PATH="$HOME/CRYSTAL23/crystalmath/cli/bin:$PATH"
 | Component | Status | Notes |
 |-----------|--------|-------|
 | CLI | ✅ Production | 100% complete, 76 tests |
-| TUI Phase 2 | ✅ Complete | SSH/SLURM/orchestration working |
-| TUI Runner Safety (ae6) | ✅ Complete | Race conditions fixed, proper cleanup |
-| TUI Phase 3 | ✅ Complete | AiiDA integration (optional PostgreSQL) |
-| TUI Phase 4 | 🔨 In Progress | Materials Project API integration |
-| **Rust TUI Refactor** | | |
+| Python TUI Phase 2 | ✅ Complete | SSH/SLURM/orchestration working |
+| Python TUI Runner Safety | ✅ Complete | Race conditions fixed, proper cleanup |
+| Python TUI Phase 3 | ✅ Complete | AiiDA integration (optional PostgreSQL) |
+| Python TUI Phase 4 | 🔨 In Progress | Materials Project API integration |
+| **Rust TUI (Cockpit)** | | |
 | Phase 1-4: Core TUI | ✅ Complete | Event loop, app state, bridge, UI |
 | Phase 5: LSP | ✅ Complete | JSON-RPC client, diagnostics display |
-| Phase 6: Testing | ✅ Complete | 25 unit tests, documentation |
+| Phase 6: Testing | ✅ Complete | ~103 unit tests, documentation |
+| **Feature Parity (lo7)** | 🔨 In Progress | lo7.5-7 remaining |
+| **Security Hardening** | ✅ Complete | AST-based safe eval, API contract fixes |
 
-**Current Sprint (Materials API - crystalmath-7mw):**
-- ✅ MP API async client with `asyncio.to_thread()` wrapper
-- ✅ MPContribs async client for user contributions
-- ✅ OPTIMADE native async client (httpx) for cross-database queries
-- ✅ SQLite cache with 30-day TTL (Migration V6)
-- ✅ MaterialsService orchestrator with rate limiting
-- ✅ pymatgen → CRYSTAL23 .d12 converter
-- 🔲 TUI MaterialsSearchScreen component
-- 🔲 Unit/integration tests
+**Recent Fixes (Dec 2024):**
+- ✅ crystalmath-obqk: Fixed eval() code injection in workflow conditions (AST whitelisting)
+- ✅ crystalmath-6sf7: Fixed Rust-Python JSON contract mismatch (ApiResponse wrapper)
+- ✅ crystalmath-z539: Fixed silent stub execution (explicit allow_stub_execution flag)
+- ✅ crystalmath-0ib/ilp: Fixed LSP unwrap() panics on non-UTF8/None
+- ✅ All Gemini code review P1 issues closed
+
+**Open Feature Parity (lo7):**
+- 🔲 lo7.5: Template Browser
+- 🔲 lo7.6: Materials Search
+- 🔲 lo7.7: Batch Submission
+
+**Feature Roadmap (P1-P3 Epics):**
+
+| Epic | Priority | Description | Tasks |
+|------|----------|-------------|-------|
+| crystalmath-7r8 | P1 | Workflow Automation | Convergence studies, phonons, band structure, EOS |
+| crystalmath-5uy | P1 | Analytics & Monitoring | Live dashboards, trends, mobile alerts |
+| crystalmath-7k7 | P2 | Structure Engineering | Slab builder, defects, matching, nanostructures |
+| crystalmath-8dm | P2 | AI-Powered Features | LLM diagnosis, NL input, literature params |
+| crystalmath-dgg | P3 | Cloud & Scale | AWS Batch, Kubernetes orchestration |
+| crystalmath-gh8 | P3 | Collaboration & Sharing | Workspaces, CIF export, web dashboard |
+
+**Open P2 Tasks:**
+- wf1.1-1.5: Workflow automation (convergence, phonons, bands, EOS, restart)
+- se2.1-2.4: Structure engineering (slabs, defects, matching, nanostructures)
+- am3.1-3.4: Analytics (live SCF, trends, mobile alerts, checksums)
+- ai4.1-4.3: AI features (error diagnosis, NL input, literature params)
+- lo7.5-7: Rust TUI parity (templates, materials, batch)
+- dyu.5-6: DFT code UI (syntax validation, environment paths)
+- AiiDA parser migration (CRYSTAL, VASP, QE)
 
 ## Troubleshooting
 
-**CLI: "associative array: bad array subscript"** → Bash < 4.0. Fix: `brew install bash`
+### CLI Issues
 
-**CLI: "crystalOMP: not found"** → `CRY23_ROOT` not set. Fix: source `cry23.bashrc`
+**"associative array: bad array subscript"** → Bash < 4.0. Fix: `brew install bash`
 
-**TUI: "No module named 'textual'"** → Run `pip install -e ".[dev]"` from `tui/`
+**"crystalOMP: not found"** → `CRY23_ROOT` not set. Fix: `source ~/CRYSTAL23/utils23/cry23.bashrc`
 
-**TUI: SSH "Connection refused"** → SSH manually first to add host key, or check asyncssh version
+### Python TUI Issues
 
-**Rust TUI: PyO3 "Python 3.x not supported"** → Update PyO3 to 0.24+ in Cargo.toml
+**"No module named 'textual'"** → Run `pip install -e ".[dev]"` from `tui/`
 
-**Rust TUI: "LSP server not found"** → Ensure `dft-language-server/out/server.js` exists (run `npm run build` in dft-language-server/)
+**SSH "Connection refused"** → SSH manually first to add host key, or check asyncssh version
 
-**Rust TUI: No diagnostics in editor** → Check LSP server is running (graceful degradation if unavailable)
+### Rust TUI Issues
+
+**"SRE module mismatch"** → Python version conflict between build time and runtime.
+```bash
+# Fix: Force clean rebuild with correct Python
+./scripts/build-tui.sh --clean
+```
+
+**"No module named 'crystalmath'"** → Python path not configured correctly.
+```bash
+# The build script handles this, but you can also set manually:
+export PYTHONPATH=/path/to/crystalmath/python:$PYTHONPATH
+```
+
+**"AssertionError: SRE module mismatch"** → PyO3 was compiled with wrong Python.
+```bash
+# Check venv Python version:
+.venv/bin/python --version  # Should be 3.12.x
+
+# Check system Python (may be incompatible):
+python3 --version  # May be 3.14+
+
+# Fix:
+./scripts/build-tui.sh --clean
+```
+
+**Empty job list / "Running in demo mode"** → Database not found.
+```bash
+# Check if database exists:
+ls -la .crystal_tui.db
+
+# If not, run Python TUI first to create jobs:
+cd tui && crystal-tui
+
+# Or specify path explicitly:
+export CRYSTAL_TUI_DB=/path/to/.crystal_tui.db
+```
+
+**"LSP server not found"** → dft-language-server not built.
+```bash
+cd dft-language-server && npm install && npm run build
+```
+
+**No diagnostics in editor** → LSP server unavailable (graceful degradation). Check:
+```bash
+# Test LSP server directly:
+node dft-language-server/out/server.js --stdio
+```
 
 ## Key Files
 
-- CLI Architecture: `cli/docs/ARCHITECTURE.md`
-- CLI Module Details: `cli/CLAUDE.md`
-- TUI Project Status: `tui/docs/PROJECT_STATUS.md`
-- Materials API Guide: `tui/docs/MATERIALS_API.md`
-- AiiDA Setup: `tui/docs/AIIDA_SETUP.md`
-- Rust TUI Entry: `src/main.rs`
-- Rust TUI State: `src/app.rs`
-- Rust TUI LSP: `src/lsp.rs`
-- CRYSTAL23 Compilation: `docs/CRYSTAL23_COMPILATION_GUIDE.md`
+### CLI
+- Architecture: `cli/docs/ARCHITECTURE.md`
+- Module Details: `cli/CLAUDE.md`
+
+### Python TUI (Workshop)
+- Entry Point: `tui/src/main.py`
+- Materials API: `tui/src/core/materials_api/`
+- AiiDA Integration: `tui/src/aiida/`
+
+### Rust TUI (Cockpit)
+- Entry Point: `src/main.rs` (Python env config, event loop)
+- App State: `src/app.rs` (tabs, state management, dirty-flag rendering)
+- Python Bridge: `src/bridge.rs` (PyO3 FFI, database discovery)
+- LSP Client: `src/lsp.rs` (JSON-RPC, diagnostics)
+- UI Components: `src/ui/` (jobs, editor, results, log, materials)
+- Python API: `python/crystalmath/api.py` (backend for Rust TUI)
+- Build Script: `scripts/build-tui.sh` (handles Python version)
+
+### Shared
+- Database: `.crystal_tui.db` (SQLite, shared between TUIs)
+- Issue Tracking: `.beads/issues.jsonl`

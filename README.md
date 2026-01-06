@@ -1,6 +1,6 @@
 # CrystalMath: Multi-Code DFT Job Management
 
-A unified toolkit for quantum chemistry DFT calculations, supporting **CRYSTAL23**, **Quantum Espresso**, and **VASP**. Combines a production-grade Bash CLI for execution with a modern Python TUI for interactive job management.
+A unified toolkit for quantum chemistry DFT calculations, supporting **CRYSTAL23**, **Quantum Espresso**, and **VASP**. Uses a primary Python/Textual TUI ("Workshop") with an optional Rust/Ratatui TUI ("Cockpit") for high-performance monitoring.
 
 ## Features
 
@@ -19,14 +19,15 @@ A unified toolkit for quantum chemistry DFT calculations, supporting **CRYSTAL23
 - Visual feedback with gum
 - Educational `--explain` mode
 
-### TUI Tool (`tui/`)
-- Interactive three-panel Textual interface
-- Real-time log streaming and job monitoring
-- Multiple execution backends (Local, SSH, SLURM)
-- Priority-based job queue with dependencies
-- Workflow orchestration (DAG-based)
-- Template system for input generation
-- SQLite database for job history
+### Python TUI - "Workshop" (`tui/`) — Primary
+- Primary UI for job creation, configuration, and workflows
+- Textual-based async interface
+- Tight integration with the Python scientific stack (AiiDA/pymatgen/ASE)
+
+### Rust TUI - "Cockpit" (`src/`) — Secondary / Experimental
+- Optional high-performance monitoring UI (Ratatui)
+- Great for dense job/log dashboards
+- **No new feature work without a stable IPC boundary** (PyO3 embedding is being phased out)
 
 ## Quick Start
 
@@ -49,24 +50,35 @@ bin/runcrystal my_calculation 14
 bin/runcrystal my_calculation --explain
 ```
 
-### TUI (Management)
+### Python TUI (Primary)
 
 ```bash
 cd tui/
-
-# Install with uv (recommended)
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
-
-# Or with pip
-pip install -e ".[dev]"
-
-# Launch
 crystal-tui
+```
+
+### Rust TUI (Secondary)
+
+```bash
+# From crystalmath/ root
+
+# Build (first time or after Python version changes)
+./scripts/build-tui.sh
+
+# Launch the unified tool
+./target/release/crystalmath
 
 # Keyboard shortcuts:
-# n - New job    r - Run    s - Stop    q - Quit
-# f - Filter     t - Sort
+# 1-4     - Switch tabs (Jobs, Editor, Results, Log)
+# n       - Create new job (formerly Workshop feature)
+# c       - Cluster Manager
+# s       - SLURM Queue
+# v       - VASP Input Manager
+# Tab     - Next tab
+# j/k     - Navigate up/down
+# Ctrl+R  - Refresh jobs
+# Ctrl+I  - Import from Materials Project (Editor tab)
+# Ctrl+Q  - Quit
 ```
 
 ## Project Status
@@ -76,57 +88,46 @@ crystal-tui
 - 9 modular library components
 - 76 unit tests
 
-### TUI: Phase 2 Complete ✅
-- 63/66 issues closed (95%)
-- Multi-runner architecture (Local, SSH, SLURM)
-- QueueManager with priority scheduling
-- WorkflowOrchestrator for job chains
-- Template browser and input generation
-- 880 tests passing
+### Python TUI: Primary ✅
+- **Primary UI** for workflows and configuration.
+- **Backend**: Python scientific logic (AiiDA, parsers, runners).
+- **Features**:
+  - Multi-code support (CRYSTAL23, QE, VASP)
+  - Remote execution (SSH, SLURM)
+  - Materials Project integration
 
-### Phase 3: AiiDA Integration (Planned)
-- AiiDA backend for provenance tracking
-- Production-tested parsers from AiiDA plugins
-- WorkChain support for complex workflows
+### Rust TUI: Secondary / Experimental ⚠️
+- Optional high-performance cockpit for monitoring.
+- Feature work only after IPC boundary is defined.
 
 ## Architecture
 
 ```
 crystalmath/
-├── cli/                         # Bash CLI
-│   ├── bin/runcrystal          # Main executable
-│   └── lib/                    # 9 modular components
-│       ├── cry-config.sh       # Configuration
-│       ├── cry-parallel.sh     # MPI/OpenMP logic
-│       ├── cry-scratch.sh      # Scratch management
-│       └── ...
+├── src/                        # Rust TUI (secondary/experimental)
+│   ├── main.rs                # Entry point
+│   ├── app.rs                 # State management & Tests
+│   ├── bridge.rs              # PyO3 bridge
+│   ├── models.rs              # Shared data models
+│   └── ui/                    # UI Components (New Job, Results, etc.)
 │
-├── tui/                        # Python TUI
-│   ├── src/
-│   │   ├── core/              # Business logic
-│   │   │   ├── database.py    # SQLite ORM
-│   │   │   ├── queue_manager.py    # Priority scheduling
-│   │   │   ├── orchestrator.py     # Workflow coordination
-│   │   │   ├── templates.py        # Input generation
-│   │   │   └── codes/              # DFT code support
-│   │   │       ├── crystal.py
-│   │   │       ├── quantum_espresso.py
-│   │   │       └── vasp.py
-│   │   ├── runners/           # Execution backends
-│   │   │   ├── local.py       # Local subprocess
-│   │   │   ├── ssh_runner.py  # Remote SSH
-│   │   │   └── slurm_runner.py # HPC batch
-│   │   ├── tui/               # Textual UI
-│   │   └── aiida/             # AiiDA integration (Phase 3)
-│   ├── templates/             # Input templates
-│   │   ├── qe/                # Quantum Espresso
-│   │   ├── vasp/              # VASP
-│   │   └── workflows/         # Multi-step chains
-│   └── tests/                 # 880+ tests
+├── python/                    # Python Backend
+│   └── crystalmath/
+│       ├── api.py             # Facade for Rust
+│       └── models.py          # Pydantic models
 │
-├── docs/                      # Shared documentation
-└── .beads/                    # Issue tracking (bd)
+├── cli/                       # Bash CLI tools
+│
+└── tui/                       # Python TUI (primary)
 ```
+
+### UI Architecture (Primary + Secondary)
+
+The system follows a "Python-first UI with optional Rust cockpit" model:
+1.  **Primary UI (Python/Textual)**: Handles user interaction and workflows.
+2.  **Secondary UI (Rust/Ratatui)**: Optional high-performance cockpit. Should communicate via IPC rather than embedding Python.
+3.  **Backend (Python)**: Scientific logic, database access, and HPC communication.
+4.  **Database**: SQLite (`.crystal_tui.db`) shared source of truth.
 
 ## DFT Code Support
 
@@ -174,10 +175,37 @@ workflow:
 - CRYSTAL23 installation
 - Optional: gum, mpirun
 
-### TUI
+### Python TUI
 - Python 3.10+
 - DFT executables in PATH or configured
 - See `tui/pyproject.toml` for dependencies
+
+### Rust TUI
+- Rust 1.70+ (for cargo build)
+- Python 3.12 venv (for PyO3)
+- Node.js 18+ (for LSP server, optional)
+- Optional: `dft-language-server` (provides `vasp-lsp` / `dft-lsp` CLI)
+- See `Cargo.toml` for dependencies
+
+### LSP Setup (optional)
+
+```bash
+npm install -g dft-language-server
+```
+
+To use the bundled upstream repo:
+
+```bash
+git submodule update --init --recursive
+cd third_party/vasp-language-server
+npm install
+npm run build
+```
+
+The Rust TUI will prefer the bundled repo when built (looks for
+`third_party/vasp-language-server/out/server.js`). It falls back to the
+`vasp-lsp` command on PATH, and you can override either with
+`CRYSTAL_TUI_LSP_PATH`.
 
 ## Development
 
@@ -185,13 +213,20 @@ workflow:
 # CLI tests
 cd cli/ && bats tests/unit/*.bats
 
-# TUI tests
+# Python TUI tests
 cd tui/
 pytest                          # All tests
 pytest --cov=src               # With coverage
 black src/ tests/              # Format
 ruff check src/ tests/         # Lint
 mypy src/                      # Type check
+
+# Rust TUI tests
+cd crystalmath/
+cargo test                     # All tests (44)
+cargo clippy                   # Lint
+cargo fmt --check              # Format check
+./scripts/build-tui.sh         # Build with correct Python
 ```
 
 ## Issue Tracking
@@ -205,7 +240,7 @@ bd show <issue-id>   # Details
 bd create "Title"    # New issue
 ```
 
-**Current:** 66 total issues (63 closed, 3 open core + AiiDA tasks)
+**Current Epic:** `crystalmath-as6l` - TUI Unification (Python primary, Rust secondary)
 
 ## Documentation
 
@@ -218,11 +253,23 @@ Full documentation is available in the `docs/` directory:
 
 ## Roadmap
 
-- [x] **Phase 1**: Core TUI with local execution
-- [x] **Phase 2**: Remote runners, queue management, templates
-- [x] **v9i Epic**: Quantum Espresso & VASP support
-- [ ] **Phase 3**: AiiDA integration for provenance
-- [ ] **tai Epic**: Full QueueManager integration in TUI
+### Completed
+- [x] **CLI**: Production-ready with 76 tests
+- [x] **Python TUI Phase 1-2**: Core TUI, remote runners, templates
+- [x] **Multi-Code Support**: CRYSTAL23, QE, VASP
+- [x] **Rust TUI Core**: 60fps monitoring, PyO3 bridge, LSP editor
+
+### In Progress
+- [ ] **Epic 5hh**: TUI UX Excellence ("Cockpit vs Workshop")
+  - [x] Database unification
+  - [x] Empty state UX
+  - [ ] Live log streaming
+  - [ ] Job status dashboard
+- [ ] **Phase 4**: Materials Project API integration
+
+### Planned
+- [ ] **AiiDA**: Full provenance tracking
+- [ ] **Rust TUI IPC**: Optional Rust cockpit via stable IPC boundary
 
 ## License
 

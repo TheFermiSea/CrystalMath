@@ -1,43 +1,118 @@
-# Repository Guidelines
+# CrystalMath Agent Guidelines
 
-## Project Structure & Module Organization
-- CLI (bash) lives in `cli/`: entrypoint `bin/runcrystal`, reusable modules under `lib/`, tests in `tests/`, docs in `docs/`, tutorials in `share/tutorials/`.
-- TUI (Python/Textual) lives in `tui/`: sources in `src/crystal_tui/` (tui/ui components, core logic, runners), tests in `tests/`, packaging in `pyproject.toml`, docs in `docs/`.
-- Shared assets: root `docs/`, `examples/` for sample calculations, `.beads/` for issue DB.
+This file outlines the operational procedures, build commands, and coding standards for agents working in the CrystalMath repository.
 
-## Build, Test, and Development Commands
-- CLI: `cd cli`; set environment `export CRY23_ROOT=~/CRYSTAL23 CRY_SCRATCH_BASE=~/tmp_crystal`; run a job `bin/runcrystal my_job [ranks]`; dry-run `bin/runcrystal my_job --explain`.
-- CLI tests: `bats tests/unit/*.bats`; integration `bats tests/integration/*.bats`.
-- TUI setup: `cd tui && pip install -e ".[dev]"`.
-- TUI run: `crystal-tui` launches the interface.
-- TUI quality: `pytest`; `black src/ tests/`; `ruff check src/ tests/`; `mypy src/`.
+## 1. Project Architecture & Scope
 
-## Coding Style & Naming Conventions
-- Bash: 4-space indent, lowercase function/file names (`cry_*`), guard against re-sourcing, prefer `local` and defensive `[[ ]]` checks.
-- Python: Black/ruff defaults (88 cols), type hints where practical; modules and files snake_case; classes PascalCase; functions/tests snake_case.
-- Config: Keep CRYSTAL23 paths in env vars (`CRY23_ROOT`, `CRY_SCRATCH_BASE`, `CRY_ARCH`, `CRY_VERSION`) rather than hardcoding.
+This is a monorepo containing a unified tool for CRYSTAL23 DFT calculations:
 
-## Testing Guidelines
-- Mirror feature work with tests in the same tool: `.bats` files under `cli/tests/`; `test_*.py` under `tui/tests/`.
-- Prefer fast unit cases; add integration bats for end-to-end CLI paths and pytest integration tests for TUI runners.
-- Include fixtures/sample inputs under `tests/` or `examples/` rather than inline strings when sizeable.
+*   **CLI** (`cli/`): Production Bash tools. Thin orchestrator (`bin/runcrystal`) loading modules (`lib/`).
+*   **Python TUI (Primary)** (`tui/`): Textual-based interface for *creating*, *configuring*, and *monitoring* jobs. Preferred UI for new features and workflows.
+*   **Rust TUI (Secondary)** (`src/` + `python/`): High-performance Ratatui interface for monitoring; treated as secondary/experimental until a stable IPC boundary replaces PyO3 coupling.
 
-## Issue Tracking with bd (beads)
-- Use `bd` for ALL tracking; avoid markdown TODOs or parallel lists. Always prefer `--json` for programmatic use.
-- Ready work: `bd ready --json`. List issues: `bd list` or `bd list --all`.
-- Create: `bd create "Title" -t bug|feature|task -p 0-4 --json`; link discoveries with `--deps discovered-from:<id>`.
-- Update/claim: `bd update bd-42 --status in_progress --priority 1 --json`; close: `bd close bd-42 --reason "Completed" --json`.
-- Priorities: 0 critical, 1 high, 2 medium (default), 3 low, 4 backlog. Types: bug, feature, task, epic, chore.
-- Workflow for agents: check ready → claim → work → create linked discovered-from issues → close with reason → commit code alongside `.beads/issues.jsonl`.
-- Auto-sync: bd exports/imports `.beads/issues.jsonl` after changes—commit it with related code.
-- MCP: `pip install beads-mcp` and add to MCP config if using Claude/MCP; then use `mcp__beads__*` instead of CLI.
-- AI planning docs: store ephemeral plans (PLAN.md, DESIGN.md, etc.) under `history/`; optionally ignore via `history/` in `.gitignore` to keep root clean.
+**Crucial Philosophy**:
+*   **Primary UI (Python/Textual)**: The source of truth for user interaction and workflows.
+*   **Secondary UI (Rust/Ratatui)**: Optional monitoring cockpit; no new feature work without a stable IPC boundary.
+*   **Python Backend**: Provides business logic, database access, and scientific computing capabilities.
+*   **Shared State**: All tools use the same `.crystal_tui.db` SQLite database.
 
-## Commit & Pull Request Guidelines
-- Commit messages follow a light Conventional Commits style (e.g., `docs: ...`, `fix: ...`, `feat:`). Use present tense and keep scope small.
-- PRs: describe intent and approach, list key commands/tests run (e.g., `bats ...`, `pytest`), call out env requirements, and link related beads/issue IDs when available.
-- Include screenshots or brief terminal captures for TUI changes; for CLI changes, include example invocation and expected output snippet.
+## 2. Build, Test, & Lint Commands
 
-## Security & Configuration Tips
-- Never commit CRYSTAL23 binaries or license files. Keep machine-specific paths and credentials in env vars or ignored configs.
-- Scratch handling: ensure `CRY_SCRATCH_BASE` points to a writable location; cleanup is automated but verify on shared systems.
+### A. CLI (Bash)
+Work directory: `cli/`
+*   **Run All Tests**: `bats tests/unit/*.bats`
+*   **Run Single Test File**: `bats tests/unit/cry-parallel_test.bats`
+*   **Integration Tests**: `bats tests/integration/*.bats`
+*   **Manual Run**: `bin/runcrystal --explain my_job` (Dry run)
+
+### B. Rust TUI (Secondary) + Python Backend
+Work directory: Root for Rust, `python/` for backend.
+
+**Rust Frontend**:
+*   **Build (CRITICAL)**: Use `./scripts/build-tui.sh` to ensure PyO3 links to the correct Python version.
+    *   *Never* just run `cargo build` if the python env is uncertain.
+*   **Run Tests**: `cargo test`
+*   **Run Single Test**: `cargo test test_name`
+*   **Lint**: `cargo clippy` (must be clean)
+*   **Format**: `cargo fmt --check`
+
+**Python Backend (`python/`)**:
+*   **Setup**: `cd python && uv pip install -e .`
+*   **Test**: `pytest`
+*   **Lint**: `black . && ruff check .`
+
+### C. Python TUI (Primary)
+Work directory: `tui/`
+*   **Setup**: `uv venv && source .venv/bin/activate && uv pip install -e ".[dev]"`
+*   **Run All Tests**: `pytest`
+
+## 3. Code Style & Standards
+
+### General
+*   **Commits**: Use Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`). Keep scope small and description present tense.
+*   **Secrets**: NEVER commit credentials or machine-specific paths. Use environment variables.
+
+### Bash (`cli/`)
+*   **Indent**: 4 spaces.
+*   **Variables**: Always use `local` inside functions. Snake_case (`my_var`).
+*   **Safety**: Use `[[ ... ]]` for tests. Quote variables `"${VAR}"`.
+*   **Structure**: Modular design. `bin/runcrystal` is just a loader. Logic goes in `lib/`.
+*   **Error Handling**: Functions return exit codes (0 success, non-0 failure). Main script handles traps/cleanup.
+
+### Python (`tui/`, `python/`)
+*   **Formatter**: Black (100 columns for TUI, 88 standard).
+*   **Linter**: Ruff (Strict: E, F, W, I, N, UP, B, A, C4, SIM).
+*   **Typing**: `mypy` strict. Type hints are mandatory for new code.
+*   **Async**: Heavy use of `asyncio` in TUI. Avoid blocking calls in the main event loop.
+*   **Security**:
+    *   Jinja2: Must use `SandboxedEnvironment`.
+    *   SSH: Never disable host key verification (`known_hosts=None` is forbidden).
+    *   Eval: Never use raw `eval()`. Use AST-based whitelisting for conditions.
+
+### Rust (`src/`)
+*   **Style**: Standard Rust idioms. `cargo fmt` mandatory.
+*   **Models**: `src/models.rs` must match Python Pydantic models via `serde`.
+*   **Architecture**:
+    *   **Dirty-Flag Rendering**: Only draw when `app.needs_redraw()` is true.
+    *   **FFI**: `bridge.rs` handles PyO3. Don't put business logic here; delegate to Python backend or Rust internal state.
+    *   **LSP**: Non-blocking `mpsc` channels for communication.
+
+## 4. Workflow & Issue Tracking (Beads)
+
+**Mandatory**: This repo uses `bd` (Beads) for all issue tracking.
+*   **Start Work**:
+    1.  `bd ready` to see available tasks.
+    2.  `bd update <id> --status in_progress` to claim.
+*   **During Work**:
+    *   Create sub-tasks if needed: `bd create "Subtask" --deps parent:<id>`.
+    *   Link discoveries: `bd create "Found bug" --deps discovered-from:<id>`.
+*   **Finish Work**:
+    1.  Verify tests pass.
+    2.  `bd close <id> --reason "Implemented via PR #..."`
+    3.  Commit the `.beads/issues.jsonl` file updates along with your code.
+
+## 5. Directory Structure Reference
+
+```text
+.
+├── cli/                # Bash CLI
+│   ├── bin/            # Entry points
+│   ├── lib/            # Modules
+│   └── tests/          # .bats tests
+├── tui/                # Python Workshop TUI
+│   ├── src/            # Source (textual app)
+│   └── tests/          # pytest
+├── src/                # Rust Cockpit TUI source
+├── python/             # Python backend for Rust TUI
+├── Cargo.toml          # Rust config
+├── .beads/             # Issue database
+└── scripts/            # Build helpers (build-tui.sh)
+```
+
+## 6. Agent "Do Not" List
+
+1.  **Do not** edit `.cursor/rules` or `AGENTS.md` unless explicitly asked to improve instructions.
+2.  **Do not** bypass `scripts/build-tui.sh` when building the Rust binary if you are changing Python dependencies.
+3.  **Do not** leave broken tests. If you change behavior, update the test.
+4.  **Do not** introduce new Python dependencies without adding them to `pyproject.toml` (in `tui/` or `python/`).
+5.  **Do not** hardcode paths like `/Users/brian...`. Use env vars: `CRY23_ROOT`, `CRY_SCRATCH_BASE`.
