@@ -23,7 +23,7 @@ from ..runners.base import JobResult
 from .screens import NewJobScreen, SLURMQueueScreen
 from .screens.new_job import JobCreated
 from .widgets import InputPreview, ResultsSummary, JobListWidget, JobStatsWidget
-from ..core.database import Database as CoreDatabase, Cluster
+from ..core.database import Database as CoreDatabase, Cluster, Job
 from ..core.connection_manager import ConnectionManager
 
 
@@ -263,6 +263,21 @@ class CrystalTUI(App):
 
         return None
 
+    def _resolve_job(self, job_id: int) -> Job | None:
+        """Try to get a Job dataclass from the core adapter before falling back to the database."""
+        if self._core_client is not None:
+            try:
+                for job in self._core_client.list_jobs():
+                    if job.id == job_id:
+                        return job
+            except Exception:
+                pass
+
+        if self.db:
+            return self.db.get_job(job_id)
+
+        return None
+
     def action_new_job(self) -> None:
         """Create a new job via modal screen."""
         if not self.db:
@@ -287,11 +302,11 @@ class CrystalTUI(App):
         row_data = job_list.get_row(row_key)
         job_id = int(row_data[0])
 
-        # Get job from database to check status
-        if not self.db or not self.queue_manager:
+        # Get job status from core adapter (fallbacks to DB)
+        if not self.queue_manager:
             return
 
-        job = self.db.get_job(job_id)
+        job = self._resolve_job(job_id)
         if not job:
             return
 
@@ -326,11 +341,11 @@ class CrystalTUI(App):
         row_data = job_list.get_row(row_key)
         job_id = int(row_data[0])
 
-        # Get job from database to check status
-        if not self.db or not self.queue_manager:
+        # Get job status from core adapter (fallbacks to DB)
+        if not self.queue_manager:
             return
 
-        job = self.db.get_job(job_id)
+        job = self._resolve_job(job_id)
         if not job:
             return
 
@@ -453,25 +468,20 @@ class CrystalTUI(App):
     # --- Event Handlers ---
     def on_job_list_widget_row_highlighted(self, event) -> None:
         """Handle row selection in job table - update input and results views."""
-        if not self.db or not hasattr(event, "row_key") or event.row_key is None:
+        if (not self.db and not self._core_client) or not hasattr(event, "row_key") or event.row_key is None:
             return
 
         try:
             job_id = int(event.row_key.value)
-            job = self.db.get_job(job_id)
+            job = self._resolve_job(job_id)
 
             if not job:
                 return
 
             # Update input preview
             input_preview = self.query_one("#input_preview", InputPreview)
-            work_dir = Path(job.work_dir)
-            input_file = work_dir / "input.d12"
-
-            if input_file.exists():
-                input_preview.display_input(job.name, input_file)
-            else:
-                input_preview.display_no_input()
+            work_dir = Path(job.work_dir) if job.work_dir else None
+            input_file = work_dir / "input.d12" if work_dir else None
 
             job_details = None
             if self._core_client:
@@ -482,6 +492,13 @@ class CrystalTUI(App):
                         f"[yellow]Failed to load job details for {job_id}: {err}[/yellow]"
                     )
 
+            if job_details and job_details.input_file:
+                input_preview.update_content(job_details.input_file, file_path=input_file)
+            elif input_file and input_file.exists():
+                input_preview.display_input(job.name, input_file)
+            else:
+                input_preview.display_no_input()
+
             # Update results view based on job status
             results_view = self.query_one("#results_view", ResultsSummary)
 
@@ -490,16 +507,30 @@ class CrystalTUI(App):
             elif job.status in ("RUNNING", "QUEUED"):
                 results_view.display_running(job.name)
             elif job.status in ("COMPLETED", "FAILED"):
-                results_view.display_results(
-                    job_id=job.id,
-                    job_name=job.name,
-                    work_dir=work_dir,
-                    status=job_details.state.value if job_details else job.status,
-                    final_energy=job_details.final_energy if job_details else job.final_energy,
-                    key_results=job_details.key_results if job_details else job.key_results,
-                    created_at=job.created_at,
-                    completed_at=job.completed_at,
-                )
+                if job_details:
+                    results_view.display_results(
+                        job_id=job_details.pk,
+                        job_name=job_details.name,
+                        work_dir=work_dir,
+                        status=job_details.state.value,
+                        final_energy=job_details.final_energy,
+                        key_results=job_details.key_results,
+                        created_at=job_details.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                        if job_details.created_at
+                        else None,
+                        completed_at=None,
+                    )
+                else:
+                    results_view.display_results(
+                        job_id=job.id,
+                        job_name=job.name,
+                        work_dir=work_dir,
+                        status=job.status,
+                        final_energy=job.final_energy,
+                        key_results=job.key_results,
+                        created_at=job.created_at,
+                        completed_at=job.completed_at,
+                    )
                 self._display_job_log_snapshot(job_id)
             else:
                 results_view.display_no_results()
@@ -554,8 +585,10 @@ class CrystalTUI(App):
         job_list.update_job_status(message.job_id, message.status, message.pid)
 
         # Update stats
-        if self.db:
+        jobs = self._get_jobs_for_ui()
+        if jobs is None and self.db:
             jobs = self.db.get_all_jobs()
+        if jobs:
             job_stats = self.query_one("#job_stats", JobStatsWidget)
             job_stats.update_stats(jobs)
 
@@ -569,26 +602,49 @@ class CrystalTUI(App):
             job_list.update_job_energy(message.job_id, message.final_energy)
 
         # Update results view if this job is currently selected
-        if self.db:
-            job_list = self.query_one("#job_list", JobListWidget)
-            if job_list.cursor_row:
-                row_data = job_list.get_row(job_list.cursor_row)
-                selected_job_id = int(row_data[0])
+        job_list = self.query_one("#job_list", JobListWidget)
+        if job_list.cursor_row:
+            row_data = job_list.get_row(job_list.cursor_row)
+            selected_job_id = int(row_data[0])
 
-                if selected_job_id == message.job_id:
-                    job = self.db.get_job(message.job_id)
-                    if job and job.status in ("COMPLETED", "FAILED"):
-                        results_view = self.query_one("#results_view", ResultsSummary)
-                        results_view.display_results(
-                            job_id=job.id,
-                            job_name=job.name,
-                            work_dir=Path(job.work_dir),
-                            status=job.status,
-                            final_energy=job.final_energy,
-                            key_results=job.key_results,
-                            created_at=job.created_at,
-                            completed_at=job.completed_at,
+            if selected_job_id == message.job_id:
+                results_view = self.query_one("#results_view", ResultsSummary)
+                job = self._resolve_job(message.job_id)
+                job_details = None
+                if self._core_client:
+                    try:
+                        job_details = self._core_client.get_job_details(message.job_id)
+                    except Exception as err:
+                        self.query_one("#log_view", Log).write_line(
+                            f"[yellow]Failed to refresh job details: {err}[/yellow]"
                         )
+
+                work_dir = Path(job.work_dir) if job and job.work_dir else None
+
+                if job_details:
+                    results_view.display_results(
+                        job_id=job_details.pk,
+                        job_name=job_details.name,
+                        work_dir=work_dir,
+                        status=job_details.state.value,
+                        final_energy=job_details.final_energy,
+                        key_results=job_details.key_results,
+                        created_at=job_details.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                        if job_details.created_at
+                        else None,
+                        completed_at=None,
+                    )
+                elif job and job.status in ("COMPLETED", "FAILED"):
+                    results_view.display_results(
+                        job_id=job.id,
+                        job_name=job.name,
+                        work_dir=work_dir,
+                        status=job.status,
+                        final_energy=job.final_energy,
+                        key_results=job.key_results,
+                        created_at=job.created_at,
+                        completed_at=job.completed_at,
+                    )
 
     # --- Job Execution Worker ---
     async def _run_crystal_job(self, job_id: int) -> None:
