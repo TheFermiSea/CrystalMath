@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from crystalmath.api import create_controller
-from crystalmath.models import JobDetails, JobState, JobStatus
+from crystalmath.models import JobDetails, JobState, JobStatus, JobSubmission
 
 from .database import Job
 
@@ -69,5 +69,10 @@ class CrystalCoreClient:
     def get_job_details(self, pk: int) -> Optional[JobDetails]:
         return self._controller.get_job_details(pk)
 
+    def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
+        return self._controller.get_job_log(pk, tail_lines)
+
+    def submit_job(self, submission: JobSubmission) -> int:
+        return self._controller.submit_job(submission)
     def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
         return self._controller.get_job_log(pk, tail_lines)

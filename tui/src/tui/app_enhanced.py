@@ -284,12 +284,13 @@ class CrystalTUI(App):
             return
 
         # Push the new job modal screen
-        self.push_screen(
-            NewJobScreen(
-                database=self.db,
-                calculations_dir=self.calculations_dir
+            self.push_screen(
+                NewJobScreen(
+                    database=self.db,
+                    calculations_dir=self.calculations_dir,
+                    core_client=self._core_client
+                )
             )
-        )
 
     async def action_run_job(self) -> None:
         """Run the selected job via QueueManager."""

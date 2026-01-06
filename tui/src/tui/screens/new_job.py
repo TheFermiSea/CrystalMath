@@ -14,7 +14,9 @@ from textual.widgets import Input, TextArea, Button, Static, Label, Select, Radi
 from textual.message import Message
 from textual.binding import Binding
 
+from ...core.core_adapter import CrystalCoreClient
 from ...core.database import Database
+from crystalmath.models import DftCode, JobSubmission, RunnerType, SchedulerOptions
 
 
 class JobCreated(Message):
@@ -129,6 +131,34 @@ class NewJobScreen(ModalScreen):
         margin: 0 0 1 0;
     }
 
+    .scheduler_row {
+        width: 100%;
+        height: auto;
+        layout: horizontal;
+        padding: 0 0 1 0;
+    }
+
+    .scheduler_field {
+        width: 1fr;
+        margin: 0 1 0 0;
+    }
+
+    .scheduler_field Label {
+        width: 100%;
+    }
+
+    .scheduler_field Input {
+        width: 100%;
+    }
+
+    #scheduler_section {
+        display: none;
+    }
+
+    #scheduler_section.visible {
+        display: block;
+    }
+
     #work_dir_input {
         width: 100%;
     }
@@ -189,12 +219,14 @@ class NewJobScreen(ModalScreen):
         self,
         database: Database,
         calculations_dir: Path,
+        core_client: CrystalCoreClient | None = None,
         name: Optional[str] = None,
         id: Optional[str] = None
     ):
         super().__init__(name=name, id=id)
         self.database = database
         self.calculations_dir = calculations_dir
+        self.core_client = core_client
 
     def compose(self) -> ComposeResult:
         """Compose the modal layout."""
@@ -243,8 +275,8 @@ class NewJobScreen(ModalScreen):
                         yield Button("Browse Files...", variant="default", id="browse_button")
                         yield Button("Import from MP", variant="primary", id="import_mp_button")
 
-                # Section 3: Auxiliary Files
-                with Vertical(classes="form_section"):
+                # Section 3: Auxiliary Files (CRYSTAL23 only)
+                with Vertical(classes="form_section", id="aux_files_section"):
                     yield Label("Auxiliary Files (Optional)", classes="section_title")
                     with Vertical(id="aux_files_container"):
                         # .gui file
@@ -275,9 +307,23 @@ class NewJobScreen(ModalScreen):
                                 disabled=True
                             )
 
-                # Section 4: Parallelism Settings
+                # Section 4: Runner & Parallelism Settings
                 with Vertical(classes="form_section"):
-                    yield Label("Parallelism Settings", classes="section_title")
+                    yield Label("Execution Settings", classes="section_title")
+
+                    # Runner Type Selector
+                    yield Label("Runner Type:", classes="field_label")
+                    yield Select(
+                        [
+                            ("Local (this machine)", "local"),
+                            ("SSH (remote server)", "ssh"),
+                            ("SLURM (HPC cluster)", "slurm"),
+                        ],
+                        value="local",
+                        id="runner_type_select",
+                        classes="field_input"
+                    )
+
                     with Vertical(id="parallelism_container"):
                         with RadioSet(id="parallel_mode"):
                             yield RadioButton("Serial (single process, OpenMP only)", id="serial_radio", value=True)
@@ -291,7 +337,57 @@ class NewJobScreen(ModalScreen):
                             value="1"
                         )
 
-                # Section 5: Working Directory
+                # Section 5: Scheduler Resources (for SLURM/HPC)
+                with Vertical(classes="form_section", id="scheduler_section"):
+                    yield Label("Scheduler Resources (SLURM)", classes="section_title")
+                    yield Static(
+                        "Configure resources for HPC cluster submission",
+                        classes="field_label"
+                    )
+
+                    # Row 1: Walltime and Memory
+                    with Horizontal(classes="scheduler_row"):
+                        with Vertical(classes="scheduler_field"):
+                            yield Label("Walltime (HH:MM:SS):", classes="field_label")
+                            yield Input(
+                                placeholder="24:00:00",
+                                id="walltime_input",
+                                value="24:00:00"
+                            )
+                        with Vertical(classes="scheduler_field"):
+                            yield Label("Memory per Node (GB):", classes="field_label")
+                            yield Input(
+                                placeholder="e.g., 32",
+                                id="memory_input",
+                                value="32"
+                            )
+
+                    # Row 2: CPUs and Nodes
+                    with Horizontal(classes="scheduler_row"):
+                        with Vertical(classes="scheduler_field"):
+                            yield Label("CPUs per Task:", classes="field_label")
+                            yield Input(
+                                placeholder="e.g., 4",
+                                id="cpus_per_task_input",
+                                value="4"
+                            )
+                        with Vertical(classes="scheduler_field"):
+                            yield Label("Number of Nodes:", classes="field_label")
+                            yield Input(
+                                placeholder="e.g., 1",
+                                id="num_nodes_input",
+                                value="1"
+                            )
+
+                    # Row 3: Partition
+                    yield Label("Partition/Queue:", classes="field_label")
+                    yield Input(
+                        placeholder="e.g., standard, compute, gpu",
+                        id="partition_input",
+                        value=""
+                    )
+
+                # Section 6: Working Directory
                 with Vertical(classes="form_section"):
                     yield Label("Working Directory", classes="section_title")
                     yield Static(
@@ -356,25 +452,46 @@ class NewJobScreen(ModalScreen):
                 mpi_input.value = "1"
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        """Handle DFT code selection changes."""
+        """Handle selection changes."""
         if event.select.id == "dft_code_select":
             self._update_ui_for_dft_code(str(event.value))
+        elif event.select.id == "runner_type_select":
+            self._update_ui_for_runner_type(str(event.value))
+
+    def _update_ui_for_runner_type(self, runner_type: str) -> None:
+        """Update UI elements based on selected runner type."""
+        scheduler_section = self.query_one("#scheduler_section", Vertical)
+
+        # Show scheduler resources only for SLURM
+        if runner_type == "slurm":
+            scheduler_section.add_class("visible")
+        else:
+            scheduler_section.remove_class("visible")
 
     def _update_ui_for_dft_code(self, dft_code: str) -> None:
         """Update UI elements based on selected DFT code."""
         input_section_title = self.query_one("#input_section_title", Label)
         info_message = self.query_one("#info_message", Static)
+        aux_files_section = self.query_one("#aux_files_section", Vertical)
+        import_mp_button = self.query_one("#import_mp_button", Button)
 
         # DFT code display names and file extensions
         code_info = {
             "crystal": ("CRYSTAL23 Input File (.d12)", "Paste your .d12 input content below"),
-            "quantum_espresso": ("Quantum Espresso Input File (.in)", "Paste your .in input content below (QE stub - not yet implemented)"),
-            "vasp": ("VASP Input Files", "VASP uses POSCAR/INCAR/KPOINTS/POTCAR - paste POSCAR below (VASP stub - not yet implemented)"),
+            "quantum_espresso": ("Quantum Espresso Input File (.in)", "Paste your .in input content below"),
+            "vasp": ("VASP Input Files", "VASP uses POSCAR/INCAR/KPOINTS/POTCAR - click Create to open multi-file manager"),
         }
 
         display_name, hint = code_info.get(dft_code, ("Input File", "Paste input content below"))
         input_section_title.update(display_name)
         info_message.update(hint)
+
+        # Show auxiliary files section only for CRYSTAL23
+        # (VASP has its own multi-file manager, QE uses single file)
+        aux_files_section.display = (dft_code == "crystal")
+
+        # Import from MP only makes sense for CRYSTAL23 (generates .d12)
+        import_mp_button.display = (dft_code == "crystal")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press events."""
@@ -415,20 +532,21 @@ class NewJobScreen(ModalScreen):
 
     def action_submit(self) -> None:
         """Validate and create the job."""
-        # Get inputs
         job_name_input = self.query_one("#job_name_input", Input)
         input_textarea = self.query_one("#input_textarea", TextArea)
         error_message = self.query_one("#error_message", Static)
         dft_code_select = self.query_one("#dft_code_select", Select)
+        runner_type_select = self.query_one("#runner_type_select", Select)
 
         dft_code = str(dft_code_select.value) if dft_code_select.value else "crystal"
 
-        # For VASP, open multi-file input manager
         if dft_code == "vasp":
             self._open_vasp_input_manager()
             return
 
-        # Auxiliary files
+        parallel_mode = self.query_one("#parallel_mode", RadioSet)
+        mpi_ranks_input = self.query_one("#mpi_ranks_input", Input)
+
         gui_checkbox = self.query_one("#gui_checkbox", Checkbox)
         gui_file_input = self.query_one("#gui_file_input", Input)
         f9_checkbox = self.query_one("#f9_checkbox", Checkbox)
@@ -436,50 +554,41 @@ class NewJobScreen(ModalScreen):
         hessopt_checkbox = self.query_one("#hessopt_checkbox", Checkbox)
         hessopt_file_input = self.query_one("#hessopt_file_input", Input)
 
-        # Parallelism
-        parallel_mode = self.query_one("#parallel_mode", RadioSet)
-        mpi_ranks_input = self.query_one("#mpi_ranks_input", Input)
-
         job_name = job_name_input.value.strip()
         input_content = input_textarea.text.strip()
+        runner_type = str(runner_type_select.value) if runner_type_select.value else "local"
+        parallel_mode_value = "parallel" if parallel_mode.pressed_index == 1 else "serial"
 
-        # Clear previous error
         error_message.update("")
         error_message.remove_class("visible")
 
-        # Validate job name
         if not job_name:
             self._show_error("Job name cannot be empty")
             job_name_input.focus()
             return
 
-        # Check for invalid characters in job name
         if not all(c.isalnum() or c in "_-" for c in job_name):
             self._show_error("Job name can only contain letters, numbers, hyphens, and underscores")
             job_name_input.focus()
             return
 
-        # Check if job name already exists
         existing_jobs = self.database.get_all_jobs()
         if any(job.name == job_name for job in existing_jobs):
             self._show_error(f"Job name '{job_name}' already exists")
             job_name_input.focus()
             return
 
-        # Validate input content
         if not input_content:
             self._show_error("Input file content cannot be empty")
             input_textarea.focus()
             return
 
-        # Basic validation: check for required sections (DFT code specific)
         validation_error = self._validate_input(dft_code, input_content)
         if validation_error:
             self._show_error(validation_error)
             input_textarea.focus()
             return
 
-        # Validate auxiliary files if checked
         aux_files = {}
         if gui_checkbox.value:
             gui_path = gui_file_input.value.strip()
@@ -508,9 +617,8 @@ class NewJobScreen(ModalScreen):
             if hessopt_path:
                 aux_files['hessopt'] = hessopt_path
 
-        # Validate MPI ranks if parallel mode
         mpi_ranks = 1
-        if parallel_mode.pressed_index == 1:  # Parallel mode
+        if parallel_mode.pressed_index == 1:
             try:
                 mpi_ranks = int(mpi_ranks_input.value.strip())
                 if mpi_ranks < 1:
@@ -520,94 +628,46 @@ class NewJobScreen(ModalScreen):
                 mpi_ranks_input.focus()
                 return
 
-        # Generate next job ID
-        next_id = max([job.id for job in existing_jobs], default=0) + 1
+        mpi_ranks_value = mpi_ranks if parallel_mode.pressed_index == 1 else None
 
-        # Create work directory
-        work_dir_name = f"{next_id:04d}_{job_name}"
-        work_dir = self.calculations_dir / work_dir_name
-
+        scheduler_options = None
         try:
-            work_dir.mkdir(parents=True, exist_ok=False)
-        except FileExistsError:
-            self._show_error(f"Work directory already exists: {work_dir_name}")
-            return
-        except Exception as e:
-            self._show_error(f"Failed to create work directory: {str(e)}")
+            scheduler_options = self._build_scheduler_options(runner_type)
+        except ValueError as exc:
+            self._show_error(str(exc))
             return
 
-        # Write input file
-        input_file = work_dir / "input.d12"
+        submission = JobSubmission(
+            name=job_name,
+            dft_code=DftCode(dft_code),
+            runner_type=RunnerType(runner_type),
+            parameters={},
+            input_content=input_content,
+            auxiliary_files=aux_files or None,
+            scheduler_options=scheduler_options,
+            mpi_ranks=mpi_ranks_value,
+            parallel_mode=parallel_mode_value,
+        )
+
         try:
-            input_file.write_text(input_content)
-        except Exception as e:
-            self._show_error(f"Failed to write input file: {str(e)}")
-            # Clean up directory
-            try:
-                work_dir.rmdir()
-            except:
-                pass
+            if self.core_client:
+                job_id = self.core_client.submit_job(submission)
+            else:
+                job_id = self._submit_job_legacy(
+                    job_name=job_name,
+                    dft_code=dft_code,
+                    input_content=input_content,
+                    aux_files=aux_files,
+                    runner_type=runner_type,
+                    mpi_ranks=mpi_ranks,
+                    parallel_mode=parallel_mode_value,
+                    scheduler_options=scheduler_options,
+                    existing_jobs=existing_jobs,
+                )
+        except Exception as exc:
+            self._show_error(f"Failed to create job: {exc}")
             return
 
-        # Copy auxiliary files
-        try:
-            for file_type, file_path in aux_files.items():
-                src_path = Path(file_path)
-                if file_type == 'gui':
-                    dst_path = work_dir / f"{job_name}.gui"
-                elif file_type == 'f9':
-                    dst_path = work_dir / f"{job_name}.f9"
-                elif file_type == 'hessopt':
-                    dst_path = work_dir / f"{job_name}.hessopt"
-                else:
-                    continue
-
-                # Copy file content
-                dst_path.write_bytes(src_path.read_bytes())
-        except Exception as e:
-            self._show_error(f"Failed to copy auxiliary file: {str(e)}")
-            # Clean up
-            try:
-                import shutil
-                shutil.rmtree(work_dir)
-            except:
-                pass
-            return
-
-        # Write job metadata file
-        metadata = {
-            "dft_code": dft_code,
-            "mpi_ranks": mpi_ranks,
-            "parallel_mode": "parallel" if parallel_mode.pressed_index == 1 else "serial",
-            "auxiliary_files": list(aux_files.keys())
-        }
-        metadata_file = work_dir / "job_metadata.json"
-        try:
-            import json
-            metadata_file.write_text(json.dumps(metadata, indent=2))
-        except Exception as e:
-            # Non-critical, just log
-            pass
-
-        # Add job to database
-        try:
-            job_id = self.database.create_job(
-                name=job_name,
-                work_dir=str(work_dir),
-                input_content=input_content,
-                dft_code=dft_code
-            )
-        except Exception as e:
-            self._show_error(f"Failed to create job in database: {str(e)}")
-            # Clean up files
-            try:
-                import shutil
-                shutil.rmtree(work_dir)
-            except:
-                pass
-            return
-
-        # Success - post message and close modal
         self.dismiss(job_id)
         self.post_message(JobCreated(job_id, job_name))
 
@@ -616,6 +676,123 @@ class NewJobScreen(ModalScreen):
         error_message = self.query_one("#error_message", Static)
         error_message.update(f"Error: {message}")
         error_message.add_class("visible")
+
+    def _build_scheduler_options(self, runner_type: str) -> SchedulerOptions | None:
+        """Return SchedulerOptions when SLURM runner is selected."""
+        if runner_type != "slurm":
+            return None
+
+        walltime_input = self.query_one("#walltime_input", Input)
+        memory_input = self.query_one("#memory_input", Input)
+        cpus_input = self.query_one("#cpus_per_task_input", Input)
+        nodes_input = self.query_one("#num_nodes_input", Input)
+        partition_input = self.query_one("#partition_input", Input)
+
+        cpus_per_task = self._parse_positive_int(cpus_input.value.strip() or "4", "CPUs per task")
+        nodes = self._parse_positive_int(nodes_input.value.strip() or "1", "Number of nodes")
+
+        return SchedulerOptions(
+            walltime=walltime_input.value.strip() or "24:00:00",
+            memory_gb=memory_input.value.strip() or "32",
+            cpus_per_task=cpus_per_task,
+            nodes=nodes,
+        )
+
+    def _parse_positive_int(self, value: str, label: str) -> int:
+        """Parse a positive integer or raise ValueError."""
+        try:
+            parsed = int(value)
+        except ValueError:
+            raise ValueError(f"{label} must be an integer")
+        if parsed < 1:
+            raise ValueError(f"{label} must be positive")
+        return parsed
+
+    def _submit_job_legacy(
+        self,
+        job_name: str,
+        dft_code: str,
+        input_content: str,
+        aux_files: dict[str, str],
+        runner_type: str,
+        mpi_ranks: int,
+        parallel_mode: str,
+        scheduler_options: SchedulerOptions | None,
+        existing_jobs: list,
+    ) -> int:
+        """Fallback path that writes files and inserts into the legacy database."""
+        next_id = max([job.id for job in existing_jobs], default=0) + 1
+        work_dir_name = f"{next_id:04d}_{job_name}"
+        work_dir = self.calculations_dir / work_dir_name
+
+        try:
+            work_dir.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            raise RuntimeError(f"Work directory already exists: {work_dir_name}")
+        except Exception as exc:
+            raise RuntimeError(f"Failed to create work directory: {exc}")
+
+        input_file = work_dir / "input.d12"
+        try:
+            input_file.write_text(input_content)
+        except Exception as exc:
+            work_dir.rmdir()
+            raise RuntimeError(f"Failed to write input file: {exc}")
+
+        try:
+            for file_type, file_path in aux_files.items():
+                src_path = Path(file_path)
+                if file_type == "gui":
+                    dst_path = work_dir / f"{job_name}.gui"
+                elif file_type == "f9":
+                    dst_path = work_dir / f"{job_name}.f9"
+                elif file_type == "hessopt":
+                    dst_path = work_dir / f"{job_name}.hessopt"
+                else:
+                    continue
+                dst_path.write_bytes(src_path.read_bytes())
+        except Exception as exc:
+            try:
+                import shutil
+
+                shutil.rmtree(work_dir)
+            except Exception:
+                pass
+            raise RuntimeError(f"Failed to copy auxiliary file: {exc}")
+
+        metadata = {
+            "dft_code": dft_code,
+            "runner_type": runner_type,
+            "mpi_ranks": mpi_ranks,
+            "parallel_mode": parallel_mode,
+            "auxiliary_files": list(aux_files.keys()),
+        }
+        if scheduler_options:
+            metadata["scheduler"] = scheduler_options.model_dump()
+
+        metadata_file = work_dir / "job_metadata.json"
+        try:
+            import json
+
+            metadata_file.write_text(json.dumps(metadata, indent=2))
+        except Exception:
+            pass
+
+        try:
+            return self.database.create_job(
+                name=job_name,
+                work_dir=str(work_dir),
+                input_content=input_content,
+                dft_code=dft_code,
+            )
+        except Exception as exc:
+            try:
+                import shutil
+
+                shutil.rmtree(work_dir)
+            except Exception:
+                pass
+            raise RuntimeError(f"Failed to create job in database: {exc}")
 
     def _validate_input(self, dft_code: str, content: str) -> Optional[str]:
         """
@@ -708,36 +885,30 @@ class NewJobScreen(ModalScreen):
         """Open Materials Project search screen."""
         from .materials_search import MaterialsSearchScreen
 
-        def handle_result(result: str | None) -> None:
-            """Handle the result from the materials search screen."""
-            if result:
-                # result is the .d12 content
-                input_textarea = self.query_one("#input_textarea", TextArea)
-                input_textarea.load_text(result)
+        def handle_result(result: dict | None) -> None:
+            """Handle the result from the materials search screen.
 
-                # Show success message
+            Args:
+                result: Dictionary with d12_content, material_id, formula or None if cancelled
+            """
+            if result and isinstance(result, dict):
+                # Populate input with .d12 content
+                input_textarea = self.query_one("#input_textarea", TextArea)
+                input_textarea.load_text(result.get("d12_content", ""))
+
+                # Auto-populate job name if empty
+                job_name_input = self.query_one("#job_name_input", Input)
+                if not job_name_input.value:
+                    formula = result.get("formula", "structure")
+                    material_id = result.get("material_id", "mp")
+                    suggested_name = f"{formula}_{material_id}".replace("-", "_")
+                    job_name_input.value = suggested_name
+                    self._update_work_dir_preview()
+
+                # Show success message with details
                 info_message = self.query_one("#info_message", Static)
-                info_message.update("Structure imported from Materials Project")
+                formula = result.get("formula", "Structure")
+                material_id = result.get("material_id", "")
+                info_message.update(f"Imported {formula} ({material_id}) from Materials Project")
 
         self.app.push_screen(MaterialsSearchScreen(), handle_result)
-
-    def on_structure_selected(self, event: "StructureSelected") -> None:
-        """Handle structure selection from MaterialsSearchScreen."""
-        from .materials_search import StructureSelected
-
-        if isinstance(event, StructureSelected):
-            # Populate the input textarea with the .d12 content
-            input_textarea = self.query_one("#input_textarea", TextArea)
-            input_textarea.load_text(event.d12_content)
-
-            # Update job name suggestion based on formula
-            job_name_input = self.query_one("#job_name_input", Input)
-            if not job_name_input.value:
-                # Suggest a job name based on material ID and formula
-                suggested_name = f"{event.formula}_{event.material_id}".replace("-", "_")
-                job_name_input.value = suggested_name
-                self._update_work_dir_preview()
-
-            # Show success message
-            info_message = self.query_one("#info_message", Static)
-            info_message.update(f"Imported {event.formula} ({event.material_id}) from Materials Project")
