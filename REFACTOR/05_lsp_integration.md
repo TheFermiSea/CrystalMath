@@ -25,3 +25,4 @@ npm install -g dft-language-server
 - No new custom LSP implementation in Rust.
 - Upstream LSP usage documented.
 - $EDITOR workflow supported for full editing.
+ - Legacy `src/lsp.rs` scheduled for removal after Rust UI IPC boundary is defined.

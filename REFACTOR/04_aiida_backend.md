@@ -1,13 +1,12 @@
-# AiiDA Backend Integration
+# AiiDA Backend Integration (Python Core First)
 
-This guide focuses on the Python code needed to replace your custom `workflow.py` with AiiDA, exposing a clean API for Rust.
+This guide focuses on the Python core API that powers the **primary Python TUI**. AiiDA remains optional and should be hidden behind a clean backend interface.
 
 ## 1. The Controller Facade (`python/crystalmath/api.py`)
 
-This class is the single point of entry for the Rust application. It initializes the AiiDA environment and handles data retrieval.
+This class is the single point of entry for **Python UI and CLI**. It initializes the AiiDA environment and handles data retrieval.
 
 ```python
-import json
 from typing import List, Optional
 import aiida
 from aiida import orm
@@ -26,10 +25,9 @@ class CrystalController:
         except Exception as e:
             print(f"Error loading AiiDA profile: {e}")
 
-    def get_jobs_json(self) -> str:
+    def get_jobs(self) -> List[JobStatus]:
         """
-        Returns a JSON string of all jobs matching the schema.
-        Rust calls this method directly.
+        Returns native JobStatus objects for the Python TUI.
         """
         qb = orm.QueryBuilder()
         qb.append(
@@ -57,31 +55,29 @@ class CrystalController:
                 state=ui_state,
                 progress_percent=0.0,  # TODO: Parse progress from output nodes if running
             )
-            results.append(job.model_dump())
+            results.append(job)
             
-        return json.dumps(results)
+        return results
 
-    def submit_job_json(self, json_payload: str) -> int:
+    def submit_job(self, submission: JobSubmission) -> int:
         """
-        Accepts a JSON payload from Rust, validates it, and submits an AiiDA job.
+        Accepts a JobSubmission object and submits an AiiDA job.
         """
         try:
-            data = JobSubmission.model_validate_json(json_payload)
-            
             # Load the computer/code
             # In production, these should be looked up via ID or Name
             code = orm.load_code("crystal@localhost") 
             
             builder = Crystal23Calculation.get_builder()
             builder.code = code
-            builder.metadata.label = data.name
+            builder.metadata.label = submission.name
             builder.metadata.options.resources = {
                 'num_machines': 1,
                 'num_mpiprocs_per_machine': 1
             }
             
             # Map parameters to AiiDA Dict
-            builder.crystal.parameters = orm.Dict(dict=data.parameters)
+            builder.crystal.parameters = orm.Dict(dict=submission.parameters)
             
             # Handle Structure (pseudo-code)
             # if data.structure_path:
@@ -92,10 +88,9 @@ class CrystalController:
             return node.pk
             
         except Exception as e:
-            # Propagate error string back to Rust
             raise RuntimeError(f"Submission failed: {str(e)}")
 
-    def get_job_details_json(self, pk: int) -> str:
+    def get_job_details(self, pk: int) -> JobDetails:
         """Fetch detailed results for the Results Tab."""
         try:
             node = orm.load_node(pk)
@@ -122,9 +117,17 @@ class CrystalController:
                 warnings=[], 
                 stdout_tail=stdout.splitlines()[-50:]  # Last 50 lines
             )
-            return details.model_dump_json()
+            return details
         except NotExistent:
-            return "{}"
+            raise RuntimeError(f"Job {pk} not found")
+```
+
+**Rust Boundary:** If the Rust UI needs JSON, add a thin adapter:
+
+```python
+# python/crystalmath/rust_bridge.py
+def get_job_details_json(controller, pk: int) -> str:
+    return controller.get_job_details(pk).model_dump_json()
 ```
 
 ## 2. Replacing the Workflow Engine

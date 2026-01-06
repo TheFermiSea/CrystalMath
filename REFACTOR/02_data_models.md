@@ -1,6 +1,6 @@
-# Data Modeling: Pydantic ↔ Rust Serde
+# Data Modeling: Python Core First (Rust Adapter at Boundary)
 
-To ensure stability, we establish a "Shared Schema" contract. Python defines the schema via Pydantic (because AiiDA objects are Python), and Rust mirrors it via Serde.
+To ensure stability, we establish a "Shared Schema" contract. **Python defines the schema via Pydantic** (because AiiDA objects are Python). **Rust mirrors the schema via Serde** but **serialization happens at the boundary**, not inside core business logic.
 
 ## 1. Python Models (`python/crystalmath/models.py`)
 
@@ -63,7 +63,7 @@ class JobDetails(BaseModel):
 
 ## 2. Rust Models (`src/models.rs`)
 
-Rust uses serde to safely deserialize the JSON strings coming from Python.
+Rust uses serde to deserialize JSON produced by a **thin Rust adapter** (or IPC service). The Python core returns native objects for Python TUI use; JSON conversion is only done when crossing the Rust boundary.
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -108,7 +108,7 @@ pub struct JobDetails {
     pub stdout_tail: Vec<String>,
 }
 
-// For sending data TO Python
+// For sending data TO Python (Rust -> Python boundary)
 #[derive(Serialize, Debug)]
 pub struct JobSubmission {
     pub name: String,
@@ -116,6 +116,9 @@ pub struct JobSubmission {
     pub cluster_id: i32,
     pub parameters: serde_json::Value,
 }
+
+// NOTE: JSON conversion should be handled by a rust_bridge adapter (Python),
+// not by the core business logic.
 ```
 
 ## 3. The Serialization Bridge (`src/bridge.rs`)
