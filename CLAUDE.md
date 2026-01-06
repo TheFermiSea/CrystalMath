@@ -183,7 +183,7 @@ workflows (id, name, dag_json, status)
 | `app.rs` | Application state, tab navigation, dirty-flag rendering |
 | `models.rs` | Data models matching Python Pydantic (serde), ClusterType enum, VaspInputFiles |
 | `bridge.rs` | PyO3 FFI to Python backend, async request/response via channels |
-| `lsp.rs` | LSP client for dft-language-server (JSON-RPC over stdio) |
+| `lsp.rs` | Thin LSP client for upstream dft-language-server (JSON-RPC over stdio) - see [ADR-004](docs/architecture/adr-004-editor-lsp-strategy.md) |
 | `ui/` | Ratatui view components (jobs, editor, results, log, materials, cluster_manager, slurm_queue, vasp_input) |
 
 **Key Data Models (`models.rs`):**
