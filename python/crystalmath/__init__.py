@@ -1,8 +1,9 @@
 """
-CrystalMath Python Backend.
+CrystalMath Python Core.
 
-This package provides the Python scientific backend for the CrystalMath Rust TUI.
-It exposes AiiDA workflow management through a simple JSON-based API for PyO3 consumption.
+This package provides the shared scientific backend for CrystalMath. The core
+API returns native Pydantic models for Python consumers, with optional JSON
+adapters for Rust/IPC boundaries.
 """
 
 from crystalmath.models import (

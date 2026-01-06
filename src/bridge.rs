@@ -14,7 +14,10 @@ use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::PyAnyMethods;
 
-use crate::models::{ApiResponse, ClusterConfig, ClusterConnectionResult, JobDetails, JobStatus, JobSubmission, MaterialResult, SlurmCancelResult, SlurmQueueEntry};
+use crate::models::{
+    ApiResponse, ClusterConfig, ClusterConnectionResult, JobDetails, JobStatus, JobSubmission,
+    MaterialResult, SlurmCancelResult, SlurmQueueEntry, WorkflowAvailability,
+};
 
 // =============================================================================
 // Service Trait for Dependency Injection
@@ -51,12 +54,8 @@ pub trait BridgeService {
     ) -> Result<()>;
 
     /// Send a request to generate a .d12 file (non-blocking).
-    fn request_generate_d12(
-        &self,
-        mp_id: &str,
-        config_json: &str,
-        request_id: usize,
-    ) -> Result<()>;
+    fn request_generate_d12(&self, mp_id: &str, config_json: &str, request_id: usize)
+        -> Result<()>;
 
     /// Send a request to fetch SLURM queue (non-blocking).
     fn request_fetch_slurm_queue(&self, cluster_id: i32, request_id: usize) -> Result<()>;
@@ -69,24 +68,71 @@ pub trait BridgeService {
         request_id: usize,
     ) -> Result<()>;
 
+    /// Send a request to adopt a SLURM job (non-blocking).
+    fn request_adopt_slurm_job(
+        &self,
+        cluster_id: i32,
+        slurm_job_id: &str,
+        request_id: usize,
+    ) -> Result<()>;
+
+    /// Send a request to sync remote job status (non-blocking).
+    fn request_sync_remote_jobs(&self, request_id: usize) -> Result<()>;
+
+    /// Send a request to fetch templates (non-blocking).
+    fn request_fetch_templates(&self, request_id: usize) -> Result<()>;
+
+    /// Send a request to render a template (non-blocking).
+    fn request_render_template(
+        &self,
+        template_name: &str,
+        params_json: &str,
+        request_id: usize,
+    ) -> Result<()>;
+
     // Cluster management operations
     /// Send a request to fetch all clusters (non-blocking).
     fn request_fetch_clusters(&self, request_id: usize) -> Result<()>;
-
-    /// Send a request to fetch a single cluster (non-blocking).
-    fn request_fetch_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()>;
 
     /// Send a request to create a new cluster (non-blocking).
     fn request_create_cluster(&self, config: &ClusterConfig, request_id: usize) -> Result<()>;
 
     /// Send a request to update a cluster (non-blocking).
-    fn request_update_cluster(&self, cluster_id: i32, config: &ClusterConfig, request_id: usize) -> Result<()>;
+    fn request_update_cluster(
+        &self,
+        cluster_id: i32,
+        config: &ClusterConfig,
+        request_id: usize,
+    ) -> Result<()>;
 
     /// Send a request to delete a cluster (non-blocking).
     fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()>;
 
     /// Send a request to test cluster connection (non-blocking).
     fn request_test_cluster_connection(&self, cluster_id: i32, request_id: usize) -> Result<()>;
+
+    // Workflow operations
+    /// Send a request to check workflow availability (non-blocking).
+    fn request_check_workflows_available(&self, request_id: usize) -> Result<()>;
+
+    /// Send a request to create a convergence study (non-blocking).
+    fn request_create_convergence_study(&self, config_json: &str, request_id: usize) -> Result<()>;
+
+    /// Send a request to create a band structure workflow (non-blocking).
+    fn request_create_band_structure_workflow(
+        &self,
+        config_json: &str,
+        request_id: usize,
+    ) -> Result<()>;
+
+    /// Send a request to create a phonon workflow (non-blocking).
+    fn request_create_phonon_workflow(&self, config_json: &str, request_id: usize) -> Result<()>;
+
+    /// Send a request to create an EOS workflow (non-blocking).
+    fn request_create_eos_workflow(&self, config_json: &str, request_id: usize) -> Result<()>;
+
+    /// Send a request to launch AiiDA geometry optimization (non-blocking).
+    fn request_launch_aiida_geopt(&self, config_json: &str, request_id: usize) -> Result<()>;
 
     /// Poll for a response (non-blocking).
     fn poll_response(&self) -> Option<BridgeResponse>;
@@ -240,10 +286,14 @@ pub fn fetch_jobs(py_controller: &Py<PyAny>) -> Result<Vec<JobStatus>> {
     Python::attach(|py| {
         let controller = py_controller.bind(py);
 
-        // Call get_jobs_json() and extract the string
-        let json_str: String = controller
-            .call_method0("get_jobs_json")
-            .context("Failed to call get_jobs_json")?
+        let bridge = py
+            .import("crystalmath.rust_bridge")
+            .context("Failed to import crystalmath.rust_bridge")?;
+
+        // Call rust_bridge.get_jobs_json(controller)
+        let json_str: String = bridge
+            .call_method1("get_jobs_json", (controller,))
+            .context("Failed to call rust_bridge.get_jobs_json")?
             .extract()
             .context("Failed to extract JSON string")?;
 
@@ -260,23 +310,27 @@ pub fn fetch_job_details(py_controller: &Py<PyAny>, pk: i32) -> Result<Option<Jo
     Python::attach(|py| {
         let controller = py_controller.bind(py);
 
-        // Call get_job_details_json(pk)
-        let json_str: String = controller
-            .call_method1("get_job_details_json", (pk,))
-            .context("Failed to call get_job_details_json")?
+        let bridge = py
+            .import("crystalmath.rust_bridge")
+            .context("Failed to import crystalmath.rust_bridge")?;
+
+        // Call rust_bridge.get_job_details_json(controller, pk)
+        let json_str: String = bridge
+            .call_method1("get_job_details_json", (controller, pk))
+            .context("Failed to call rust_bridge.get_job_details_json")?
             .extract()
             .context("Failed to extract JSON string")?;
 
-        // Empty object means not found
-        if json_str == "{}" {
-            return Ok(None);
+        // Parse structured API response
+        let response: ApiResponse<JobDetails> =
+            serde_json::from_str(&json_str).context("Failed to parse job details response")?;
+
+        // Handle NOT_FOUND as None, other errors as Error
+        match response.into_result() {
+            Ok(details) => Ok(Some(details)),
+            Err(msg) if msg.contains("NOT_FOUND") => Ok(None),
+            Err(msg) => Err(anyhow::anyhow!("Job details error: {}", msg)),
         }
-
-        // Deserialize
-        let details: JobDetails =
-            serde_json::from_str(&json_str).context("Failed to parse job details JSON")?;
-
-        Ok(Some(details))
     })
 }
 
@@ -320,9 +374,13 @@ pub fn fetch_job_log(py_controller: &Py<PyAny>, pk: i32, tail_lines: i32) -> Res
     Python::attach(|py| {
         let controller = py_controller.bind(py);
 
-        let json_str: String = controller
-            .call_method1("get_job_log_json", (pk, tail_lines))
-            .context("Failed to call get_job_log_json")?
+        let bridge = py
+            .import("crystalmath.rust_bridge")
+            .context("Failed to import crystalmath.rust_bridge")?;
+
+        let json_str: String = bridge
+            .call_method1("get_job_log_json", (controller, pk, tail_lines))
+            .context("Failed to call rust_bridge.get_job_log_json")?
             .extract()
             .context("Failed to extract JSON string")?;
 
@@ -394,6 +452,23 @@ pub enum BridgeRequest {
         slurm_job_id: String,
         request_id: usize,
     },
+    AdoptSlurmJob {
+        cluster_id: i32,
+        slurm_job_id: String,
+        request_id: usize,
+    },
+    SyncRemoteJobs {
+        request_id: usize,
+    },
+    // Template requests
+    FetchTemplates {
+        request_id: usize,
+    },
+    RenderTemplate {
+        template_name: String,
+        params_json: String,
+        request_id: usize,
+    },
     // Cluster management requests
     FetchClusters {
         request_id: usize,
@@ -417,6 +492,30 @@ pub enum BridgeRequest {
     },
     TestClusterConnection {
         cluster_id: i32,
+        request_id: usize,
+    },
+    // Workflow requests
+    CheckWorkflowsAvailable {
+        request_id: usize,
+    },
+    CreateConvergenceStudy {
+        config_json: String,
+        request_id: usize,
+    },
+    CreateBandStructureWorkflow {
+        config_json: String,
+        request_id: usize,
+    },
+    CreatePhononWorkflow {
+        config_json: String,
+        request_id: usize,
+    },
+    CreateEosWorkflow {
+        config_json: String,
+        request_id: usize,
+    },
+    LaunchAiidaGeopt {
+        config_json: String,
         request_id: usize,
     },
 }
@@ -466,6 +565,19 @@ pub enum BridgeResponse {
         request_id: usize,
         result: Result<SlurmCancelResult>,
     },
+    SlurmJobAdopted {
+        request_id: usize,
+        result: Result<i32>, // Returns PK of new job
+    },
+    // Template responses
+    Templates {
+        request_id: usize,
+        result: Result<Vec<crate::models::Template>>,
+    },
+    TemplateRendered {
+        request_id: usize,
+        result: Result<String>,
+    },
     // Cluster management responses
     Clusters {
         request_id: usize,
@@ -491,6 +603,16 @@ pub enum BridgeResponse {
         request_id: usize,
         result: Result<ClusterConnectionResult>,
     },
+    // Workflow responses
+    WorkflowsAvailable {
+        request_id: usize,
+        result: Result<WorkflowAvailability>,
+    },
+    WorkflowCreated {
+        request_id: usize,
+        /// JSON string of the created workflow
+        result: Result<String>,
+    },
 }
 
 /// Kind of pending bridge request (for UI feedback).
@@ -502,9 +624,16 @@ pub enum BridgeRequestKind {
     SubmitJob,
     CancelJob,
     FetchJobLog,
+    AdoptSlurmJob,
     // Materials Project API
     SearchMaterials,
     GenerateD12,
+    SyncRemoteJobs,
+    FetchTemplates,
+    RenderTemplate,
+    // Workflows
+    CheckWorkflowsAvailable,
+    CreateWorkflow,
 }
 
 /// Maximum number of pending requests/responses before backpressure.
@@ -672,6 +801,46 @@ impl BridgeHandle {
         })
     }
 
+    /// Send a request to adopt a SLURM job (non-blocking).
+    ///
+    /// Creates a local tracking record for an existing remote job.
+    pub fn request_adopt_slurm_job(
+        &self,
+        cluster_id: i32,
+        slurm_job_id: &str,
+        request_id: usize,
+    ) -> Result<()> {
+        self.try_send_request(BridgeRequest::AdoptSlurmJob {
+            cluster_id,
+            slurm_job_id: slurm_job_id.to_string(),
+            request_id,
+        })
+    }
+
+    /// Send a request to sync remote job status (non-blocking).
+    ///
+    /// Checks active remote jobs against squeue/sacct and updates DB.
+    pub fn request_sync_remote_jobs(&self, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::SyncRemoteJobs { request_id })
+    }
+
+    fn request_fetch_templates(&self, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::FetchTemplates { request_id })
+    }
+
+    fn request_render_template(
+        &self,
+        template_name: &str,
+        params_json: &str,
+        request_id: usize,
+    ) -> Result<()> {
+        self.try_send_request(BridgeRequest::RenderTemplate {
+            template_name: template_name.to_string(),
+            params_json: params_json.to_string(),
+            request_id,
+        })
+    }
+
     // =========================================================================
     // Cluster Management Methods
     // =========================================================================
@@ -679,11 +848,6 @@ impl BridgeHandle {
     /// Send a request to fetch all clusters (non-blocking).
     pub fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
         self.try_send_request(BridgeRequest::FetchClusters { request_id })
-    }
-
-    /// Send a request to fetch a single cluster (non-blocking).
-    pub fn request_fetch_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchCluster { cluster_id, request_id })
     }
 
     /// Send a request to create a new cluster (non-blocking).
@@ -696,7 +860,12 @@ impl BridgeHandle {
     }
 
     /// Send a request to update a cluster (non-blocking).
-    pub fn request_update_cluster(&self, cluster_id: i32, config: &ClusterConfig, request_id: usize) -> Result<()> {
+    pub fn request_update_cluster(
+        &self,
+        cluster_id: i32,
+        config: &ClusterConfig,
+        request_id: usize,
+    ) -> Result<()> {
         let json = serde_json::to_string(config)?;
         self.try_send_request(BridgeRequest::UpdateCluster {
             cluster_id,
@@ -707,12 +876,22 @@ impl BridgeHandle {
 
     /// Send a request to delete a cluster (non-blocking).
     pub fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::DeleteCluster { cluster_id, request_id })
+        self.try_send_request(BridgeRequest::DeleteCluster {
+            cluster_id,
+            request_id,
+        })
     }
 
     /// Send a request to test cluster connection (non-blocking).
-    pub fn request_test_cluster_connection(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::TestClusterConnection { cluster_id, request_id })
+    pub fn request_test_cluster_connection(
+        &self,
+        cluster_id: i32,
+        request_id: usize,
+    ) -> Result<()> {
+        self.try_send_request(BridgeRequest::TestClusterConnection {
+            cluster_id,
+            request_id,
+        })
     }
 
     /// Poll for a response (non-blocking).
@@ -842,12 +1021,42 @@ impl BridgeService for BridgeHandle {
         })
     }
 
-    fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchClusters { request_id })
+    fn request_adopt_slurm_job(
+        &self,
+        cluster_id: i32,
+        slurm_job_id: &str,
+        request_id: usize,
+    ) -> Result<()> {
+        self.try_send_request(BridgeRequest::AdoptSlurmJob {
+            cluster_id,
+            slurm_job_id: slurm_job_id.to_string(),
+            request_id,
+        })
     }
 
-    fn request_fetch_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchCluster { cluster_id, request_id })
+    fn request_sync_remote_jobs(&self, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::SyncRemoteJobs { request_id })
+    }
+
+    fn request_fetch_templates(&self, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::FetchTemplates { request_id })
+    }
+
+    fn request_render_template(
+        &self,
+        template_name: &str,
+        params_json: &str,
+        request_id: usize,
+    ) -> Result<()> {
+        self.try_send_request(BridgeRequest::RenderTemplate {
+            template_name: template_name.to_string(),
+            params_json: params_json.to_string(),
+            request_id,
+        })
+    }
+
+    fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::FetchClusters { request_id })
     }
 
     fn request_create_cluster(&self, config: &ClusterConfig, request_id: usize) -> Result<()> {
@@ -858,7 +1067,12 @@ impl BridgeService for BridgeHandle {
         })
     }
 
-    fn request_update_cluster(&self, cluster_id: i32, config: &ClusterConfig, request_id: usize) -> Result<()> {
+    fn request_update_cluster(
+        &self,
+        cluster_id: i32,
+        config: &ClusterConfig,
+        request_id: usize,
+    ) -> Result<()> {
         let json = serde_json::to_string(config)?;
         self.try_send_request(BridgeRequest::UpdateCluster {
             cluster_id,
@@ -868,11 +1082,60 @@ impl BridgeService for BridgeHandle {
     }
 
     fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::DeleteCluster { cluster_id, request_id })
+        self.try_send_request(BridgeRequest::DeleteCluster {
+            cluster_id,
+            request_id,
+        })
     }
 
     fn request_test_cluster_connection(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::TestClusterConnection { cluster_id, request_id })
+        self.try_send_request(BridgeRequest::TestClusterConnection {
+            cluster_id,
+            request_id,
+        })
+    }
+
+    fn request_check_workflows_available(&self, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::CheckWorkflowsAvailable { request_id })
+    }
+
+    fn request_create_convergence_study(&self, config_json: &str, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::CreateConvergenceStudy {
+            config_json: config_json.to_string(),
+            request_id,
+        })
+    }
+
+    fn request_create_band_structure_workflow(
+        &self,
+        config_json: &str,
+        request_id: usize,
+    ) -> Result<()> {
+        self.try_send_request(BridgeRequest::CreateBandStructureWorkflow {
+            config_json: config_json.to_string(),
+            request_id,
+        })
+    }
+
+    fn request_create_phonon_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::CreatePhononWorkflow {
+            config_json: config_json.to_string(),
+            request_id,
+        })
+    }
+
+    fn request_create_eos_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::CreateEosWorkflow {
+            config_json: config_json.to_string(),
+            request_id,
+        })
+    }
+
+    fn request_launch_aiida_geopt(&self, config_json: &str, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::LaunchAiidaGeopt {
+            config_json: config_json.to_string(),
+            request_id,
+        })
     }
 
     fn poll_response(&self) -> Option<BridgeResponse> {
@@ -1007,30 +1270,113 @@ fn process_bridge_request(py_controller: &Py<PyAny>, request: BridgeRequest) -> 
             request_id,
             result: cancel_slurm_job(py_controller, cluster_id, &slurm_job_id),
         },
+        BridgeRequest::AdoptSlurmJob {
+            cluster_id,
+            slurm_job_id,
+            request_id,
+        } => BridgeResponse::SlurmJobAdopted {
+            request_id,
+            result: adopt_slurm_job(py_controller, cluster_id, &slurm_job_id),
+        },
+        BridgeRequest::SyncRemoteJobs { request_id } => BridgeResponse::Jobs {
+            request_id,
+            result: sync_remote_jobs(py_controller),
+        },
+        // Templates
+        BridgeRequest::FetchTemplates { request_id } => BridgeResponse::Templates {
+            request_id,
+            result: fetch_templates(py_controller),
+        },
+        BridgeRequest::RenderTemplate {
+            template_name,
+            params_json,
+            request_id,
+        } => BridgeResponse::TemplateRendered {
+            request_id,
+            result: render_template(py_controller, &template_name, &params_json),
+        },
         // Cluster management
         BridgeRequest::FetchClusters { request_id } => BridgeResponse::Clusters {
             request_id,
             result: fetch_clusters(py_controller),
         },
-        BridgeRequest::FetchCluster { cluster_id, request_id } => BridgeResponse::Cluster {
+        BridgeRequest::FetchCluster {
+            cluster_id,
+            request_id,
+        } => BridgeResponse::Cluster {
             request_id,
             result: fetch_cluster(py_controller, cluster_id),
         },
-        BridgeRequest::CreateCluster { config_json, request_id } => BridgeResponse::ClusterCreated {
+        BridgeRequest::CreateCluster {
+            config_json,
+            request_id,
+        } => BridgeResponse::ClusterCreated {
             request_id,
             result: create_cluster(py_controller, &config_json),
         },
-        BridgeRequest::UpdateCluster { cluster_id, config_json, request_id } => BridgeResponse::ClusterUpdated {
+        BridgeRequest::UpdateCluster {
+            cluster_id,
+            config_json,
+            request_id,
+        } => BridgeResponse::ClusterUpdated {
             request_id,
             result: update_cluster(py_controller, cluster_id, &config_json),
         },
-        BridgeRequest::DeleteCluster { cluster_id, request_id } => BridgeResponse::ClusterDeleted {
+        BridgeRequest::DeleteCluster {
+            cluster_id,
+            request_id,
+        } => BridgeResponse::ClusterDeleted {
             request_id,
             result: delete_cluster(py_controller, cluster_id),
         },
-        BridgeRequest::TestClusterConnection { cluster_id, request_id } => BridgeResponse::ClusterConnectionTested {
+        BridgeRequest::TestClusterConnection {
+            cluster_id,
+            request_id,
+        } => BridgeResponse::ClusterConnectionTested {
             request_id,
             result: test_cluster_connection(py_controller, cluster_id),
+        },
+        // Workflow requests
+        BridgeRequest::CheckWorkflowsAvailable { request_id } => {
+            BridgeResponse::WorkflowsAvailable {
+                request_id,
+                result: check_workflows_available(py_controller),
+            }
+        }
+        BridgeRequest::CreateConvergenceStudy {
+            config_json,
+            request_id,
+        } => BridgeResponse::WorkflowCreated {
+            request_id,
+            result: create_convergence_study(py_controller, &config_json),
+        },
+        BridgeRequest::CreateBandStructureWorkflow {
+            config_json,
+            request_id,
+        } => BridgeResponse::WorkflowCreated {
+            request_id,
+            result: create_band_structure_workflow(py_controller, &config_json),
+        },
+        BridgeRequest::CreatePhononWorkflow {
+            config_json,
+            request_id,
+        } => BridgeResponse::WorkflowCreated {
+            request_id,
+            result: create_phonon_workflow(py_controller, &config_json),
+        },
+        BridgeRequest::CreateEosWorkflow {
+            config_json,
+            request_id,
+        } => BridgeResponse::WorkflowCreated {
+            request_id,
+            result: create_eos_workflow(py_controller, &config_json),
+        },
+        BridgeRequest::LaunchAiidaGeopt {
+            config_json,
+            request_id,
+        } => BridgeResponse::WorkflowCreated {
+            request_id,
+            result: launch_aiida_geopt(py_controller, &config_json),
         },
         // Shutdown is handled in the worker loop before calling this function.
         BridgeRequest::Shutdown => unreachable!("Shutdown handled in worker loop"),
@@ -1148,6 +1494,52 @@ fn cancel_slurm_job(
     })
 }
 
+/// Adopt a SLURM job.
+///
+/// Calls Python's adopt_slurm_job_json() and returns the new job PK.
+fn adopt_slurm_job(py_controller: &Py<PyAny>, cluster_id: i32, slurm_job_id: &str) -> Result<i32> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        let json_str: String = controller
+            .call_method1("adopt_slurm_job_json", (cluster_id, slurm_job_id))
+            .context("Failed to call adopt_slurm_job_json")?
+            .extract()
+            .context("Failed to extract JSON string")?;
+
+        // Parse the structured response
+        #[derive(serde::Deserialize, Default)]
+        struct AdoptResponse {
+            pk: i32,
+        }
+        let response: ApiResponse<AdoptResponse> =
+            serde_json::from_str(&json_str).context("Failed to parse adopt response")?;
+
+        Ok(response.into_result().map_err(|e| anyhow::anyhow!(e))?.pk)
+    })
+}
+
+/// Sync remote job status with SLURM.
+///
+/// Calls Python's sync_remote_jobs_json() and returns the updated job list.
+fn sync_remote_jobs(py_controller: &Py<PyAny>) -> Result<Vec<JobStatus>> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        let json_str: String = controller
+            .call_method0("sync_remote_jobs_json")
+            .context("Failed to call sync_remote_jobs_json")?
+            .extract()
+            .context("Failed to extract JSON string")?;
+
+        // Deserialize in Rust
+        let jobs: Vec<JobStatus> =
+            serde_json::from_str(&json_str).context("Failed to parse jobs JSON")?;
+
+        Ok(jobs)
+    })
+}
+
 // =============================================================================
 // Cluster Management Helpers
 // =============================================================================
@@ -1207,7 +1599,11 @@ fn create_cluster(py_controller: &Py<PyAny>, config_json: &str) -> Result<Cluste
 }
 
 /// Update an existing cluster configuration.
-fn update_cluster(py_controller: &Py<PyAny>, cluster_id: i32, config_json: &str) -> Result<ClusterConfig> {
+fn update_cluster(
+    py_controller: &Py<PyAny>,
+    cluster_id: i32,
+    config_json: &str,
+) -> Result<ClusterConfig> {
     Python::attach(|py| {
         let controller = py_controller.bind(py);
 
@@ -1243,7 +1639,10 @@ fn delete_cluster(py_controller: &Py<PyAny>, cluster_id: i32) -> Result<bool> {
 }
 
 /// Test SSH connection to a cluster.
-fn test_cluster_connection(py_controller: &Py<PyAny>, cluster_id: i32) -> Result<ClusterConnectionResult> {
+fn test_cluster_connection(
+    py_controller: &Py<PyAny>,
+    cluster_id: i32,
+) -> Result<ClusterConnectionResult> {
     Python::attach(|py| {
         let controller = py_controller.bind(py);
 
@@ -1257,6 +1656,144 @@ fn test_cluster_connection(py_controller: &Py<PyAny>, cluster_id: i32) -> Result
             serde_json::from_str(&json_str).context("Failed to parse connection test response")?;
 
         response.into_result().map_err(|e| anyhow::anyhow!(e))
+    })
+}
+
+/// Fetch all available templates.
+fn fetch_templates(py_controller: &Py<PyAny>) -> Result<Vec<crate::models::Template>> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        let json_str: String = controller
+            .call_method0("list_templates_json")
+            .context("Failed to call list_templates_json")?
+            .extract()
+            .context("Failed to extract JSON string")?;
+
+        let response: ApiResponse<Vec<crate::models::Template>> =
+            serde_json::from_str(&json_str).context("Failed to parse templates response")?;
+
+        response.into_result().map_err(|e| anyhow::anyhow!(e))
+    })
+}
+
+/// Render a template with parameters.
+fn render_template(
+    py_controller: &Py<PyAny>,
+    template_name: &str,
+    params_json: &str,
+) -> Result<String> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        let json_str: String = controller
+            .call_method1("render_template_json", (template_name, params_json))
+            .context("Failed to call render_template_json")?
+            .extract()
+            .context("Failed to extract JSON string")?;
+
+        let response: ApiResponse<String> =
+            serde_json::from_str(&json_str).context("Failed to parse template render response")?;
+
+        response.into_result().map_err(|e| anyhow::anyhow!(e))
+    })
+}
+
+// =============================================================================
+// Workflow Helpers
+// =============================================================================
+
+/// Check if workflow module is available.
+fn check_workflows_available(py_controller: &Py<PyAny>) -> Result<WorkflowAvailability> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        let json_str: String = controller
+            .call_method0("check_workflows_available_json")
+            .context("Failed to call check_workflows_available_json")?
+            .extract()
+            .context("Failed to extract JSON string")?;
+
+        let response: ApiResponse<WorkflowAvailability> =
+            serde_json::from_str(&json_str).context("Failed to parse workflow availability")?;
+
+        response.into_result().map_err(|e| anyhow::anyhow!(e))
+    })
+}
+
+/// Create a convergence study workflow.
+fn create_convergence_study(py_controller: &Py<PyAny>, config_json: &str) -> Result<String> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        let json_str: String = controller
+            .call_method1("create_convergence_study_json", (config_json,))
+            .context("Failed to call create_convergence_study_json")?
+            .extract()
+            .context("Failed to extract JSON string")?;
+
+        // Return raw JSON for workflow state
+        Ok(json_str)
+    })
+}
+
+/// Create a band structure workflow.
+fn create_band_structure_workflow(py_controller: &Py<PyAny>, config_json: &str) -> Result<String> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        let json_str: String = controller
+            .call_method1("create_band_structure_workflow_json", (config_json,))
+            .context("Failed to call create_band_structure_workflow_json")?
+            .extract()
+            .context("Failed to extract JSON string")?;
+
+        Ok(json_str)
+    })
+}
+
+/// Create a phonon workflow.
+fn create_phonon_workflow(py_controller: &Py<PyAny>, config_json: &str) -> Result<String> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        let json_str: String = controller
+            .call_method1("create_phonon_workflow_json", (config_json,))
+            .context("Failed to call create_phonon_workflow_json")?
+            .extract()
+            .context("Failed to extract JSON string")?;
+
+        Ok(json_str)
+    })
+}
+
+/// Create an EOS workflow.
+fn create_eos_workflow(py_controller: &Py<PyAny>, config_json: &str) -> Result<String> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        let json_str: String = controller
+            .call_method1("create_eos_workflow_json", (config_json,))
+            .context("Failed to call create_eos_workflow_json")?
+            .extract()
+            .context("Failed to extract JSON string")?;
+
+        Ok(json_str)
+    })
+}
+
+/// Launch an AiiDA geometry optimization workflow.
+fn launch_aiida_geopt(py_controller: &Py<PyAny>, config_json: &str) -> Result<String> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        let json_str: String = controller
+            .call_method1("launch_aiida_geopt_json", (config_json,))
+            .context("Failed to call launch_aiida_geopt_json")?
+            .extract()
+            .context("Failed to extract JSON string")?;
+
+        Ok(json_str)
     })
 }
 
