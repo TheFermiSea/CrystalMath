@@ -57,6 +57,11 @@ class CrystalController:
     This class manages backend selection (AiiDA, SQLite, demo) and returns
     native Pydantic models or dicts. JSON serialization is provided by
     legacy adapter methods for Rust compatibility.
+
+    Backend Selection (via create_backend):
+    1. AiiDA if use_aiida=True and AiiDA is available
+    2. SQLite if db_path is provided
+    3. Demo backend as fallback
     """
 
     def __init__(
@@ -73,22 +78,30 @@ class CrystalController:
             use_aiida: If False, use SQLite fallback instead of AiiDA
             db_path: Path to SQLite database (for fallback mode)
         """
+        from crystalmath.backends import create_backend
+
         self._use_aiida = use_aiida
         self._profile_name = profile_name
         self._db_path = db_path
 
-        # Try to initialize AiiDA if requested
-        if use_aiida:
-            self._aiida_available = self._init_aiida(profile_name)
-        else:
-            self._aiida_available = False
+        # Create backend using factory function
+        self._backend = create_backend(
+            use_aiida=use_aiida,
+            db_path=db_path,
+            profile_name=profile_name,
+        )
 
-        # Fallback to SQLite if AiiDA not available
-        if not self._aiida_available and db_path:
-            self._init_sqlite(db_path)
-        elif not self._aiida_available:
-            logger.warning("No backend available - running in demo mode")
+        # Backward compatibility flags
+        self._aiida_available = self._backend.name == "aiida"
+
+        # Legacy attributes for backward compatibility
+        if self._backend.name == "demo":
             self._demo_jobs: List[JobStatus] = []
+        if self._backend.name == "sqlite":
+            # Keep _db reference for advanced methods that use it directly
+            self._init_sqlite(db_path) if db_path else None
+        if self._backend.name == "aiida":
+            self._init_aiida(profile_name)
 
     def _init_aiida(self, profile_name: str) -> bool:
         """
@@ -137,36 +150,19 @@ class CrystalController:
 
     def get_jobs(self, limit: int = 100) -> List[JobStatus]:
         """Get list of jobs as native JobStatus objects."""
-        if self._aiida_available:
-            return self._get_aiida_jobs(limit)
-        elif hasattr(self, "_db") and self._db:
-            return self._get_sqlite_jobs(limit)
-        else:
-            return self._get_demo_jobs()
+        return self._backend.get_jobs(limit)
 
     def get_job_details(self, pk: int) -> Optional[JobDetails]:
         """Get detailed job info as a JobDetails object (or None if not found)."""
-        if self._aiida_available:
-            return self._get_aiida_job_details(pk)
-        elif hasattr(self, "_db") and self._db:
-            return self._get_sqlite_job_details(pk)
-        else:
-            return self._get_demo_job_details(pk)
+        return self._backend.get_job_details(pk)
 
     def submit_job(self, submission: JobSubmission) -> int:
         """Submit a new job from a JobSubmission object."""
-        if self._aiida_available:
-            return self._submit_aiida_job(submission)
-        elif hasattr(self, "_db") and self._db:
-            return self._submit_sqlite_job(submission)
-        else:
-            return self._submit_demo_job(submission)
+        return self._backend.submit_job(submission)
 
     def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
         """Get job stdout/stderr log as a dict with stdout/stderr arrays."""
-        if self._aiida_available:
-            return self._get_aiida_job_log(pk, tail_lines)
-        return {"stdout": [], "stderr": []}
+        return self._backend.get_job_log(pk, tail_lines)
 
     # ========== Legacy JSON API (Rust compatibility) ==========
 
@@ -200,12 +196,7 @@ class CrystalController:
         Returns:
             True if cancellation succeeded
         """
-        if self._aiida_available:
-            return self._cancel_aiida_job(pk)
-        elif hasattr(self, "_db") and self._db:
-            return self._cancel_sqlite_job(pk)
-        else:
-            return self._cancel_demo_job(pk)
+        return self._backend.cancel_job(pk)
 
     def get_job_log_json(self, pk: int, tail_lines: int = 100) -> str:
         """
