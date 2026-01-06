@@ -52,26 +52,38 @@ bats tests/integration/*.bats           # Integration tests
 bats tests/unit/cry-parallel_test.bats  # Single module
 ```
 
-### Python TUI (Workshop)
+### Python Workspace (Monorepo)
+
+This project uses **uv workspaces** for unified Python dependency management.
 
 ```bash
-cd tui/
+# From repository root (crystalmath/)
 
-# Setup with uv (recommended)
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+# Install all packages (recommended first command)
+uv sync                     # Install core + TUI packages
+uv sync --all-extras        # Include dev, aiida, materials extras
 
-# Launch (use for job creation, cluster config, templates)
-crystal-tui
+# Run commands through uv
+uv run pytest               # Run all tests (core + TUI)
+uv run pytest python/tests/ # Core package tests only
+uv run pytest tui/tests/    # TUI package tests only
 
-# Run tests
-pytest                              # All tests
-pytest tests/test_database.py       # Single file
-pytest -k "test_job_create"         # Single test
+# Run specific packages
+uv run --package crystalmath pytest  # Explicit package selection
+uv run --package crystal-tui pytest
+
+# Launch TUI
+uv run crystal-tui
 
 # Code quality
-black src/ tests/ && ruff check src/ tests/ && mypy src/
+uv run black python/ tui/ && uv run ruff check python/ tui/
 ```
+
+**Workspace Structure:**
+- `python/` - `crystalmath` core package (models, API, templates)
+- `tui/` - `crystal-tui` TUI application (depends on crystalmath)
+- Root `pyproject.toml` - Workspace configuration
+- `uv.lock` - Unified lockfile for all packages
 
 ### Rust TUI (Cockpit - Secondary)
 

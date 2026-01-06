@@ -1,0 +1,103 @@
+# CrystalMath Monorepo
+# Package Manager: uv (recommended)
+#
+# Workspace layout:
+#   python/  - Core crystalmath package
+#   tui/     - Textual TUI application
+#
+# Commands:
+#   uv sync              - Install all packages
+#   uv sync --all-extras - Install with all optional dependencies
+#   uv run pytest        - Run all tests
+#   uv run --package crystalmath pytest  - Run core tests only
+#   uv run --package crystal-tui pytest  - Run TUI tests only
+
+[project]
+name = "crystalmath-workspace"
+version = "0.1.0"
+description = "Monorepo workspace for CrystalMath DFT tools"
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT"}
+
+# No direct dependencies - this is a workspace root
+dependencies = []
+
+[project.optional-dependencies]
+# Install all workspace packages for development
+dev = [
+    "crystalmath[dev]",
+    "crystal-tui[dev]",
+]
+
+# No build system for workspace root - this is a virtual package
+# [build-system]
+# requires = ["hatchling"]
+# build-backend = "hatchling.build"
+
+# UV Workspace Configuration
+# https://docs.astral.sh/uv/concepts/workspaces/
+[tool.uv]
+# Define workspace members
+workspace = { members = ["python", "tui"] }
+
+[tool.uv.sources]
+# Map package names to workspace members
+crystalmath = { workspace = true }
+crystal-tui = { workspace = true }
+
+
+# Shared tool configuration
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "A",   # flake8-builtins
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+    "aiida.*",
+    "pymatgen.*",
+    "anthropic.*",
+    "langchain.*",
+    "langchain_anthropic.*",
+    "textual.*",
+    "rich.*",
+    "asyncssh.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests", "tui/tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

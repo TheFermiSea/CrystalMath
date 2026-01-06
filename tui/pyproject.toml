@@ -47,11 +47,12 @@ analysis = [
 # AiiDA integration (Phase 3)
 # Install with: pip install crystal-tui[aiida]
 # Requires: PostgreSQL 12+, RabbitMQ (optional)
+# Note: aiida-crystal17 removed due to version conflict (requires aiida-core<2.0)
 aiida = [
     "aiida-core>=2.7,<3.0",       # AiiDA workflow engine
     "psycopg2-binary>=2.9",       # PostgreSQL adapter
     "aiida-vasp",                 # VASP plugin
-    "aiida-crystal17",            # CRYSTAL plugin
+    # "aiida-crystal17",          # CRYSTAL plugin (incompatible with aiida-core>=2.0)
     "aiida-quantumespresso",      # Quantum ESPRESSO plugin
 ]
 
@@ -64,6 +65,7 @@ materials = [
     "optimade[http_client]>=1.2", # OPTIMADE cross-database queries (native async)
     "pymatgen>=2023.0.0",         # Structure handling and conversion
     "python-dotenv>=1.0.0",       # Environment variable loading
+    "aiosqlite>=0.20.0",          # Async SQLite for cache
 ]
 
 dev = [
@@ -85,21 +87,15 @@ dev-aiida = [
 crystal-tui = "src.main:main"
 
 [tool.uv.sources]
-crystalmath = { path = "../python", editable = true }
+crystalmath = { workspace = true }
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
 exclude = ["tests*", "*.egg-info"]
 
-[tool.black]
-line-length = 100
-target-version = ["py310", "py311", "py312"]
-
-[tool.ruff]
-line-length = 100
-target-version = "py310"
-select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM"]
+# Tool configuration is inherited from workspace root (../pyproject.toml)
+# Local overrides below for TUI-specific settings
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -108,9 +104,3 @@ asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "ignore::DeprecationWarning:asyncssh.*:",
 ]
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
