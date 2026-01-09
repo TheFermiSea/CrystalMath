@@ -1,0 +1,188 @@
+{
+  "project": "crystalmath-workflow-integration",
+  "epic_id": "crystalmath-kdl7",
+  "current_phase": 1,
+  "current_task": null,
+  "tasks": [
+    {
+      "id": "crystalmath-m1v5",
+      "title": "1.1: Current State Analysis",
+      "phase": 1,
+      "status": "passing",
+      "blocked_by": [],
+      "deliverables": [
+        "Assessment of AiiDA integration completeness (tui/src/aiida/ - 29 files)",
+        "Current pymatgen usage patterns and gaps",
+        "Missing atomate2 integration opportunities",
+        "Backend abstraction layer analysis (python/crystalmath/backends/)",
+        "Workflow capabilities review (python/crystalmath/workflows/)"
+      ],
+      "notes": "AiiDA 80% complete, pymatgen 70%, atomate2 0%. Key friction: dual AiiDA locations."
+    },
+    {
+      "id": "crystalmath-dddy",
+      "title": "1.2: Library Compatibility Research",
+      "phase": 1,
+      "status": "passing",
+      "blocked_by": [],
+      "deliverables": [
+        "AiiDA 2.x API changes and best practices",
+        "atomate2 workflow patterns and AiiDA integration",
+        "pymatgen structure manipulation APIs",
+        "emmet-core MongoDB/data schemas",
+        "fireworks vs AiiDA comparison",
+        "jobflow as workflow manager alternative"
+      ],
+      "notes": "Compatibility matrix for 10 libraries. Recommend dual-backend (AiiDA + jobflow) via PWD."
+    },
+    {
+      "id": "crystalmath-n3fy",
+      "title": "1.3: Beefcake2 Cluster Integration Points",
+      "phase": 1,
+      "status": "passing",
+      "blocked_by": [],
+      "deliverables": [
+        "SLURM scheduler configuration for AiiDA",
+        "GPU offload patterns for VASP/QE/CRYSTAL",
+        "NFS shared storage for AiiDA repository",
+        "SSH/remote execution via asyncssh",
+        "InfiniBand networking for multi-node MPI",
+        "AiiDA computer setup templates",
+        "Code configurations (VASP 6.4.3, QE 7.3.1, CRYSTAL23, YAMBO 5.3.0)"
+      ],
+      "notes": "Full cluster config documented. AiiDA computer/code templates for 6 nodes, 4 codes."
+    },
+    {
+      "id": "crystalmath-tw3k",
+      "title": "2.1: Unified Workflow Architecture",
+      "phase": 2,
+      "status": "failing",
+      "blocked_by": ["crystalmath-m1v5", "crystalmath-dddy", "crystalmath-n3fy"],
+      "deliverables": [
+        "UML class diagram or architectural diagram",
+        "Interface definitions (Python Protocol classes)",
+        "Data flow for complete workflow pipeline"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "crystalmath-dksy",
+      "title": "2.2: Atomate2 Integration Design",
+      "phase": 2,
+      "status": "failing",
+      "blocked_by": ["crystalmath-tw3k"],
+      "deliverables": [
+        "atomate2 Flow to crystalmath workflow mapping",
+        "JobStore to crystalmath database bridge design",
+        "Multi-code workflow handling (VASP→YAMBO, QE→BerkeleyGW)"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "crystalmath-hk2x",
+      "title": "2.3: High-Level API Design",
+      "phase": 2,
+      "status": "failing",
+      "blocked_by": ["crystalmath-tw3k"],
+      "deliverables": [
+        "Fluent builder pattern specification",
+        "Automatic code selection logic",
+        "Smart defaults with protocol overrides",
+        "Progress tracking interface",
+        "Publication export formats"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "crystalmath-vxgl",
+      "title": "3.1: Core Integration Module",
+      "phase": 3,
+      "status": "failing",
+      "blocked_by": ["crystalmath-dksy", "crystalmath-hk2x"],
+      "deliverables": [
+        "integrations/__init__.py",
+        "integrations/pymatgen_bridge.py",
+        "integrations/atomate2_bridge.py",
+        "integrations/aiida_enhanced.py",
+        "integrations/materials_project.py"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "crystalmath-jq2u",
+      "title": "3.2: High-Level Workflow Runners",
+      "phase": 3,
+      "status": "failing",
+      "blocked_by": ["crystalmath-vxgl"],
+      "deliverables": [
+        "StandardAnalysis workflow",
+        "OpticalAnalysis workflow",
+        "PhononAnalysis workflow",
+        "ElasticAnalysis workflow",
+        "TransportAnalysis workflow"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "crystalmath-seki",
+      "title": "3.3: Beefcake2 Cluster Configuration",
+      "phase": 3,
+      "status": "failing",
+      "blocked_by": ["crystalmath-n3fy", "crystalmath-vxgl"],
+      "deliverables": [
+        "Computer definitions (vasp-01/02/03, qe-node1/2/3)",
+        "Code configurations module",
+        "Resource presets (small, medium, large, gpu-single, gpu-multi)",
+        "Auto-setup function for AiiDA profile"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "crystalmath-m8eu",
+      "title": "3.4: Testing Suite",
+      "phase": 3,
+      "status": "failing",
+      "blocked_by": ["crystalmath-vxgl", "crystalmath-jq2u", "crystalmath-seki"],
+      "deliverables": [
+        "test_pymatgen_bridge.py",
+        "test_atomate2_bridge.py",
+        "test_workflows.py",
+        "test_cluster_config.py",
+        "test_high_level_api.py",
+        "80%+ test coverage"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "crystalmath-5hbe",
+      "title": "4.1: User Documentation",
+      "phase": 4,
+      "status": "failing",
+      "blocked_by": ["crystalmath-m8eu"],
+      "deliverables": [
+        "docs/workflows/getting-started.md",
+        "docs/workflows/high-level-api.md",
+        "docs/workflows/atomate2-integration.md",
+        "docs/workflows/cluster-setup.md",
+        "docs/workflows/advanced-workflows.md"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "crystalmath-6gef",
+      "title": "4.2: Example Notebooks",
+      "phase": 4,
+      "status": "failing",
+      "blocked_by": ["crystalmath-5hbe"],
+      "deliverables": [
+        "examples/01_quick_start.ipynb",
+        "examples/02_materials_project.ipynb",
+        "examples/03_band_structure.ipynb",
+        "examples/04_optical_properties.ipynb",
+        "examples/05_high_throughput.ipynb"
+      ],
+      "notes": ""
+    }
+  ],
+  "session_log": []
+}

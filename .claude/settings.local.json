@@ -4,5 +4,18 @@
       "/Users/briansquires/beefcake2/",
       "/Users/briansquires/code/vasp-lsp"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bd prime 2>/dev/null; cat PROGRESS.json 2>/dev/null | jq -r '\"Phase \" + (.current_phase|tostring) + \" | Task: \" + (.current_task // \"none\")' || echo 'PROGRESS.json not found'",
+            "statusMessage": "Loading workflow progress..."
+          }
+        ]
+      }
+    ]
   }
 }
