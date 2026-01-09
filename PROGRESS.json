@@ -128,7 +128,7 @@
       "id": "crystalmath-seki",
       "title": "3.3: Beefcake2 Cluster Configuration",
       "phase": 3,
-      "status": "failing",
+      "status": "passing",
       "blocked_by": ["crystalmath-n3fy", "crystalmath-vxgl"],
       "deliverables": [
         "Computer definitions (vasp-01/02/03, qe-node1/2/3)",
@@ -136,7 +136,7 @@
         "Resource presets (small, medium, large, gpu-single, gpu-multi)",
         "Auto-setup function for AiiDA profile"
       ],
-      "notes": ""
+      "notes": "Expanded clusters.py from 266 to 1775 lines. NodeConfig for all 6 nodes, CodeConfig for VASP/QE/CRYSTAL23/YAMBO/Wannier90, 10 resource presets, setup_aiida_beefcake2() auto-setup, optimal resource estimation heuristics."
     },
     {
       "id": "crystalmath-m8eu",
