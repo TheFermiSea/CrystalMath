@@ -669,6 +669,10 @@ class SLURMWorkflowRunner:
             return self._generate_crystal_inputs(
                 work_dir, workflow_type, pmg_structure, parameters
             )
+        elif code in ("yambo", "yambo_nl"):
+            return self._generate_yambo_input(
+                work_dir, workflow_type, parameters
+            )
         else:
             raise ValueError(f"Unsupported DFT code: {code}")
 
@@ -907,12 +911,9 @@ class SLURMWorkflowRunner:
                 "srun Pcrystal < INPUT > OUTPUT",
             ])
         elif code == "yambo":
-            lines.extend([
-                "module load yambo/5.3.0",
-                "",
-                "# Run YAMBO",
-                "srun yambo -F yambo.in -J yambo_output",
-            ])
+            lines.extend(self._generate_yambo_slurm_commands(workflow_type, resources))
+        elif code == "yambo_nl":
+            lines.extend(self._generate_yambo_nl_slurm_commands(workflow_type, resources))
         else:
             lines.append(f"echo 'Unknown code: {code}'")
             lines.append("exit 1")
@@ -922,6 +923,187 @@ class SLURMWorkflowRunner:
         lines.append("echo 'JOB_COMPLETE' > .job_complete")
 
         return "\n".join(lines)
+
+    def _generate_yambo_slurm_commands(
+        self,
+        workflow_type: "WorkflowType",
+        resources: Optional["ResourceRequirements"] = None,
+    ) -> List[str]:
+        """Generate SLURM commands for standard YAMBO calculations.
+
+        Supports GW, BSE, and other many-body perturbation theory calculations.
+
+        Args:
+            workflow_type: Type of YAMBO calculation
+            resources: Resource requirements
+
+        Returns:
+            List of bash commands for SLURM script
+        """
+        lines = [
+            "# Load YAMBO environment",
+            "module load nvhpc/24.5",
+            "export PATH=/opt/yambo/5.3.0-nvhpc-cuda/bin:$PATH",
+            "export LD_LIBRARY_PATH=/opt/yambo/5.3.0-nvhpc-cuda/lib:$LD_LIBRARY_PATH",
+            "",
+            "# UCX settings for GPU-aware MPI",
+            "export UCX_TLS=rc,cuda_copy,cuda_ipc",
+            "export UCX_MEMTYPE_CACHE=n",
+            "",
+        ]
+
+        # Determine yambo executable and input file based on workflow type
+        workflow_value = workflow_type.value if hasattr(workflow_type, "value") else str(workflow_type)
+
+        if workflow_value in ("gw", "qp"):
+            lines.extend([
+                "# GW/QP calculation",
+                "mpirun yambo -F yambo.in -J GW",
+            ])
+        elif workflow_value in ("bse", "optical", "optics"):
+            lines.extend([
+                "# BSE optical absorption",
+                "mpirun yambo -F yambo.in -J BSE",
+            ])
+        else:
+            # Default: run with generic output
+            lines.extend([
+                "# YAMBO calculation",
+                "mpirun yambo -F yambo.in -J yambo_output",
+            ])
+
+        return lines
+
+    def _generate_yambo_nl_slurm_commands(
+        self,
+        workflow_type: "WorkflowType",
+        resources: Optional["ResourceRequirements"] = None,
+    ) -> List[str]:
+        """Generate SLURM commands for YAMBO nonlinear optics (yambo_nl).
+
+        Supports SHG, THG, and other nonlinear optical calculations using
+        real-time propagation.
+
+        Args:
+            workflow_type: Type of nonlinear calculation (SHG, THG, etc.)
+            resources: Resource requirements
+
+        Returns:
+            List of bash commands for SLURM script
+        """
+        lines = [
+            "# Load YAMBO environment (GPU-enabled)",
+            "module load nvhpc/24.5",
+            "export PATH=/opt/yambo/5.3.0-nvhpc-cuda/bin:$PATH",
+            "export LD_LIBRARY_PATH=/opt/yambo/5.3.0-nvhpc-cuda/lib:$LD_LIBRARY_PATH",
+            "",
+            "# UCX settings for GPU-aware MPI",
+            "export UCX_TLS=rc,cuda_copy,cuda_ipc",
+            "export UCX_MEMTYPE_CACHE=n",
+            "",
+            "# Optimize for nonlinear optics",
+            "export OMP_NUM_THREADS=1",
+            "export OMP_STACKSIZE=512M",
+            "",
+        ]
+
+        # Determine output job name based on workflow type
+        workflow_value = workflow_type.value if hasattr(workflow_type, "value") else str(workflow_type)
+
+        if workflow_value in ("shg", "nonlinear"):
+            job_name = "SHG"
+            description = "Second Harmonic Generation"
+        elif workflow_value == "thg":
+            job_name = "THG"
+            description = "Third Harmonic Generation"
+        elif workflow_value == "shift":
+            job_name = "SHIFT"
+            description = "Shift Current"
+        else:
+            job_name = "NL"
+            description = "Nonlinear Optics"
+
+        lines.extend([
+            f"# {description} calculation with yambo_nl",
+            "# Note: yambo_nl uses real-time propagation for NLO response",
+            f"mpirun yambo_nl -F yambo_nl.in -J {job_name}",
+            "",
+            "# Copy output files to standard names for parsing",
+            f"if [ -d {job_name} ]; then",
+            f"    cp -r {job_name}/* ./",
+            "fi",
+        ])
+
+        return lines
+
+    def _generate_yambo_input(
+        self,
+        work_dir: Path,
+        workflow_type: "WorkflowType",
+        parameters: Dict[str, Any],
+    ) -> Path:
+        """Generate YAMBO nonlinear optics input file.
+
+        Args:
+            work_dir: Directory to write input file
+            workflow_type: Type of calculation (SHG, THG, etc.)
+            parameters: Calculation parameters
+
+        Returns:
+            Path to input file
+        """
+        workflow_value = workflow_type.value if hasattr(workflow_type, "value") else str(workflow_type)
+
+        # Default parameters for SHG
+        energy_range = parameters.get("energy_range", (0.5, 3.5))
+        energy_steps = parameters.get("energy_steps", 500)
+        damping = parameters.get("damping", 0.1)
+        response_type = parameters.get("response_type", "SHG")
+
+        # Determine NL_Response based on workflow type
+        if workflow_value in ("shg", "nonlinear"):
+            nl_response = "SHG"
+        elif workflow_value == "thg":
+            nl_response = "THG"
+        elif workflow_value == "shift":
+            nl_response = "SHIFT"
+        else:
+            nl_response = response_type
+
+        # Build yambo_nl input
+        input_lines = [
+            "# yambo_nl input for nonlinear optical response",
+            "# Generated by CrystalMath SLURMWorkflowRunner",
+            "",
+            "nonlinear",
+            "",
+            "# Parallelization strategy",
+            'NL_Threads = "e"',
+            "",
+            f"# Response type: {nl_response}",
+            f'NL_Response = "{nl_response}"',
+            "",
+            "# Time integration parameters",
+            "NL_nSteps = 10",
+            "NL_ETStpsScale = 1.0",
+            'NL_etStps = "0.001 Ha"',
+            "",
+            "# Damping/broadening",
+            'NL_DampMode = "LORENTZIAN"',
+            f'NL_Damping = "{damping} eV"',
+            "",
+            "# Long-range correction (0 for IPA)",
+            "NL_LRC_alpha = 0.0",
+            "",
+            "# Energy range for response spectrum",
+            f'NL_EnRange = "{energy_range[0]} {energy_range[1]} eV"',
+            f"NL_EnSteps = {energy_steps}",
+        ]
+
+        input_path = work_dir / "yambo_nl.in"
+        input_path.write_text("\n".join(input_lines))
+
+        return input_path
 
     def submit_composite(
         self,
@@ -1129,6 +1311,15 @@ class SLURMWorkflowRunner:
             files_to_get = ["pw.out"]
         elif job_info.code == "crystal23":
             files_to_get = ["OUTPUT", "fort.9"]
+        elif job_info.code in ("yambo", "yambo_nl"):
+            # YAMBO output files for nonlinear optics
+            files_to_get = [
+                "o-SHG.YPP-SHG_x",  # χ²_xxx component
+                "o-SHG.YPP-SHG_y",  # χ²_yyy component
+                "r_setup",          # Setup report
+                "l_setup",          # Setup log
+                "o-SHG.YPP-SHG_z",  # χ²_zzz component (if present)
+            ]
         else:
             files_to_get = []
 
@@ -1176,7 +1367,80 @@ class SLURMWorkflowRunner:
                 except Exception as e:
                     logger.warning(f"Failed to parse VASP results: {e}")
 
+            # Parse YAMBO SHG output files
+            if job_info.code in ("yambo", "yambo_nl"):
+                outputs.update(self._parse_yambo_shg_output(local_dir))
+
         return outputs
+
+    def _parse_yambo_shg_output(self, output_dir: Path) -> Dict[str, Any]:
+        """Parse YAMBO SHG output files.
+
+        Args:
+            output_dir: Directory containing output files
+
+        Returns:
+            Dictionary with parsed χ² susceptibility data
+        """
+        import math
+
+        results: Dict[str, Any] = {}
+
+        # Parse each polarization component
+        for component in ["x", "y", "z"]:
+            filename = f"o-SHG.YPP-SHG_{component}"
+            filepath = output_dir / filename
+
+            if filepath.exists():
+                try:
+                    # Read and parse the file manually (no numpy dependency)
+                    lines = filepath.read_text().strip().split("\n")
+                    data_lines = [
+                        line for line in lines if line.strip() and not line.startswith("#")
+                    ]
+
+                    if not data_lines:
+                        continue
+
+                    energies = []
+                    real_parts = []
+                    imag_parts = []
+                    abs_parts = []
+
+                    for line in data_lines:
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            energies.append(float(parts[0]))
+                            real_parts.append(float(parts[1]))
+                            imag_parts.append(float(parts[2]))
+                            if len(parts) >= 4:
+                                abs_parts.append(float(parts[3]))
+
+                    if energies:
+                        results[f"chi2_{component}_energy"] = energies
+                        results[f"chi2_{component}_real"] = real_parts
+                        results[f"chi2_{component}_imag"] = imag_parts
+                        if abs_parts:
+                            results[f"chi2_{component}_abs"] = abs_parts
+
+                        # Find peak value (C-exciton resonance)
+                        abs_chi = [
+                            math.sqrt(r ** 2 + i ** 2)
+                            for r, i in zip(real_parts, imag_parts)
+                        ]
+                        peak_idx = abs_chi.index(max(abs_chi))
+                        results[f"chi2_{component}_peak_energy"] = energies[peak_idx]
+                        results[f"chi2_{component}_peak_value"] = abs_chi[peak_idx]
+
+                        logger.info(
+                            f"Parsed χ²_{component}: peak at "
+                            f"{results[f'chi2_{component}_peak_energy']:.3f} eV"
+                        )
+
+                except Exception as e:
+                    logger.warning(f"Failed to parse {filename}: {e}")
+
+        return results
 
     def cancel(self, workflow_id: str) -> bool:
         """

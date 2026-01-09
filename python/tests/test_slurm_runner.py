@@ -345,6 +345,110 @@ class TestInputGeneration:
         assert "--ntasks=80" in script
         assert "--gres=gpu:2" in script
 
+    def test_slurm_script_generation_yambo(self, slurm_runner):
+        """Test SLURM script generation for YAMBO."""
+        from crystalmath.protocols import WorkflowType
+
+        script = slurm_runner._generate_slurm_script(
+            workflow_id="test-123",
+            workflow_type=WorkflowType.BSE,
+            code="yambo",
+        )
+
+        assert "#!/bin/bash" in script
+        assert "#SBATCH" in script
+        assert "yambo" in script
+        assert "nvhpc" in script
+        assert "UCX_TLS" in script
+
+    def test_slurm_script_generation_yambo_nl_shg(self, slurm_runner):
+        """Test SLURM script generation for yambo_nl SHG calculation."""
+        from crystalmath.protocols import WorkflowType
+
+        script = slurm_runner._generate_slurm_script(
+            workflow_id="test-123",
+            workflow_type=WorkflowType.NONLINEAR_OPTICS,
+            code="yambo_nl",
+        )
+
+        assert "#!/bin/bash" in script
+        assert "#SBATCH" in script
+        assert "yambo_nl" in script
+        assert "SHG" in script
+        assert "nvhpc" in script
+        assert "UCX_TLS" in script
+
+    def test_yambo_input_generation(self, slurm_runner):
+        """Test YAMBO nonlinear input file generation."""
+        from crystalmath.protocols import WorkflowType
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            work_dir = Path(tmpdir)
+            input_path = slurm_runner._generate_yambo_input(
+                work_dir=work_dir,
+                workflow_type=WorkflowType.NONLINEAR_OPTICS,
+                parameters={
+                    "energy_range": (0.5, 3.5),
+                    "energy_steps": 500,
+                    "damping": 0.1,
+                },
+            )
+
+            assert input_path.exists()
+            content = input_path.read_text()
+            assert "nonlinear" in content
+            assert "NL_Response" in content
+            assert "SHG" in content
+            assert "NL_EnRange" in content
+            assert "0.5 3.5 eV" in content
+
+
+# =============================================================================
+# YAMBO Result Parsing Tests
+# =============================================================================
+
+
+class TestYamboResultParsing:
+    """Tests for YAMBO SHG output parsing."""
+
+    def test_parse_yambo_shg_output_empty(self, slurm_runner):
+        """Test parsing when no output files exist."""
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            results = slurm_runner._parse_yambo_shg_output(Path(tmpdir))
+            assert results == {}
+
+    def test_parse_yambo_shg_output_with_data(self, slurm_runner):
+        """Test parsing YAMBO SHG output files."""
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+
+            # Create mock SHG output file (x-component)
+            shg_data = """# E(eV) Re(chi) Im(chi) |chi|
+1.0  10.0  5.0  11.18
+1.5  50.0  25.0  55.9
+2.0  20.0  10.0  22.36
+"""
+            (output_dir / "o-SHG.YPP-SHG_x").write_text(shg_data)
+
+            results = slurm_runner._parse_yambo_shg_output(output_dir)
+
+            assert "chi2_x_energy" in results
+            assert "chi2_x_real" in results
+            assert "chi2_x_imag" in results
+            assert "chi2_x_peak_energy" in results
+            assert "chi2_x_peak_value" in results
+
+            # Peak should be at 1.5 eV (highest |chi|)
+            assert results["chi2_x_peak_energy"] == 1.5
+
 
 # =============================================================================
 # Integration Tests

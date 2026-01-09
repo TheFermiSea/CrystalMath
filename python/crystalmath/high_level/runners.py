@@ -2173,6 +2173,276 @@ class TransportAnalysis(BaseAnalysisRunner):
 
 
 # =============================================================================
+# Nonlinear Optics Analysis Runner
+# =============================================================================
+
+
+class NonlinearOpticsAnalysis(BaseAnalysisRunner):
+    """Workflow runner for nonlinear optical properties (SHG, THG, shift current).
+
+    Performs multi-code workflow: DFT (QE) -> YAMBO (yambo_nl)
+
+    Steps:
+    1. DFT ground state with fine k-mesh and sufficient bands
+    2. Convert wavefunctions to YAMBO format (p2y)
+    3. Initialize YAMBO databases
+    4. Run yambo_nl for nonlinear optical response
+
+    Available response types:
+    - SHG: Second Harmonic Generation χ²(2ω)
+    - THG: Third Harmonic Generation χ³(3ω)
+    - SHIFT: Shift current (photogalvanic effect)
+
+    Note:
+        Currently uses IPA (Independent Particle Approximation). For excitonic
+        enhancement, BSE-level calculations would be needed, which require
+        GW quasiparticle corrections first.
+
+    Attributes:
+        response_type: Type of nonlinear response (SHG, THG, SHIFT)
+        energy_range: Energy range for spectrum (eV)
+        energy_steps: Number of energy points
+        damping: Broadening for spectral features (eV)
+        dft_code: DFT code for ground state (quantum_espresso recommended)
+        n_bands: Number of bands for nonlinear calculation
+        include_excitons: Whether to include excitonic effects via BSE
+
+    Example:
+        runner = NonlinearOpticsAnalysis(
+            cluster=get_cluster_profile("beefcake2"),
+            response_type="SHG",
+            energy_range=(0.5, 3.5),
+            energy_steps=500,
+            n_bands=80,
+        )
+        results = runner.run("MoS2_monolayer.cif")
+
+        # Access χ² spectrum
+        chi2_spectrum = results.outputs.get("chi2_spectrum")
+        # Plot C-exciton enhanced SHG peak near 2ω ≈ 2.8-3.0 eV
+    """
+
+    def __init__(
+        self,
+        response_type: str = "SHG",
+        energy_range: Tuple[float, float] = (0.5, 3.5),
+        energy_steps: int = 500,
+        damping: float = 0.1,
+        dft_code: DFTCode = "quantum_espresso",
+        n_bands: Optional[int] = None,
+        include_excitons: bool = False,
+        k_mesh: Optional[List[int]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize nonlinear optics analysis runner.
+
+        Args:
+            response_type: Type of nonlinear response:
+                - "SHG": Second Harmonic Generation
+                - "THG": Third Harmonic Generation
+                - "SHIFT": Shift current
+            energy_range: (E_min, E_max) in eV for fundamental frequency
+            energy_steps: Number of energy points in spectrum
+            damping: Lorentzian broadening (eV)
+            dft_code: DFT code for ground state (QE recommended for yambo_nl)
+            n_bands: Number of bands (auto-calculated if None)
+            include_excitons: Include excitonic effects via BSE (requires GW)
+            k_mesh: K-point mesh [nx, ny, nz] (auto if None)
+            **kwargs: Base runner options
+        """
+        super().__init__(**kwargs)
+        self._response_type = response_type.upper()
+        self._energy_range = energy_range
+        self._energy_steps = energy_steps
+        self._damping = damping
+        self._dft_code = dft_code
+        self._n_bands = n_bands
+        self._include_excitons = include_excitons
+        self._k_mesh = k_mesh
+
+        # Validate response type
+        valid_responses = {"SHG", "THG", "SHIFT"}
+        if self._response_type not in valid_responses:
+            raise ValueError(
+                f"Invalid response_type: '{response_type}'. "
+                f"Valid options: {valid_responses}"
+            )
+
+        # Warn about exciton requirements
+        if include_excitons:
+            logger.warning(
+                "include_excitons=True requires GW quasiparticle corrections. "
+                "Note: YAMBO GW runlevel bug may prevent this from working. "
+                "Falling back to IPA if GW fails."
+            )
+
+    def _build_workflow_steps(self) -> List[WorkflowStep]:
+        """Build nonlinear optics workflow steps.
+
+        Returns:
+            List of WorkflowStep objects
+        """
+        steps: List[WorkflowStep] = []
+
+        # Determine k-mesh and bands based on protocol
+        k_mesh = self._k_mesh or self._get_auto_k_mesh()
+        n_bands = self._n_bands or self._get_auto_n_bands()
+
+        # Step 1: DFT SCF with fine k-mesh
+        scf_params = self._get_parameters(WorkflowType.SCF, self._dft_code)
+        scf_params["k_mesh"] = k_mesh
+        scf_params["nbands"] = n_bands
+        scf_params["occupations"] = "smearing"
+        scf_params["smearing"] = "gaussian"
+        scf_params["degauss"] = 0.01  # Small smearing for semiconductors
+
+        scf_step = WorkflowStep(
+            name="scf",
+            workflow_type=WorkflowType.SCF,
+            code=self._dft_code,
+            parameters=scf_params,
+            resources=self._get_dft_resources(),
+        )
+        steps.append(scf_step)
+
+        # Step 2: NSCF with more bands for nonlinear optics
+        nscf_params = self._get_parameters(WorkflowType.BANDS, self._dft_code)
+        nscf_params["k_mesh"] = k_mesh
+        nscf_params["nbands"] = n_bands
+        nscf_params["calculation"] = "nscf"
+
+        nscf_step = WorkflowStep(
+            name="nscf",
+            workflow_type=WorkflowType.BANDS,
+            code=self._dft_code,
+            parameters=nscf_params,
+            depends_on=["scf"],
+            outputs_to_pass=["charge_density"],
+            resources=self._get_dft_resources(),
+        )
+        steps.append(nscf_step)
+
+        # Step 3: Nonlinear optics with YAMBO (yambo_nl)
+        nl_params = self._get_yambo_nl_parameters()
+
+        nl_step = WorkflowStep(
+            name="nonlinear_optics",
+            workflow_type=WorkflowType.NONLINEAR_OPTICS,
+            code="yambo",
+            parameters=nl_params,
+            depends_on=["nscf"],
+            outputs_to_pass=["wavefunction", "eigenvalues"],
+            resources=self._get_yambo_resources(),
+        )
+        steps.append(nl_step)
+
+        return steps
+
+    def _get_yambo_nl_parameters(self) -> Dict[str, Any]:
+        """Get parameters for yambo_nl calculation.
+
+        Returns:
+            YAMBO nonlinear optics parameters
+        """
+        params = {
+            "runlevel": "nonlinear",
+            "nl_response": self._response_type,
+            "nl_threads": "e",  # Parallelize over E-field
+            "energy_range": list(self._energy_range),
+            "energy_steps": self._energy_steps,
+            "damping": self._damping,
+            "damping_mode": "LORENTZIAN",
+            "lrc_alpha": 0.0,  # No long-range correction (IPA)
+        }
+
+        # Add specific parameters based on response type
+        if self._response_type == "SHG":
+            params["nl_verb_level"] = "high"
+        elif self._response_type == "SHIFT":
+            params["shift_current"] = True
+
+        return params
+
+    def _get_auto_k_mesh(self) -> List[int]:
+        """Get automatic k-mesh based on protocol.
+
+        Returns:
+            K-point mesh [nx, ny, nz]
+        """
+        protocol_meshes = {
+            "fast": [12, 12, 1],  # For monolayers
+            "moderate": [18, 18, 1],
+            "precise": [24, 24, 1],
+        }
+        return protocol_meshes.get(self._config.protocol, [18, 18, 1])
+
+    def _get_auto_n_bands(self) -> int:
+        """Get automatic number of bands based on protocol.
+
+        Returns:
+            Number of bands
+        """
+        protocol_bands = {
+            "fast": 50,
+            "moderate": 80,
+            "precise": 100,
+        }
+        return protocol_bands.get(self._config.protocol, 80)
+
+    def _get_dft_resources(self) -> ResourceRequirements:
+        """Get resources for DFT ground state calculation.
+
+        Returns:
+            ResourceRequirements for DFT
+        """
+        if self._cluster:
+            try:
+                return self._cluster.get_preset("medium")
+            except KeyError:
+                pass
+
+        return ResourceRequirements(
+            num_nodes=1,
+            num_mpi_ranks=40,
+            memory_gb=128,
+            walltime_hours=4,
+        )
+
+    def _get_yambo_resources(self) -> ResourceRequirements:
+        """Get resources for YAMBO nonlinear calculation.
+
+        GPU is preferred for yambo_nl.
+
+        Returns:
+            ResourceRequirements for YAMBO
+        """
+        if self._cluster:
+            try:
+                return self._cluster.get_preset("gpu-single")
+            except KeyError:
+                try:
+                    return self._cluster.get_preset("medium")
+                except KeyError:
+                    pass
+
+        return ResourceRequirements(
+            num_nodes=1,
+            num_mpi_ranks=40,
+            memory_gb=128,
+            walltime_hours=12,
+            gpus=1,
+        )
+
+    def _get_default_resources(self) -> ResourceRequirements:
+        """Get default resources.
+
+        Returns:
+            ResourceRequirements
+        """
+        return self._get_yambo_resources()
+
+
+# =============================================================================
 # Module Exports
 # =============================================================================
 
@@ -2196,4 +2466,5 @@ __all__ = [
     "PhononAnalysis",
     "ElasticAnalysis",
     "TransportAnalysis",
+    "NonlinearOpticsAnalysis",
 ]
