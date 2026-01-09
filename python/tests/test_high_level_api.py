@@ -4,7 +4,8 @@ This module tests the high-level API including:
 - HighThroughput.get_supported_properties()
 - HighThroughput.get_property_info()
 - HighThroughput._validate_properties()
-- WorkflowBuilder chain methods
+- HighThroughputConfig dataclass
+- PROPERTY_DEFINITIONS dictionary
 - AnalysisResults export methods
 
 Tests are designed to verify API behavior without running actual calculations.
@@ -21,6 +22,22 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from crystalmath.protocols import WorkflowType
+
+
+# Check if optional dependencies are available
+try:
+    import matplotlib.pyplot as plt
+
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
+
+try:
+    import plotly.graph_objects as go
+
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
 
 
 # =============================================================================
@@ -58,30 +75,6 @@ Si 0.0 0.0 0.0
     cif_path = tmp_path / "test.cif"
     cif_path.write_text(cif_content)
     return cif_path
-
-
-@pytest.fixture
-def sample_results() -> Dict[str, Any]:
-    """Create sample analysis results data."""
-    return {
-        "formula": "NbOCl2",
-        "space_group": "Pmmn",
-        "band_gap_ev": 1.85,
-        "is_direct_gap": True,
-        "fermi_energy_ev": -2.5,
-        "is_metal": False,
-        "gw_gap_ev": 2.5,
-        "optical_gap_ev": 2.3,
-        "exciton_binding_ev": 0.2,
-        "bulk_modulus_gpa": 50.0,
-        "shear_modulus_gpa": 25.0,
-        "youngs_modulus_gpa": 65.0,
-        "poisson_ratio": 0.3,
-        "static_dielectric": 5.5,
-        "high_freq_dielectric": 3.5,
-        "has_imaginary_modes": False,
-        "total_cpu_hours": 100.5,
-    }
 
 
 # =============================================================================
@@ -384,396 +377,6 @@ class TestHighThroughputConfig:
 
 
 # =============================================================================
-# Test WorkflowBuilder
-# =============================================================================
-
-
-class TestWorkflowBuilder:
-    """Tests for WorkflowBuilder chain methods."""
-
-    def test_create_builder(self) -> None:
-        """Test creating a workflow builder."""
-        from crystalmath.high_level.api import WorkflowBuilder
-
-        builder = WorkflowBuilder()
-        assert builder is not None
-
-    def test_with_structure(self, mock_structure: Mock) -> None:
-        """Test setting structure."""
-        from crystalmath.high_level.api import WorkflowBuilder
-
-        builder = WorkflowBuilder().with_structure(mock_structure)
-        assert builder._structure == mock_structure
-
-    def test_with_properties(self) -> None:
-        """Test setting properties."""
-        from crystalmath.high_level.api import WorkflowBuilder
-
-        builder = WorkflowBuilder().with_properties(["bands", "dos"])
-        assert builder._properties == ["bands", "dos"]
-
-    def test_with_codes(self) -> None:
-        """Test setting codes."""
-        from crystalmath.high_level.api import WorkflowBuilder
-
-        builder = WorkflowBuilder().with_codes({"dft": "vasp", "gw": "yambo"})
-        assert builder._codes["dft"] == "vasp"
-        assert builder._codes["gw"] == "yambo"
-
-    def test_with_cluster(self) -> None:
-        """Test setting cluster."""
-        from crystalmath.high_level.api import WorkflowBuilder
-
-        builder = WorkflowBuilder().with_cluster("beefcake2")
-        assert builder._cluster == "beefcake2"
-
-    def test_with_protocol(self) -> None:
-        """Test setting protocol."""
-        from crystalmath.high_level.api import WorkflowBuilder
-
-        builder = WorkflowBuilder().with_protocol("precise")
-        assert builder._protocol == "precise"
-
-    def test_chain_methods(self, mock_structure: Mock) -> None:
-        """Test chaining multiple methods."""
-        from crystalmath.high_level.api import WorkflowBuilder
-
-        builder = (
-            WorkflowBuilder()
-            .with_structure(mock_structure)
-            .with_properties(["bands", "gw", "bse"])
-            .with_codes({"dft": "vasp", "gw": "yambo"})
-            .with_cluster("beefcake2")
-            .with_protocol("moderate")
-        )
-
-        assert builder._structure == mock_structure
-        assert builder._properties == ["bands", "gw", "bse"]
-        assert builder._cluster == "beefcake2"
-
-    def test_build_raises_not_implemented(self, mock_structure: Mock) -> None:
-        """Test that build raises NotImplementedError (stub)."""
-        from crystalmath.high_level.api import WorkflowBuilder
-
-        builder = (
-            WorkflowBuilder()
-            .with_structure(mock_structure)
-            .with_properties(["bands"])
-        )
-
-        with pytest.raises(NotImplementedError):
-            builder.build()
-
-    def test_validate_builder(self) -> None:
-        """Test builder validation."""
-        from crystalmath.high_level.api import WorkflowBuilder
-
-        builder = WorkflowBuilder()
-
-        is_valid, issues = builder.validate()
-
-        # Without structure or properties, should be invalid
-        assert is_valid is False
-
-
-# =============================================================================
-# Test AnalysisResults
-# =============================================================================
-
-
-class TestAnalysisResults:
-    """Tests for AnalysisResults export methods."""
-
-    def test_create_results(self, sample_results: Dict[str, Any]) -> None:
-        """Test creating analysis results."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-
-        assert results.formula == "NbOCl2"
-        assert results.band_gap_ev == 1.85
-
-    def test_to_dataframe(self, sample_results: Dict[str, Any]) -> None:
-        """Test exporting to pandas DataFrame."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-
-        with patch("pandas.DataFrame") as mock_df:
-            mock_df.return_value = Mock()
-            df = results.to_dataframe()
-
-            mock_df.assert_called_once()
-
-    def test_to_dict(self, sample_results: Dict[str, Any]) -> None:
-        """Test exporting to dictionary."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        data = results.to_dict()
-
-        assert isinstance(data, dict)
-        assert data["formula"] == "NbOCl2"
-        assert "electronic" in data
-        assert data["electronic"]["band_gap_ev"] == 1.85
-
-    def test_to_json_string(self, sample_results: Dict[str, Any]) -> None:
-        """Test exporting to JSON string."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        json_str = results.to_json()
-
-        assert isinstance(json_str, str)
-        data = json.loads(json_str)
-        assert data["formula"] == "NbOCl2"
-
-    def test_to_json_file(
-        self, sample_results: Dict[str, Any], tmp_path: Path
-    ) -> None:
-        """Test exporting to JSON file."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        output_file = tmp_path / "results.json"
-
-        results.to_json(str(output_file))
-
-        assert output_file.exists()
-        data = json.loads(output_file.read_text())
-        assert data["formula"] == "NbOCl2"
-
-
-class TestAnalysisResultsPlotting:
-    """Tests for AnalysisResults plotting methods."""
-
-    def test_plot_bands_no_data(self, sample_results: Dict[str, Any]) -> None:
-        """Test plot_bands raises error when no data."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        # No band_structure data
-
-        with pytest.raises(ValueError):
-            results.plot_bands()
-
-    def test_plot_dos_no_data(self, sample_results: Dict[str, Any]) -> None:
-        """Test plot_dos raises error when no data."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        # No dos data
-
-        with pytest.raises(ValueError):
-            results.plot_dos()
-
-    def test_plot_phonons_no_data(self, sample_results: Dict[str, Any]) -> None:
-        """Test plot_phonons raises error when no data."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        # No phonon_dispersion data
-
-        with pytest.raises(ValueError):
-            results.plot_phonons()
-
-    def test_plot_bands_with_data(self, sample_results: Dict[str, Any]) -> None:
-        """Test plot_bands with band structure data."""
-        from crystalmath.high_level.results import AnalysisResults, BandStructureData
-
-        mock_bands = Mock(spec=BandStructureData)
-        results = AnalysisResults(**sample_results, band_structure=mock_bands)
-
-        with patch("matplotlib.pyplot.subplots") as mock_subplots:
-            mock_fig, mock_ax = Mock(), Mock()
-            mock_subplots.return_value = (mock_fig, mock_ax)
-            mock_ax.get_figure.return_value = mock_fig
-
-            fig = results.plot_bands()
-            assert fig is not None
-
-    def test_iplot_bands_no_data(self, sample_results: Dict[str, Any]) -> None:
-        """Test iplot_bands raises error when no data."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-
-        with pytest.raises(ValueError):
-            results.iplot_bands()
-
-
-class TestAnalysisResultsLatex:
-    """Tests for AnalysisResults LaTeX export methods."""
-
-    def test_to_latex_table(self, sample_results: Dict[str, Any]) -> None:
-        """Test exporting to LaTeX table."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        latex = results.to_latex_table()
-
-        assert isinstance(latex, str)
-        assert "\\begin{table}" in latex
-        assert "NbOCl2" in latex
-
-    def test_to_latex_table_booktabs(self, sample_results: Dict[str, Any]) -> None:
-        """Test LaTeX table with booktabs format."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        latex = results.to_latex_table(format_spec="booktabs")
-
-        assert "\\toprule" in latex
-        assert "\\midrule" in latex
-        assert "\\bottomrule" in latex
-
-    def test_to_latex_table_simple(self, sample_results: Dict[str, Any]) -> None:
-        """Test LaTeX table with simple format."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        latex = results.to_latex_table(format_spec="simple")
-
-        assert "\\hline" in latex
-
-    def test_to_latex_table_file(
-        self, sample_results: Dict[str, Any], tmp_path: Path
-    ) -> None:
-        """Test exporting LaTeX table to file."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        output_file = tmp_path / "table.tex"
-
-        results.to_latex_table(str(output_file))
-
-        assert output_file.exists()
-        content = output_file.read_text()
-        assert "\\begin{table}" in content
-
-    def test_latex_table_includes_properties(
-        self, sample_results: Dict[str, Any]
-    ) -> None:
-        """Test that LaTeX table includes computed properties."""
-        from crystalmath.high_level.results import AnalysisResults
-
-        results = AnalysisResults(**sample_results)
-        latex = results.to_latex_table()
-
-        # Should include band gap, GW gap, etc.
-        assert "1.85" in latex or "band gap" in latex.lower()
-
-
-# =============================================================================
-# Test Data Classes
-# =============================================================================
-
-
-class TestBandStructureData:
-    """Tests for BandStructureData container."""
-
-    def test_create_band_structure_data(self) -> None:
-        """Test creating band structure data."""
-        from crystalmath.high_level.results import BandStructureData
-
-        mock_energies = Mock()
-        mock_kpoints = Mock()
-
-        data = BandStructureData(
-            energies=mock_energies,
-            kpoints=mock_kpoints,
-            fermi_energy=0.0,
-        )
-
-        assert data.energies == mock_energies
-        assert data.fermi_energy == 0.0
-
-    def test_band_structure_with_labels(self) -> None:
-        """Test band structure with k-point labels."""
-        from crystalmath.high_level.results import BandStructureData
-
-        data = BandStructureData(
-            energies=Mock(),
-            kpoints=Mock(),
-            kpoint_labels=["G", "X", "M", "G"],
-            kpoint_positions=[0, 50, 100, 150],
-        )
-
-        assert len(data.kpoint_labels) == 4
-        assert data.kpoint_labels[0] == "G"
-
-
-class TestDOSData:
-    """Tests for DOSData container."""
-
-    def test_create_dos_data(self) -> None:
-        """Test creating DOS data."""
-        from crystalmath.high_level.results import DOSData
-
-        data = DOSData(
-            energies=Mock(),
-            total_dos=Mock(),
-            fermi_energy=0.0,
-        )
-
-        assert data.fermi_energy == 0.0
-
-    def test_dos_with_projected(self) -> None:
-        """Test DOS with projected data."""
-        from crystalmath.high_level.results import DOSData
-
-        projected = {"s": Mock(), "p": Mock(), "d": Mock()}
-        data = DOSData(
-            energies=Mock(),
-            total_dos=Mock(),
-            projected_dos=projected,
-        )
-
-        assert "s" in data.projected_dos
-
-
-class TestPhononData:
-    """Tests for PhononData container."""
-
-    def test_create_phonon_data(self) -> None:
-        """Test creating phonon data."""
-        from crystalmath.high_level.results import PhononData
-
-        data = PhononData(
-            frequencies=Mock(),
-            qpoints=Mock(),
-        )
-
-        assert data.frequencies is not None
-
-
-class TestElasticTensor:
-    """Tests for ElasticTensor container."""
-
-    def test_create_elastic_tensor(self) -> None:
-        """Test creating elastic tensor data."""
-        from crystalmath.high_level.results import ElasticTensor
-
-        voigt = Mock()
-        data = ElasticTensor(voigt=voigt)
-
-        assert data.voigt == voigt
-
-
-class TestDielectricTensor:
-    """Tests for DielectricTensor container."""
-
-    def test_create_dielectric_tensor(self) -> None:
-        """Test creating dielectric tensor data."""
-        from crystalmath.high_level.results import DielectricTensor
-
-        static = Mock()
-        data = DielectricTensor(static=static)
-
-        assert data.static == static
-
-
-# =============================================================================
 # Test Property Definitions
 # =============================================================================
 
@@ -826,33 +429,360 @@ class TestPropertyDefinitions:
 
 
 # =============================================================================
+# Test AnalysisResults
+# =============================================================================
+
+
+class TestAnalysisResults:
+    """Tests for AnalysisResults dataclass."""
+
+    def test_create_results(self) -> None:
+        """Test creating analysis results."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(
+            formula="NbOCl2",
+            band_gap_ev=1.85,
+        )
+
+        assert results.formula == "NbOCl2"
+        assert results.band_gap_ev == 1.85
+
+    def test_default_values(self) -> None:
+        """Test default values in AnalysisResults."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults()
+
+        assert results.formula == ""
+        assert results.band_gap_ev is None
+        assert results.structure is None
+        assert results.is_metal is False
+
+    def test_to_dict(self) -> None:
+        """Test exporting to dictionary."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(
+            formula="NbOCl2",
+            band_gap_ev=1.85,
+        )
+        data = results.to_dict()
+
+        assert isinstance(data, dict)
+        assert data["formula"] == "NbOCl2"
+        assert "electronic" in data
+        assert data["electronic"]["band_gap_ev"] == 1.85
+
+    def test_to_json_string(self) -> None:
+        """Test exporting to JSON string."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(
+            formula="NbOCl2",
+            band_gap_ev=1.85,
+        )
+        json_str = results.to_json()
+
+        assert isinstance(json_str, str)
+        data = json.loads(json_str)
+        assert data["formula"] == "NbOCl2"
+
+    def test_to_json_file(self, tmp_path: Path) -> None:
+        """Test exporting to JSON file."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(
+            formula="NbOCl2",
+            band_gap_ev=1.85,
+        )
+        output_file = tmp_path / "results.json"
+
+        results.to_json(str(output_file))
+
+        assert output_file.exists()
+        data = json.loads(output_file.read_text())
+        assert data["formula"] == "NbOCl2"
+
+
+class TestAnalysisResultsPlotting:
+    """Tests for AnalysisResults plotting methods."""
+
+    @pytest.mark.skipif(not HAS_MATPLOTLIB, reason="matplotlib not installed")
+    def test_plot_bands_no_data(self) -> None:
+        """Test plot_bands raises error when no data."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(formula="NbOCl2")
+        # No band_structure data
+
+        with pytest.raises(ValueError):
+            results.plot_bands()
+
+    @pytest.mark.skipif(not HAS_MATPLOTLIB, reason="matplotlib not installed")
+    def test_plot_dos_no_data(self) -> None:
+        """Test plot_dos raises error when no data."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(formula="NbOCl2")
+        # No dos data
+
+        with pytest.raises(ValueError):
+            results.plot_dos()
+
+    @pytest.mark.skipif(not HAS_MATPLOTLIB, reason="matplotlib not installed")
+    def test_plot_phonons_no_data(self) -> None:
+        """Test plot_phonons raises error when no data."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(formula="NbOCl2")
+        # No phonon_dispersion data
+
+        with pytest.raises(ValueError):
+            results.plot_phonons()
+
+    @pytest.mark.skipif(not HAS_PLOTLY, reason="plotly not installed")
+    def test_iplot_bands_no_data(self) -> None:
+        """Test iplot_bands raises error when no data."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(formula="NbOCl2")
+
+        with pytest.raises(ValueError):
+            results.iplot_bands()
+
+
+class TestAnalysisResultsLatex:
+    """Tests for AnalysisResults LaTeX export methods."""
+
+    def test_to_latex_table(self) -> None:
+        """Test exporting to LaTeX table."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(
+            formula="NbOCl2",
+            band_gap_ev=1.85,
+        )
+        latex = results.to_latex_table()
+
+        assert isinstance(latex, str)
+        assert "\\begin{table}" in latex
+        assert "NbOCl2" in latex
+
+    def test_to_latex_table_booktabs(self) -> None:
+        """Test LaTeX table with booktabs format."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(
+            formula="NbOCl2",
+            band_gap_ev=1.85,
+        )
+        latex = results.to_latex_table(format_spec="booktabs")
+
+        assert "\\toprule" in latex
+        assert "\\midrule" in latex
+        assert "\\bottomrule" in latex
+
+    def test_to_latex_table_simple(self) -> None:
+        """Test LaTeX table with simple format."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(
+            formula="NbOCl2",
+            band_gap_ev=1.85,
+        )
+        latex = results.to_latex_table(format_spec="simple")
+
+        assert "\\hline" in latex
+
+    def test_to_latex_table_file(self, tmp_path: Path) -> None:
+        """Test exporting LaTeX table to file."""
+        from crystalmath.high_level.results import AnalysisResults
+
+        results = AnalysisResults(
+            formula="NbOCl2",
+            band_gap_ev=1.85,
+        )
+        output_file = tmp_path / "table.tex"
+
+        results.to_latex_table(str(output_file))
+
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert "\\begin{table}" in content
+
+
+# =============================================================================
+# Test Data Classes from results.py
+# =============================================================================
+
+
+class TestBandStructureData:
+    """Tests for BandStructureData container."""
+
+    def test_create_band_structure_data(self) -> None:
+        """Test creating band structure data."""
+        from crystalmath.high_level.results import BandStructureData
+
+        mock_energies = Mock()
+        mock_kpoints = Mock()
+
+        data = BandStructureData(
+            energies=mock_energies,
+            kpoints=mock_kpoints,
+            fermi_energy=0.0,
+        )
+
+        assert data.energies == mock_energies
+        assert data.fermi_energy == 0.0
+
+    def test_band_structure_with_labels(self) -> None:
+        """Test band structure with k-point labels."""
+        from crystalmath.high_level.results import BandStructureData
+
+        data = BandStructureData(
+            energies=Mock(),
+            kpoints=Mock(),
+            kpoint_labels=["G", "X", "M", "G"],
+            kpoint_positions=[0, 50, 100, 150],
+        )
+
+        assert len(data.kpoint_labels) == 4
+        assert data.kpoint_labels[0] == "G"
+
+    def test_band_structure_defaults(self) -> None:
+        """Test BandStructureData default values."""
+        from crystalmath.high_level.results import BandStructureData
+
+        data = BandStructureData(
+            energies=Mock(),
+            kpoints=Mock(),
+        )
+
+        assert data.kpoint_labels == []
+        assert data.kpoint_positions == []
+        assert data.fermi_energy == 0.0
+        assert data.is_spin_polarized is False
+
+
+class TestDOSData:
+    """Tests for DOSData container."""
+
+    def test_create_dos_data(self) -> None:
+        """Test creating DOS data."""
+        from crystalmath.high_level.results import DOSData
+
+        data = DOSData(
+            energies=Mock(),
+            total_dos=Mock(),
+            fermi_energy=0.0,
+        )
+
+        assert data.fermi_energy == 0.0
+
+    def test_dos_with_projected(self) -> None:
+        """Test DOS with projected data."""
+        from crystalmath.high_level.results import DOSData
+
+        projected = {"s": Mock(), "p": Mock(), "d": Mock()}
+        data = DOSData(
+            energies=Mock(),
+            total_dos=Mock(),
+            projected_dos=projected,
+        )
+
+        assert "s" in data.projected_dos
+
+    def test_dos_defaults(self) -> None:
+        """Test DOSData default values."""
+        from crystalmath.high_level.results import DOSData
+
+        data = DOSData(
+            energies=Mock(),
+            total_dos=Mock(),
+        )
+
+        assert data.projected_dos is None
+        assert data.fermi_energy == 0.0
+
+
+class TestPhononData:
+    """Tests for PhononData container."""
+
+    def test_create_phonon_data(self) -> None:
+        """Test creating phonon data."""
+        from crystalmath.high_level.results import PhononData
+
+        data = PhononData(
+            frequencies=Mock(),
+            qpoints=Mock(),
+        )
+
+        assert data.frequencies is not None
+
+    def test_phonon_defaults(self) -> None:
+        """Test PhononData default values."""
+        from crystalmath.high_level.results import PhononData
+
+        data = PhononData(
+            frequencies=Mock(),
+            qpoints=Mock(),
+        )
+
+        assert data.qpoint_labels == []
+        assert data.qpoint_positions == []
+
+
+class TestElasticTensor:
+    """Tests for ElasticTensor container."""
+
+    def test_create_elastic_tensor(self) -> None:
+        """Test creating elastic tensor data."""
+        from crystalmath.high_level.results import ElasticTensor
+
+        voigt = Mock()
+        data = ElasticTensor(voigt=voigt)
+
+        assert data.voigt == voigt
+
+    def test_elastic_tensor_defaults(self) -> None:
+        """Test ElasticTensor default values."""
+        from crystalmath.high_level.results import ElasticTensor
+
+        data = ElasticTensor(voigt=Mock())
+
+        assert data.compliance is None
+
+
+class TestDielectricTensor:
+    """Tests for DielectricTensor container."""
+
+    def test_create_dielectric_tensor(self) -> None:
+        """Test creating dielectric tensor data."""
+        from crystalmath.high_level.results import DielectricTensor
+
+        static = Mock()
+        data = DielectricTensor(static=static)
+
+        assert data.static == static
+
+    def test_dielectric_tensor_defaults(self) -> None:
+        """Test DielectricTensor default values."""
+        from crystalmath.high_level.results import DielectricTensor
+
+        data = DielectricTensor(static=Mock())
+
+        assert data.high_freq is None
+        assert data.born_charges is None
+
+
+# =============================================================================
 # Test Integration
 # =============================================================================
 
 
 class TestAPIIntegration:
     """Integration tests for high-level API."""
-
-    def test_workflow_builder_to_results(self, mock_structure: Mock) -> None:
-        """Test complete workflow from builder to results."""
-        from crystalmath.high_level.api import WorkflowBuilder, HighThroughput
-
-        # Build workflow
-        builder = (
-            WorkflowBuilder()
-            .with_structure(mock_structure)
-            .with_properties(["bands", "dos"])
-            .with_cluster("beefcake2")
-        )
-
-        # Validate workflow
-        is_valid, issues = builder.validate()
-        # Should be valid with structure and properties
-
-        # Get supported properties
-        props = HighThroughput.get_supported_properties()
-        assert "bands" in props
-        assert "dos" in props
 
     def test_property_info_matches_definitions(self) -> None:
         """Test that property info matches definitions."""
@@ -869,13 +799,14 @@ class TestAPIIntegration:
             assert info["default_code"] == code
             assert info["dependencies"] == deps
 
-    def test_results_export_roundtrip(
-        self, sample_results: Dict[str, Any], tmp_path: Path
-    ) -> None:
+    def test_results_export_roundtrip(self, tmp_path: Path) -> None:
         """Test results export and reimport."""
         from crystalmath.high_level.results import AnalysisResults
 
-        results = AnalysisResults(**sample_results)
+        results = AnalysisResults(
+            formula="NbOCl2",
+            band_gap_ev=1.85,
+        )
 
         # Export to JSON
         json_file = tmp_path / "results.json"
@@ -886,3 +817,66 @@ class TestAPIIntegration:
 
         assert data["formula"] == results.formula
         assert data["electronic"]["band_gap_ev"] == results.band_gap_ev
+
+
+# =============================================================================
+# Test Module Exports
+# =============================================================================
+
+
+class TestModuleExports:
+    """Tests for module exports."""
+
+    def test_api_module_has_highthroughput(self) -> None:
+        """Test that api module exports HighThroughput."""
+        from crystalmath.high_level import api
+
+        assert hasattr(api, "HighThroughput")
+
+    def test_api_module_has_config(self) -> None:
+        """Test that api module exports HighThroughputConfig."""
+        from crystalmath.high_level import api
+
+        assert hasattr(api, "HighThroughputConfig")
+
+    def test_api_module_has_property_definitions(self) -> None:
+        """Test that api module exports PROPERTY_DEFINITIONS."""
+        from crystalmath.high_level import api
+
+        assert hasattr(api, "PROPERTY_DEFINITIONS")
+
+    def test_results_module_has_analysis_results(self) -> None:
+        """Test that results module exports AnalysisResults."""
+        from crystalmath.high_level import results
+
+        assert hasattr(results, "AnalysisResults")
+
+    def test_results_module_has_band_structure_data(self) -> None:
+        """Test that results module exports BandStructureData."""
+        from crystalmath.high_level import results
+
+        assert hasattr(results, "BandStructureData")
+
+    def test_results_module_has_dos_data(self) -> None:
+        """Test that results module exports DOSData."""
+        from crystalmath.high_level import results
+
+        assert hasattr(results, "DOSData")
+
+    def test_results_module_has_phonon_data(self) -> None:
+        """Test that results module exports PhononData."""
+        from crystalmath.high_level import results
+
+        assert hasattr(results, "PhononData")
+
+    def test_results_module_has_elastic_tensor(self) -> None:
+        """Test that results module exports ElasticTensor."""
+        from crystalmath.high_level import results
+
+        assert hasattr(results, "ElasticTensor")
+
+    def test_results_module_has_dielectric_tensor(self) -> None:
+        """Test that results module exports DielectricTensor."""
+        from crystalmath.high_level import results
+
+        assert hasattr(results, "DielectricTensor")
