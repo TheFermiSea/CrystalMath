@@ -159,6 +159,13 @@ if TYPE_CHECKING:
         atomate2_to_aiida_inputs,
         workflow_result_from_aiida,
     )
+    from crystalmath.integrations.slurm_runner import (
+        SLURMConfig,
+        SLURMJobInfo,
+        SLURMWorkflowError,
+        SLURMWorkflowRunner,
+        create_slurm_runner,
+    )
 
 
 def __getattr__(name: str):
@@ -348,6 +355,30 @@ def __getattr__(name: str):
             "workflow_result_from_aiida": workflow_result_from_aiida,
         }[name]
 
+    # SLURM workflow runner
+    if name in (
+        "SLURMConfig",
+        "SLURMJobInfo",
+        "SLURMWorkflowError",
+        "SLURMWorkflowRunner",
+        "create_slurm_runner",
+    ):
+        from crystalmath.integrations.slurm_runner import (
+            SLURMConfig,
+            SLURMJobInfo,
+            SLURMWorkflowError,
+            SLURMWorkflowRunner,
+            create_slurm_runner,
+        )
+
+        return {
+            "SLURMConfig": SLURMConfig,
+            "SLURMJobInfo": SLURMJobInfo,
+            "SLURMWorkflowError": SLURMWorkflowError,
+            "SLURMWorkflowRunner": SLURMWorkflowRunner,
+            "create_slurm_runner": create_slurm_runner,
+        }[name]
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -403,4 +434,10 @@ __all__ = [
     "aiida_to_atomate2_job",
     "atomate2_to_aiida_inputs",
     "workflow_result_from_aiida",
+    # SLURM workflow runner
+    "SLURMConfig",
+    "SLURMJobInfo",
+    "SLURMWorkflowError",
+    "SLURMWorkflowRunner",
+    "create_slurm_runner",
 ]

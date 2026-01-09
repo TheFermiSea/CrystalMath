@@ -539,3 +539,114 @@ results = HighThroughput.run_standard_analysis(
     cluster="beefcake2"
 )
 ```
+
+## SLURM Integration
+
+CrystalMath automatically submits all computational jobs through SLURM when using
+a cluster with `scheduler="slurm"`. This is **mandatory** for the beefcake2 cluster
+to ensure proper resource management and cgroup pinning.
+
+### Automatic SLURM Runner Selection
+
+When you create a high-level runner with a SLURM-enabled cluster, the
+`SLURMWorkflowRunner` is automatically selected:
+
+```python
+from crystalmath.high_level.runners import StandardAnalysis
+from crystalmath.high_level.clusters import get_cluster_profile
+
+profile = get_cluster_profile("beefcake2")
+
+# SLURM runner is automatically selected because profile.scheduler == "slurm"
+analysis = StandardAnalysis(cluster=profile, protocol="moderate")
+
+# Verify SLURM runner is active
+print(f"Runner: {analysis._runner.name}")  # Output: "slurm"
+```
+
+### How SLURM Submission Works
+
+When you run a workflow:
+
+1. **Input Generation**: CrystalMath generates the appropriate input files
+   (INCAR/POSCAR/KPOINTS for VASP, pw.in for QE, INPUT for CRYSTAL23)
+
+2. **SLURM Script Creation**: A batch script is created with:
+   - Resource specifications (nodes, tasks, memory, GPUs, walltime)
+   - Module loading for the DFT code
+   - Execution command (`srun vasp_std`, `srun pw.x`, etc.)
+
+3. **File Transfer**: Input files are transferred to the cluster via SSH/SFTP
+
+4. **Job Submission**: The job is submitted via `sbatch` over SSH
+
+5. **Monitoring**: Job status is polled via `squeue`/`sacct`
+
+6. **Result Retrieval**: Output files are downloaded when the job completes
+
+### Manual SLURM Runner Configuration
+
+You can also create the SLURM runner explicitly:
+
+```python
+from crystalmath.integrations import SLURMWorkflowRunner, create_slurm_runner
+
+# Option 1: Factory function
+runner = create_slurm_runner(cluster_name="beefcake2", default_code="vasp")
+
+# Option 2: From cluster profile
+runner = SLURMWorkflowRunner.from_cluster_profile(
+    profile=get_cluster_profile("beefcake2"),
+    default_code="vasp"
+)
+
+# Option 3: Full configuration
+from crystalmath.integrations import SLURMConfig
+
+config = SLURMConfig(
+    cluster_host="10.0.0.20",
+    cluster_port=22,
+    username="root",
+    default_partition="compute",
+)
+runner = SLURMWorkflowRunner(config=config, default_code="vasp")
+
+# Use with high-level API
+analysis = StandardAnalysis(
+    cluster=get_cluster_profile("beefcake2"),
+    runner=runner,  # Explicit runner
+)
+```
+
+### SLURM Job Tracking
+
+Track your submitted jobs:
+
+```python
+# List all workflows
+workflows = runner.list_workflows()
+for wf in workflows:
+    print(f"{wf['workflow_id']}: {wf['state']} (SLURM ID: {wf['slurm_job_id']})")
+
+# Get status of specific workflow
+status = runner.get_status(workflow_id)
+print(f"Status: {status}")  # submitted, running, completed, failed
+
+# Get results when complete
+result = runner.get_result(workflow_id)
+print(f"Energy: {result.outputs.get('energy')} eV")
+
+# Cancel a running job
+success = runner.cancel(workflow_id)
+```
+
+### Important Notes
+
+⚠️ **CRITICAL**: ALL computational tasks on beefcake2 MUST go through SLURM.
+Never run DFT codes directly on compute nodes via SSH, as this bypasses
+resource management and cgroup pinning.
+
+The `SLURMWorkflowRunner` ensures this by:
+- Generating SLURM batch scripts for all jobs
+- Submitting via `sbatch` only
+- Never executing DFT codes directly

@@ -281,8 +281,15 @@ class BaseAnalysisRunner(ABC):
             **kwargs,
         )
 
-        # Workflow runner (will be auto-selected if None)
-        self._runner = runner
+        # Workflow runner - auto-select SLURM if cluster is provided
+        if runner is not None:
+            self._runner = runner
+        elif cluster is not None and cluster.scheduler == "slurm":
+            # Auto-select SLURM runner when cluster with SLURM is configured
+            self._runner = self._create_slurm_runner(cluster)
+        else:
+            # No runner - will use stub/simulation mode
+            self._runner = None
 
         # State
         self._structure: Optional["Structure"] = None
@@ -343,6 +350,65 @@ class BaseAnalysisRunner(ABC):
         if self._cluster:
             return list(self._cluster.available_codes)
         return ["crystal23"]  # Default for local
+
+    # =========================================================================
+    # Runner Selection
+    # =========================================================================
+
+    def _create_slurm_runner(
+        self,
+        cluster: "ClusterProfile",
+    ) -> Optional[WorkflowRunner]:
+        """Create a SLURMWorkflowRunner for the given cluster.
+
+        This method is called automatically when a cluster with SLURM scheduler
+        is provided and no explicit runner is specified. It ensures all
+        computational tasks go through SLURM batch scheduling.
+
+        Args:
+            cluster: ClusterProfile with SLURM configuration
+
+        Returns:
+            SLURMWorkflowRunner instance, or None if unavailable
+
+        Note:
+            CRITICAL: This ensures compliance with the beefcake2 cluster policy
+            that ALL computational tasks MUST use sbatch for job submission.
+        """
+        try:
+            from crystalmath.integrations.slurm_runner import SLURMWorkflowRunner
+
+            # Determine default code based on cluster's available codes
+            default_code = "vasp"
+            if cluster.available_codes:
+                # Prefer VASP > QE > CRYSTAL23
+                for code in ["vasp", "quantum_espresso", "crystal23"]:
+                    if code in cluster.available_codes:
+                        default_code = code
+                        break
+
+            runner = SLURMWorkflowRunner.from_cluster_profile(
+                profile=cluster,
+                default_code=default_code,
+            )
+
+            logger.info(
+                f"Auto-selected SLURMWorkflowRunner for cluster '{cluster.name}'"
+            )
+            return runner
+
+        except ImportError as e:
+            logger.warning(
+                f"SLURMWorkflowRunner not available: {e}. "
+                f"Jobs will be simulated, NOT submitted to SLURM."
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                f"Failed to create SLURMWorkflowRunner: {e}. "
+                f"Jobs will be simulated, NOT submitted to SLURM."
+            )
+            return None
 
     # =========================================================================
     # Abstract Methods
