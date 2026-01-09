@@ -7,6 +7,12 @@ science workflows. It wraps the protocol-based architecture defined in
 1. **HighThroughput** - One-liner workflows from structure to publication results
 2. **WorkflowBuilder** - Fluent interface for custom workflow construction
 3. **AnalysisResults** - Unified results with export to pandas, matplotlib, LaTeX
+4. **Specialized Runners** - Analysis-specific workflow runners:
+   - StandardAnalysis: Electronic structure (SCF, relax, bands, DOS)
+   - OpticalAnalysis: Many-body perturbation theory (GW, BSE)
+   - PhononAnalysis: Phonon dispersion and thermodynamics
+   - ElasticAnalysis: Elastic constants and mechanical properties
+   - TransportAnalysis: BoltzTraP2 transport properties
 
 Example:
     # One-liner workflow
@@ -34,6 +40,19 @@ Example:
         .build()
     )
     result = workflow.run()
+
+    # Specialized runner pattern
+    from crystalmath.high_level import StandardAnalysis, get_cluster_profile
+
+    runner = StandardAnalysis(
+        cluster=get_cluster_profile("beefcake2"),
+        protocol="moderate",
+        include_relax=True,
+        include_bands=True,
+        include_dos=True,
+    )
+    results = runner.run("mp-149")  # Silicon from Materials Project
+    print(f"Band gap: {results.band_gap_ev:.2f} eV")
 
 Design Philosophy:
     - Wrap protocols, don't duplicate them
@@ -69,6 +88,15 @@ if TYPE_CHECKING:
     )
     from .registry import PropertyCalculator
     from .results import AnalysisResults
+    from .runners import (
+        BaseAnalysisRunner,
+        ElasticAnalysis,
+        OpticalAnalysis,
+        PhononAnalysis,
+        RunnerConfig,
+        StandardAnalysis,
+        TransportAnalysis,
+    )
 
 # Graceful import with availability tracking
 try:
@@ -82,6 +110,15 @@ try:
     )
     from .registry import PropertyCalculator
     from .results import AnalysisResults
+    from .runners import (
+        BaseAnalysisRunner,
+        ElasticAnalysis,
+        OpticalAnalysis,
+        PhononAnalysis,
+        RunnerConfig,
+        StandardAnalysis,
+        TransportAnalysis,
+    )
 
     HIGH_LEVEL_API_AVAILABLE = True
 
@@ -103,6 +140,13 @@ except ImportError as e:
     JupyterProgressCallback = None  # type: ignore[assignment, misc]
     get_cluster_profile = None  # type: ignore[assignment]
     CLUSTER_PROFILES = {}  # type: ignore[assignment]
+    BaseAnalysisRunner = None  # type: ignore[assignment, misc]
+    StandardAnalysis = None  # type: ignore[assignment, misc]
+    OpticalAnalysis = None  # type: ignore[assignment, misc]
+    PhononAnalysis = None  # type: ignore[assignment, misc]
+    ElasticAnalysis = None  # type: ignore[assignment, misc]
+    TransportAnalysis = None  # type: ignore[assignment, misc]
+    RunnerConfig = None  # type: ignore[assignment, misc]
 
 
 __all__ = [
@@ -127,4 +171,12 @@ __all__ = [
     "ProgressUpdate",
     "ConsoleProgressCallback",
     "JupyterProgressCallback",
+    # Specialized runners
+    "BaseAnalysisRunner",
+    "RunnerConfig",
+    "StandardAnalysis",
+    "OpticalAnalysis",
+    "PhononAnalysis",
+    "ElasticAnalysis",
+    "TransportAnalysis",
 ]
