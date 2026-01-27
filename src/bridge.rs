@@ -946,8 +946,18 @@ impl BridgeHandle {
     // =========================================================================
 
     /// Send a request to fetch all clusters (non-blocking).
+    ///
+    /// **Migration Note**: This method now uses the JSON-RPC IPC pattern
+    /// instead of the legacy `BridgeRequest::FetchClusters` variant.
+    /// The response will arrive as `BridgeResponse::RpcResult`.
     pub fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchClusters { request_id })
+        // Use JSON-RPC dispatch (thin IPC pattern)
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_clusters",
+            serde_json::Value::Null, // No parameters
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     /// Send a request to create a new cluster (non-blocking).
@@ -1179,7 +1189,13 @@ impl BridgeService for BridgeHandle {
     }
 
     fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchClusters { request_id })
+        // Use JSON-RPC dispatch (thin IPC pattern)
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_clusters",
+            serde_json::Value::Null,
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_create_cluster(&self, config: &ClusterConfig, request_id: usize) -> Result<()> {

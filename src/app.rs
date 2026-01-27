@@ -1132,29 +1132,75 @@ impl<'a> App<'a> {
                 }
                 // JSON-RPC generic response (thin IPC pattern)
                 //
-                // This is a placeholder for the incremental migration. Individual callers
-                // that use request_rpc() will need to track their own request_ids and
-                // parse the JSON-RPC result appropriately.
-                //
-                // For now, we just log the response. As we migrate specific operations,
-                // we'll add proper handling here or in dedicated handler methods.
+                // As methods migrate from legacy variants to JSON-RPC, we route
+                // responses based on request_id matching known pending operations.
                 BridgeResponse::RpcResult { request_id, result } => {
-                    match result {
-                        Ok(rpc_response) => {
-                            if rpc_response.is_error() {
-                                warn!(
-                                    "JSON-RPC error response for request {}: {:?}",
-                                    request_id, rpc_response.error
+                    // Check if this is a cluster fetch response
+                    if request_id == self.cluster_manager.request_id {
+                        self.cluster_manager.loading = false;
+                        match result {
+                            Ok(rpc_response) => {
+                                match rpc_response.into_result() {
+                                    Ok(value) => {
+                                        // Deserialize the JSON value into Vec<ClusterConfig>
+                                        match serde_json::from_value::<Vec<crate::models::ClusterConfig>>(value) {
+                                            Ok(clusters) => {
+                                                let count = clusters.len();
+                                                self.cluster_manager.clusters = clusters;
+                                                if count > 0 && self.cluster_manager.selected_index.is_none() {
+                                                    self.cluster_manager.selected_index = Some(0);
+                                                }
+                                                self.cluster_manager.set_status(
+                                                    &format!("Loaded {} clusters", count),
+                                                    false,
+                                                );
+                                                debug!("Loaded {} clusters via JSON-RPC", count);
+                                            }
+                                            Err(e) => {
+                                                self.cluster_manager.set_status(
+                                                    &format!("Parse error: {}", e),
+                                                    true,
+                                                );
+                                                error!("Failed to deserialize clusters: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.cluster_manager.set_status(
+                                            &format!("RPC error: {}", e),
+                                            true,
+                                        );
+                                        warn!("JSON-RPC error for clusters: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.cluster_manager.set_status(
+                                    &format!("Bridge error: {}", e),
+                                    true,
                                 );
-                            } else {
-                                debug!(
-                                    "JSON-RPC success response for request {}: {:?}",
-                                    request_id, rpc_response.result
-                                );
+                                error!("Bridge dispatch failed for clusters: {}", e);
                             }
                         }
-                        Err(e) => {
-                            error!("Failed to dispatch JSON-RPC request {}: {}", request_id, e);
+                    } else {
+                        // Fallback: log unhandled RPC responses
+                        match result {
+                            Ok(rpc_response) => {
+                                if rpc_response.is_error() {
+                                    warn!(
+                                        "Unhandled JSON-RPC error for request {}: {:?}",
+                                        request_id, rpc_response.error
+                                    );
+                                } else {
+                                    debug!(
+                                        "Unhandled JSON-RPC success for request {}: {:?}",
+                                        request_id, rpc_response.result
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                error!("Unhandled JSON-RPC dispatch error for request {}: {}", request_id, e);
+                            }
                         }
                     }
                 }
