@@ -797,9 +797,15 @@ impl BridgeHandle {
 
     /// Send a request to fetch jobs (non-blocking).
     ///
-    /// The `request_id` is returned in the response to detect stale responses.
+    /// Uses JSON-RPC dispatch internally. The `request_id` is returned in the
+    /// response to detect stale responses.
     pub fn request_fetch_jobs(&self, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchJobs { request_id })
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_jobs",
+            serde_json::Value::Null, // Use Python default limit
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     /// Send a request to fetch job details (non-blocking).
@@ -1081,7 +1087,13 @@ impl Drop for BridgeHandle {
 /// enabling dependency injection and mock implementations for testing.
 impl BridgeService for BridgeHandle {
     fn request_fetch_jobs(&self, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchJobs { request_id })
+        // Use JSON-RPC dispatch (thin IPC pattern)
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_jobs",
+            serde_json::Value::Null, // Use Python default limit
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_fetch_job_details(&self, pk: i32, request_id: usize) -> Result<()> {

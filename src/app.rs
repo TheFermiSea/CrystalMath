@@ -1182,6 +1182,77 @@ impl<'a> App<'a> {
                                 error!("Bridge dispatch failed for clusters: {}", e);
                             }
                         }
+                    } else if self.pending_request_id == Some(request_id)
+                        && matches!(
+                            self.pending_bridge_request,
+                            Some(BridgeRequestKind::FetchJobs) | Some(BridgeRequestKind::SyncRemoteJobs)
+                        )
+                    {
+                        // Route jobs fetch response
+                        self.pending_bridge_request = None;
+                        self.pending_request_id = None;
+                        self.pending_bridge_request_time = None;
+                        match result {
+                            Ok(rpc_response) => {
+                                match rpc_response.into_result() {
+                                    Ok(value) => {
+                                        match serde_json::from_value::<Vec<crate::models::JobStatus>>(value) {
+                                            Ok(new_jobs) => {
+                                                // Track which jobs changed state since last refresh
+                                                self.jobs_state.changed_pks.clear();
+                                                let old_states: std::collections::HashMap<i32, _> = self
+                                                    .jobs_state
+                                                    .jobs
+                                                    .iter()
+                                                    .map(|j| (j.pk, j.state))
+                                                    .collect();
+
+                                                for job in &new_jobs {
+                                                    if let Some(old_state) = old_states.get(&job.pk) {
+                                                        if old_state != &job.state {
+                                                            self.jobs_state.changed_pks.insert(job.pk);
+                                                        }
+                                                    } else {
+                                                        // New job - highlight it
+                                                        self.jobs_state.changed_pks.insert(job.pk);
+                                                    }
+                                                }
+
+                                                let count = new_jobs.len();
+                                                self.jobs_state.jobs = new_jobs;
+                                                self.jobs_state.last_refresh = Some(std::time::Instant::now());
+
+                                                // Adjust selection if needed
+                                                if !self.jobs_state.jobs.is_empty() {
+                                                    if self.jobs_state.selected_index.is_none() {
+                                                        self.jobs_state.selected_index = Some(0);
+                                                    } else if let Some(idx) = self.jobs_state.selected_index {
+                                                        if idx >= self.jobs_state.jobs.len() {
+                                                            self.jobs_state.selected_index = Some(self.jobs_state.jobs.len().saturating_sub(1));
+                                                        }
+                                                    }
+                                                } else {
+                                                    self.jobs_state.selected_index = None;
+                                                }
+                                                debug!("Loaded {} jobs via JSON-RPC", count);
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to deserialize jobs: {}", e);
+                                                self.set_error(&format!("Parse error: {}", e));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("JSON-RPC error for jobs: {}", e);
+                                        self.set_error(&format!("RPC error: {}", e));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Bridge dispatch failed for jobs: {}", e);
+                                self.set_error(&format!("Bridge error: {}", e));
+                            }
+                        }
                     } else {
                         // Fallback: log unhandled RPC responses
                         match result {
