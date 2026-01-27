@@ -50,6 +50,37 @@ def _error_response(code: str, message: str) -> str:
     )
 
 
+# ========== JSON-RPC 2.0 Protocol Support ==========
+
+# JSON-RPC 2.0 error codes (https://www.jsonrpc.org/specification#error_object)
+JSONRPC_PARSE_ERROR = -32700
+JSONRPC_INVALID_REQUEST = -32600
+JSONRPC_METHOD_NOT_FOUND = -32601
+JSONRPC_INVALID_PARAMS = -32602
+JSONRPC_INTERNAL_ERROR = -32603
+
+
+def _jsonrpc_error(code: int, message: str, data: Any = None, request_id: Any = None) -> str:
+    """Create a JSON-RPC 2.0 error response."""
+    error_obj: Dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error_obj["data"] = data
+    return json.dumps({
+        "jsonrpc": "2.0",
+        "error": error_obj,
+        "id": request_id,
+    })
+
+
+def _jsonrpc_result(result: Any, request_id: Any) -> str:
+    """Create a JSON-RPC 2.0 success response."""
+    return json.dumps({
+        "jsonrpc": "2.0",
+        "result": result,
+        "id": request_id,
+    })
+
+
 class CrystalController:
     """
     Primary Python API facade for TUIs/CLI.
@@ -103,6 +134,11 @@ class CrystalController:
         if self._backend.name == "aiida":
             self._init_aiida(profile_name)
 
+        # JSON-RPC method registry: method_name -> (handler_callable, param_names)
+        # This enables the thin IPC pattern where Rust sends generic JSON-RPC
+        # requests rather than specific enum variants
+        self._rpc_registry: Dict[str, tuple] = self._build_rpc_registry()
+
     def _init_aiida(self, profile_name: str) -> bool:
         """
         Initialize AiiDA profile.
@@ -145,6 +181,206 @@ class CrystalController:
         except Exception as e:
             logger.warning(f"Failed to load SQLite database: {e}")
             self._db = None
+
+    def _build_rpc_registry(self) -> Dict[str, tuple]:
+        """Build the JSON-RPC method registry.
+
+        Maps method names to (handler, param_names) tuples. Only methods
+        explicitly listed here can be called via JSON-RPC dispatch.
+
+        Security: This whitelist prevents arbitrary method invocation.
+
+        Returns:
+            Registry mapping method names to (callable, [param_names]) tuples.
+        """
+        return {
+            # Job operations
+            "fetch_jobs": (self.get_jobs_json, ["limit"]),
+            "fetch_job_details": (self.get_job_details_json, ["pk"]),
+            "submit_job": (self.submit_job_json, ["json_payload"]),
+            "cancel_job": (self.cancel_job, ["pk"]),
+            "fetch_job_log": (self.get_job_log_json, ["pk", "tail_lines"]),
+
+            # Cluster operations
+            "fetch_clusters": (self.get_clusters_json, []),
+            "fetch_cluster": (self.get_cluster_json, ["cluster_id"]),
+            "create_cluster": (self.create_cluster_json, ["json_payload"]),
+            "update_cluster": (self.update_cluster_json, ["cluster_id", "json_payload"]),
+            "delete_cluster": (self.delete_cluster, ["cluster_id"]),
+            "test_cluster_connection": (self.test_cluster_connection_json, ["cluster_id"]),
+
+            # SLURM operations
+            "fetch_slurm_queue": (self.get_slurm_queue_json, ["cluster_id"]),
+            "sync_remote_jobs": (self.sync_remote_jobs_json, []),
+            "adopt_slurm_job": (self.adopt_slurm_job_json, ["cluster_id", "slurm_job_id"]),
+            "cancel_slurm_job": (self.cancel_slurm_job_json, ["cluster_id", "slurm_job_id"]),
+
+            # Materials operations
+            "search_materials": (self.search_materials_json, ["formula", "limit"]),
+            "fetch_material_details": (self.get_material_details_json, ["mp_id"]),
+            "generate_d12": (self.generate_d12_json, ["mp_id", "config_json"]),
+
+            # Template operations
+            "list_templates": (self.list_templates_json, []),
+            "render_template": (self.render_template_json, ["template_name", "params_json"]),
+
+            # Workflow operations
+            "check_workflows_available": (self.check_workflows_available_json, []),
+            "create_convergence_study": (self.create_convergence_study_json, ["config_json"]),
+            "update_convergence_study": (
+                self.update_convergence_study_json,
+                ["workflow_json", "updates_json"],
+            ),
+            "create_band_structure_workflow": (
+                self.create_band_structure_workflow_json,
+                ["config_json"],
+            ),
+            "create_phonon_workflow": (self.create_phonon_workflow_json, ["config_json"]),
+            "update_phonon_workflow": (
+                self.update_phonon_workflow_json,
+                ["workflow_json", "updates_json"],
+            ),
+            "create_eos_workflow": (self.create_eos_workflow_json, ["config_json"]),
+            "generate_eos_structures": (
+                self.generate_eos_structures_json,
+                ["workflow_json", "cell_json", "positions_json", "symbols_json"],
+            ),
+            "fit_eos": (self.fit_eos_json, ["workflow_json"]),
+
+            # AiiDA operations
+            "fetch_aiida_workflows": (self.get_aiida_workflows_json, []),
+            "launch_aiida_geopt": (self.launch_aiida_geopt_json, ["config_json"]),
+            "launch_aiida_bands": (self.launch_aiida_bands_json, ["config_json"]),
+            "fetch_aiida_workflow_status": (
+                self.get_aiida_workflow_status_json,
+                ["workflow_pk"],
+            ),
+            "extract_restart_geometry": (self.extract_restart_geometry_json, ["job_pk"]),
+
+            # AI assistant operations
+            "check_ai_available": (self.check_ai_available_json, []),
+            "ask_assistant": (self.ask_assistant_json, ["message", "context_json"]),
+            "analyze_job_error": (self.analyze_job_error_json, ["pk"]),
+            "suggest_parameters": (
+                self.suggest_parameters_json,
+                ["calculation_type", "system_description"],
+            ),
+        }
+
+    def dispatch(self, request_json: str) -> str:
+        """Dispatch a JSON-RPC 2.0 request to the appropriate handler.
+
+        This is the single entry point for the thin IPC bridge pattern.
+        Rust sends generic JSON-RPC requests through this method instead
+        of calling individual methods directly.
+
+        Protocol: JSON-RPC 2.0 (https://www.jsonrpc.org/specification)
+        Request:  {"jsonrpc": "2.0", "method": "...", "params": {...}, "id": ...}
+        Response: {"jsonrpc": "2.0", "result": ..., "id": ...}
+        Error:    {"jsonrpc": "2.0", "error": {"code": ..., "message": ...}, "id": ...}
+
+        Security: Only methods in _rpc_registry can be called.
+
+        Args:
+            request_json: JSON-RPC 2.0 request string.
+
+        Returns:
+            JSON-RPC 2.0 response string.
+        """
+        request_id = None
+
+        try:
+            # Parse request
+            try:
+                request = json.loads(request_json)
+            except json.JSONDecodeError as e:
+                return _jsonrpc_error(
+                    JSONRPC_PARSE_ERROR,
+                    f"Parse error: {e}",
+                    request_id=request_id,
+                )
+
+            # Extract id (may be null or missing for notifications)
+            request_id = request.get("id")
+
+            # Validate JSON-RPC version
+            if request.get("jsonrpc") != "2.0":
+                return _jsonrpc_error(
+                    JSONRPC_INVALID_REQUEST,
+                    "Invalid Request: missing or invalid 'jsonrpc' field",
+                    request_id=request_id,
+                )
+
+            # Extract method
+            method_name = request.get("method")
+            if not method_name or not isinstance(method_name, str):
+                return _jsonrpc_error(
+                    JSONRPC_INVALID_REQUEST,
+                    "Invalid Request: missing or invalid 'method' field",
+                    request_id=request_id,
+                )
+
+            # Security: Only allow registered methods
+            if method_name not in self._rpc_registry:
+                return _jsonrpc_error(
+                    JSONRPC_METHOD_NOT_FOUND,
+                    f"Method not found: {method_name}",
+                    request_id=request_id,
+                )
+
+            # Get handler and param spec
+            handler, param_names = self._rpc_registry[method_name]
+            params = request.get("params", {})
+
+            # Build kwargs from params
+            if isinstance(params, dict):
+                # Named parameters
+                kwargs = {}
+                for name in param_names:
+                    if name in params:
+                        kwargs[name] = params[name]
+            elif isinstance(params, list):
+                # Positional parameters (convert to kwargs)
+                kwargs = {}
+                for i, name in enumerate(param_names):
+                    if i < len(params):
+                        kwargs[name] = params[i]
+            else:
+                kwargs = {}
+
+            # Call the handler
+            result = handler(**kwargs)
+
+            # If result is already a JSON string from a *_json method,
+            # parse it so we can re-serialize in JSON-RPC envelope
+            if isinstance(result, str):
+                try:
+                    result = json.loads(result)
+                except json.JSONDecodeError:
+                    # Keep as string if not valid JSON
+                    pass
+
+            return _jsonrpc_result(result, request_id)
+
+        except TypeError as e:
+            # Usually parameter mismatch
+            return _jsonrpc_error(
+                JSONRPC_INVALID_PARAMS,
+                f"Invalid params: {e}",
+                request_id=request_id,
+            )
+        except Exception as e:
+            # Log the full traceback for debugging
+            import traceback
+            tb = traceback.format_exc()
+            logger.error(f"JSON-RPC dispatch error: {e}\n{tb}")
+
+            return _jsonrpc_error(
+                JSONRPC_INTERNAL_ERROR,
+                f"Internal error: {e}",
+                data=tb if logger.isEnabledFor(logging.DEBUG) else None,
+                request_id=request_id,
+            )
 
     # ========== Public API Methods (primary Python interface) ==========
 

@@ -20,6 +20,88 @@ use crate::models::{
 };
 
 // =============================================================================
+// JSON-RPC 2.0 Protocol Types (for thin IPC bridge pattern)
+// =============================================================================
+
+/// JSON-RPC 2.0 request structure.
+///
+/// This enables the thin IPC pattern where we send generic JSON-RPC requests
+/// to Python's `dispatch` method instead of calling individual methods directly.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[allow(dead_code)] // Used during incremental migration
+pub struct JsonRpcRequest {
+    /// JSON-RPC version (always "2.0")
+    pub jsonrpc: String,
+    /// Method name to invoke
+    pub method: String,
+    /// Method parameters (object or array)
+    pub params: serde_json::Value,
+    /// Request identifier (correlates request/response)
+    pub id: u64,
+}
+
+impl JsonRpcRequest {
+    /// Create a new JSON-RPC 2.0 request.
+    pub fn new(method: impl Into<String>, params: serde_json::Value, id: u64) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            method: method.into(),
+            params,
+            id,
+        }
+    }
+}
+
+/// JSON-RPC 2.0 error object.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct JsonRpcError {
+    /// Error code (negative for standard errors, positive for application errors)
+    pub code: i32,
+    /// Short error message
+    pub message: String,
+    /// Optional additional data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+/// JSON-RPC 2.0 response structure.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[allow(dead_code)] // Methods used during incremental migration
+pub struct JsonRpcResponse {
+    /// JSON-RPC version (always "2.0")
+    pub jsonrpc: String,
+    /// Result on success (mutually exclusive with error)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    /// Error on failure (mutually exclusive with result)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<JsonRpcError>,
+    /// Request identifier (matches the request)
+    pub id: Option<u64>,
+}
+
+impl JsonRpcResponse {
+    /// Check if the response is an error.
+    pub fn is_error(&self) -> bool {
+        self.error.is_some()
+    }
+
+    /// Extract the result, converting JSON-RPC error to anyhow::Error.
+    pub fn into_result(self) -> Result<serde_json::Value> {
+        if let Some(err) = self.error {
+            Err(anyhow::anyhow!(
+                "JSON-RPC error {}: {}",
+                err.code,
+                err.message
+            ))
+        } else {
+            self.result
+                .ok_or_else(|| anyhow::anyhow!("JSON-RPC response missing both result and error"))
+        }
+    }
+}
+
+// =============================================================================
 // Service Trait for Dependency Injection
 // =============================================================================
 
@@ -518,6 +600,16 @@ pub enum BridgeRequest {
         config_json: String,
         request_id: usize,
     },
+    /// Generic JSON-RPC request (thin IPC pattern).
+    ///
+    /// This enables incremental migration from the thick bridge pattern.
+    /// The request is serialized to JSON and sent to Python's `dispatch` method.
+    Rpc {
+        /// The JSON-RPC request to send
+        rpc_request: JsonRpcRequest,
+        /// Caller's request ID for correlation
+        request_id: usize,
+    },
 }
 
 /// Response types from the Python bridge worker thread.
@@ -612,6 +704,14 @@ pub enum BridgeResponse {
         request_id: usize,
         /// JSON string of the created workflow
         result: Result<String>,
+    },
+    /// Generic JSON-RPC response (thin IPC pattern).
+    ///
+    /// Contains the parsed JSON-RPC response from Python's `dispatch` method.
+    RpcResult {
+        request_id: usize,
+        /// The JSON-RPC response (may contain result or error)
+        result: Result<JsonRpcResponse>,
     },
 }
 
@@ -890,6 +990,29 @@ impl BridgeHandle {
     ) -> Result<()> {
         self.try_send_request(BridgeRequest::TestClusterConnection {
             cluster_id,
+            request_id,
+        })
+    }
+
+    /// Send a generic JSON-RPC request (thin IPC pattern).
+    ///
+    /// This method enables incremental migration from the thick bridge pattern.
+    /// Instead of adding a new `BridgeRequest` variant for each new operation,
+    /// you can construct a `JsonRpcRequest` and send it through this method.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let request = JsonRpcRequest::new(
+    ///     "fetch_jobs",
+    ///     serde_json::json!({"limit": 100}),
+    ///     request_id as u64,
+    /// );
+    /// bridge.request_rpc(request, request_id)?;
+    /// ```
+    pub fn request_rpc(&self, rpc_request: JsonRpcRequest, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::Rpc {
+            rpc_request,
             request_id,
         })
     }
@@ -1378,6 +1501,14 @@ fn process_bridge_request(py_controller: &Py<PyAny>, request: BridgeRequest) -> 
             request_id,
             result: launch_aiida_geopt(py_controller, &config_json),
         },
+        // JSON-RPC dispatch (thin IPC pattern)
+        BridgeRequest::Rpc {
+            rpc_request,
+            request_id,
+        } => BridgeResponse::RpcResult {
+            request_id,
+            result: dispatch_rpc(py_controller, &rpc_request),
+        },
         // Shutdown is handled in the worker loop before calling this function.
         BridgeRequest::Shutdown => unreachable!("Shutdown handled in worker loop"),
     }
@@ -1794,6 +1925,33 @@ fn launch_aiida_geopt(py_controller: &Py<PyAny>, config_json: &str) -> Result<St
             .context("Failed to extract JSON string")?;
 
         Ok(json_str)
+    })
+}
+
+/// Dispatch a JSON-RPC request to Python's generic dispatcher.
+///
+/// This is the core of the thin IPC pattern - instead of calling individual
+/// Python methods, we serialize the request to JSON and call `dispatch`.
+fn dispatch_rpc(py_controller: &Py<PyAny>, rpc_request: &JsonRpcRequest) -> Result<JsonRpcResponse> {
+    Python::attach(|py| {
+        let controller = py_controller.bind(py);
+
+        // Serialize the request to JSON
+        let request_json =
+            serde_json::to_string(rpc_request).context("Failed to serialize JSON-RPC request")?;
+
+        // Call Python's dispatch method
+        let response_json: String = controller
+            .call_method1("dispatch", (request_json,))
+            .context("Failed to call Python dispatch")?
+            .extract()
+            .context("Failed to extract response JSON")?;
+
+        // Deserialize the response
+        let response: JsonRpcResponse =
+            serde_json::from_str(&response_json).context("Failed to parse JSON-RPC response")?;
+
+        Ok(response)
     })
 }
 

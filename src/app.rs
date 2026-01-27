@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, Receiver};
 
 use anyhow::Context;
 use pyo3::{Py, PyAny};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use tui_textarea::TextArea;
 
 use crate::bridge::{BridgeHandle, BridgeRequestKind, BridgeResponse, BridgeService};
@@ -628,6 +628,8 @@ impl<'a> App<'a> {
                 | BridgeResponse::TemplateRendered { request_id, .. } => Some(*request_id),
                 BridgeResponse::WorkflowsAvailable { request_id, .. }
                 | BridgeResponse::WorkflowCreated { request_id, .. } => Some(*request_id),
+                // JSON-RPC generic response (thin IPC pattern)
+                BridgeResponse::RpcResult { request_id, .. } => Some(*request_id),
             };
 
             // Check if response matches pending request by BOTH type AND request ID
@@ -658,6 +660,8 @@ impl<'a> App<'a> {
                 // Workflow responses use their own request_id tracking
                 (BridgeResponse::WorkflowsAvailable { .. }, _)
                 | (BridgeResponse::WorkflowCreated { .. }, _) => false,
+                // JSON-RPC responses use their own request_id tracking (thin IPC pattern)
+                (BridgeResponse::RpcResult { .. }, _) => false,
                 // Response doesn't match pending request type
                 _ => false,
             };
@@ -1123,6 +1127,34 @@ impl<'a> App<'a> {
                                 self.workflow_state
                                     .set_status(format!("Failed to create workflow: {}", e), true);
                             }
+                        }
+                    }
+                }
+                // JSON-RPC generic response (thin IPC pattern)
+                //
+                // This is a placeholder for the incremental migration. Individual callers
+                // that use request_rpc() will need to track their own request_ids and
+                // parse the JSON-RPC result appropriately.
+                //
+                // For now, we just log the response. As we migrate specific operations,
+                // we'll add proper handling here or in dedicated handler methods.
+                BridgeResponse::RpcResult { request_id, result } => {
+                    match result {
+                        Ok(rpc_response) => {
+                            if rpc_response.is_error() {
+                                warn!(
+                                    "JSON-RPC error response for request {}: {:?}",
+                                    request_id, rpc_response.error
+                                );
+                            } else {
+                                debug!(
+                                    "JSON-RPC success response for request {}: {:?}",
+                                    request_id, rpc_response.result
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to dispatch JSON-RPC request {}: {}", request_id, e);
                         }
                     }
                 }
