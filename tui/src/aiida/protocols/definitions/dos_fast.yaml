@@ -1,0 +1,34 @@
+# Fast Protocol for DOS
+# Quick DOS calculation for initial exploration
+# Coarse grid, wide smearing
+
+name: dos_fast
+description: "Fast DOS for initial exploration"
+level: fast
+
+scf:
+  maxcycle: 50
+  toldee: 6
+  fmixing: 50
+  diis: true
+  smearing: false
+
+kpoints:
+  mesh: [6, 6, 6]     # Moderate mesh for DOS
+  offset: [0, 0, 0]
+
+# DOS specific
+energy_min: -10.0     # eV relative to Fermi
+energy_max: 5.0
+n_energy_points: 501
+smearing_width: 0.2   # Wide Gaussian smearing (eV)
+compute_pdos: false
+run_scf: true
+
+resources:
+  num_machines: 1
+  num_mpiprocs_per_machine: 1
+  max_wallclock_seconds: 3600  # 1 hour
+
+basis_set: sto-3g
+clean_workdir: true

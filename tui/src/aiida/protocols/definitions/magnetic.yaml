@@ -1,0 +1,27 @@
+# Protocol for Magnetic Systems
+# Spin-polarized calculation with UHF/UDFT
+# Suitable for ferromagnetic and antiferromagnetic materials
+
+name: magnetic
+description: "Protocol for magnetic (spin-polarized) systems"
+level: moderate
+
+scf:
+  maxcycle: 150
+  toldee: 7
+  fmixing: 40
+  diis: true
+  spinpol: true       # Enable spin polarization
+  smearing: false     # Usually insulators
+
+kpoints:
+  mesh: [6, 6, 6]
+  offset: [0, 0, 0]
+
+resources:
+  num_machines: 1
+  num_mpiprocs_per_machine: 2
+  max_wallclock_seconds: 21600  # 6 hours
+
+basis_set: pob-tzvp
+clean_workdir: true

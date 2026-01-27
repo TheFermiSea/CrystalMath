@@ -1,0 +1,28 @@
+# Protocol for Metallic Systems
+# Includes Fermi smearing and denser k-mesh
+# Suitable for metals and semimetals
+
+name: metal
+description: "Protocol optimized for metallic systems"
+level: moderate
+
+scf:
+  maxcycle: 150
+  toldee: 7
+  fmixing: 30         # Conservative mixing for metals
+  diis: true
+  anderson: true      # Anderson mixing helps metals
+  smearing: true      # Enable Fermi smearing
+  smearing_width: 0.01  # 10 meV smearing
+
+kpoints:
+  mesh: [12, 12, 12]  # Denser mesh for metals
+  offset: [0, 0, 0]
+
+resources:
+  num_machines: 1
+  num_mpiprocs_per_machine: 4
+  max_wallclock_seconds: 14400
+
+basis_set: pob-tzvp
+clean_workdir: true

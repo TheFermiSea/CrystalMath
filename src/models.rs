@@ -2,7 +2,6 @@
 //!
 //! These Rust structs match the Pydantic models in `python/crystalmath/models.py`.
 //! They use serde for JSON deserialization from the Python backend.
-#![allow(dead_code)]
 
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
@@ -11,9 +10,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// Matches Python's `JobState` enum exactly for serde compatibility.
 /// Includes `Unknown` variant for forward-compatibility with new states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum JobState {
+    #[default]
     Created,
     Submitted,
     Queued,
@@ -110,6 +110,39 @@ impl DftCode {
     }
 }
 
+/// Template parameter definition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParameterDefinition {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub param_type: String,
+    pub default: Option<serde_json::Value>,
+    pub description: String,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub options: Option<Vec<String>>,
+    #[serde(default)]
+    pub required: bool,
+    pub depends_on: Option<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+/// Calculation template.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Template {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub author: String,
+    pub tags: Vec<String>,
+    pub parameters: std::collections::HashMap<String, ParameterDefinition>,
+    pub input_template: String,
+    pub extends: Option<String>,
+    #[serde(default)]
+    pub includes: Vec<String>,
+    #[serde(default)]
+    pub metadata: serde_json::Map<String, serde_json::Value>,
+}
+
 /// SLURM queue entry for remote cluster monitoring.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SlurmQueueEntry {
@@ -181,6 +214,113 @@ impl RunnerType {
     }
 }
 
+/// Cluster execution type.
+///
+/// Determines the type of remote cluster for job execution.
+///
+/// # Serialization
+///
+/// Uses lowercase for JSON: `"ssh"`, `"slurm"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ClusterType {
+    /// SSH-based remote execution
+    #[default]
+    Ssh,
+    /// SLURM workload manager
+    Slurm,
+}
+
+impl ClusterType {
+    /// Get human-readable display name for the cluster type.
+    ///
+    /// Returns properly-cased names suitable for UI display:
+    /// - `Ssh` → `"SSH"`
+    /// - `Slurm` → `"SLURM"`
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ClusterType::Ssh => "SSH",
+            ClusterType::Slurm => "SLURM",
+        }
+    }
+
+    /// Cycle to the next cluster type (for UI navigation).
+    ///
+    /// Returns:
+    /// - `Ssh` → `Slurm`
+    /// - `Slurm` → `Ssh`
+    pub fn cycle(self) -> Self {
+        match self {
+            ClusterType::Ssh => ClusterType::Slurm,
+            ClusterType::Slurm => ClusterType::Ssh,
+        }
+    }
+}
+
+/// Cluster connection status.
+///
+/// Represents the operational state of a remote cluster for job execution.
+/// Includes `Unknown` variant for forward-compatibility with new statuses.
+///
+/// # Serialization
+///
+/// Uses snake_case for JSON: `"active"`, `"offline"`, `"testing"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterStatus {
+    /// Cluster is online and accepting jobs
+    #[default]
+    Active,
+    /// Cluster is offline or unreachable
+    Offline,
+    /// Cluster is being tested for connectivity
+    Testing,
+    /// Forward-compatible fallback for unknown statuses
+    #[serde(other)]
+    Unknown,
+}
+
+impl ClusterStatus {
+    /// Get human-readable display string for the status.
+    ///
+    /// Returns properly-cased names suitable for UI display:
+    /// - `Active` → `"Active"`
+    /// - `Offline` → `"Offline"`
+    /// - `Testing` → `"Testing"`
+    /// - `Unknown` → `"Unknown"`
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ClusterStatus::Active => "Active",
+            ClusterStatus::Offline => "Offline",
+            ClusterStatus::Testing => "Testing",
+            ClusterStatus::Unknown => "Unknown",
+        }
+    }
+
+    /// Check if the cluster is available for job submission.
+    ///
+    /// Returns `true` only if the cluster is in `Active` state.
+    pub fn is_available(&self) -> bool {
+        matches!(self, ClusterStatus::Active)
+    }
+
+    /// Get the display color for this status.
+    ///
+    /// Color scheme designed for quick visual scanning:
+    /// - Green = Active (ready for jobs)
+    /// - Red = Offline (unavailable)
+    /// - Yellow = Testing (in progress)
+    /// - Gray = Unknown (unknown state)
+    pub fn color(&self) -> Color {
+        match self {
+            ClusterStatus::Active => Color::Green,
+            ClusterStatus::Offline => Color::Red,
+            ClusterStatus::Testing => Color::Yellow,
+            ClusterStatus::Unknown => Color::Gray,
+        }
+    }
+}
+
 /// Lightweight job status for the sidebar list.
 ///
 /// Matches Python's `JobStatus` model.
@@ -237,7 +377,7 @@ impl JobStatus {
 /// - `bandgap_ev`: Electronic bandgap in **electronvolts (eV)**.
 /// - `cpu_time_seconds`: CPU time in **seconds**.
 /// - `wall_time_seconds`: Wall-clock time in **seconds**.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JobDetails {
     /// Database primary key
     pub pk: i32,
@@ -358,13 +498,13 @@ impl JobDetails {
 /// # Required Fields
 ///
 /// - `name`: Human-readable job name (appears in job list)
-/// - `dft_code`: Snake_case code identifier (`"crystal"`, `"vasp"`, etc.)
+/// - `dft_code`: DFT code enum (serializes as snake_case: `"crystal"`, `"vasp"`, etc.)
 /// - `parameters`: Code-specific parameters as JSON object
 ///
 /// # Optional Fields
 ///
 /// - `cluster_id`: Remote cluster for SSH/SLURM execution (None = local)
-/// - `runner_type`: Execution backend override (`"local"`, `"ssh"`, `"slurm"`)
+/// - `runner_type`: Execution backend enum (serializes as snake_case: `"local"`, `"ssh"`, etc.)
 /// - `input_content`: Raw input file content (for editor submissions)
 /// - `structure_path`: Path to structure file (for template-based submissions)
 ///
@@ -379,8 +519,8 @@ impl JobDetails {
 pub struct JobSubmission {
     /// Human-readable job name (displayed in job list)
     pub name: String,
-    /// DFT code identifier in snake_case: `"crystal"`, `"vasp"`, `"quantum_espresso"`
-    pub dft_code: String,
+    /// DFT code for the calculation (serializes as snake_case)
+    pub dft_code: DftCode,
     /// Cluster ID for remote execution (None = local execution)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cluster_id: Option<i32>,
@@ -392,9 +532,21 @@ pub struct JobSubmission {
     /// Raw input file content (mutually exclusive with structure_path)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_content: Option<String>,
-    /// Execution backend: `"local"`, `"ssh"`, `"slurm"`, `"aiida"`
+    /// Execution backend (serializes as snake_case)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub runner_type: Option<String>,
+    pub runner_type: Option<RunnerType>,
+    /// Auxiliary files to copy (type -> path)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auxiliary_files: Option<std::collections::HashMap<String, String>>,
+    /// SLURM scheduler options
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheduler_options: Option<SchedulerOptions>,
+    /// MPI ranks for parallel execution
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mpi_ranks: Option<i32>,
+    /// Parallel mode ("serial" or "parallel")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_mode: Option<String>,
 }
 
 impl JobSubmission {
@@ -402,17 +554,16 @@ impl JobSubmission {
     pub fn new(name: &str, dft_code: DftCode) -> Self {
         Self {
             name: name.to_string(),
-            dft_code: match dft_code {
-                DftCode::Crystal => "crystal".to_string(),
-                DftCode::Vasp => "vasp".to_string(),
-                DftCode::QuantumEspresso => "quantum_espresso".to_string(),
-                DftCode::Unknown => "unknown".to_string(),
-            },
+            dft_code,
             cluster_id: None,
             parameters: serde_json::json!({}),
             structure_path: None,
             input_content: None,
             runner_type: None,
+            auxiliary_files: None,
+            scheduler_options: None,
+            mpi_ranks: None,
+            parallel_mode: None,
         }
     }
 
@@ -430,19 +581,7 @@ impl JobSubmission {
 
     /// Set the runner type for job execution.
     pub fn with_runner_type(mut self, runner: RunnerType) -> Self {
-        self.runner_type = Some(match runner {
-            RunnerType::Local => "local".to_string(),
-            RunnerType::Ssh => "ssh".to_string(),
-            RunnerType::Slurm => "slurm".to_string(),
-            RunnerType::Aiida => "aiida".to_string(),
-            RunnerType::Unknown => "unknown".to_string(),
-        });
-        self
-    }
-
-    /// Set the runner type from a string.
-    pub fn with_runner_type_str(mut self, runner: &str) -> Self {
-        self.runner_type = Some(runner.to_string());
+        self.runner_type = Some(runner);
         self
     }
 
@@ -451,6 +590,43 @@ impl JobSubmission {
         self.cluster_id = Some(id);
         self
     }
+
+    /// Set auxiliary files (type -> path).
+    pub fn with_auxiliary_files(
+        mut self,
+        files: std::collections::HashMap<String, String>,
+    ) -> Self {
+        self.auxiliary_files = Some(files);
+        self
+    }
+
+    /// Set scheduler options.
+    pub fn with_scheduler_options(mut self, options: SchedulerOptions) -> Self {
+        self.scheduler_options = Some(options);
+        self
+    }
+
+    /// Set MPI ranks.
+    pub fn with_mpi_ranks(mut self, ranks: i32) -> Self {
+        self.mpi_ranks = Some(ranks);
+        self
+    }
+
+    /// Set parallel mode.
+    pub fn with_parallel_mode(mut self, mode: &str) -> Self {
+        self.parallel_mode = Some(mode.to_string());
+        self
+    }
+}
+
+/// Scheduler resource configuration (SLURM).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SchedulerOptions {
+    pub walltime: String,
+    pub memory_gb: String,
+    pub cpus_per_task: i32,
+    pub nodes: i32,
+    pub partition: Option<String>,
 }
 
 /// Cluster configuration for remote execution.
@@ -459,7 +635,7 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub id: Option<i32>,
     pub name: String,
-    pub cluster_type: String,
+    pub cluster_type: ClusterType,
     pub hostname: String,
     #[serde(default = "default_port")]
     pub port: i32,
@@ -472,8 +648,8 @@ pub struct ClusterConfig {
     pub queue_name: Option<String>,
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent: i32,
-    #[serde(default = "default_status")]
-    pub status: String,
+    #[serde(default)]
+    pub status: ClusterStatus,
 }
 
 fn default_port() -> i32 {
@@ -482,10 +658,6 @@ fn default_port() -> i32 {
 
 fn default_max_concurrent() -> i32 {
     4
-}
-
-fn default_status() -> String {
-    "active".to_string()
 }
 
 /// Result of testing a cluster SSH connection.
@@ -510,6 +682,39 @@ pub struct SlurmCancelResult {
     pub success: bool,
     #[serde(default)]
     pub message: Option<String>,
+}
+
+// ==================== VASP Multi-File Input ====================
+
+/// VASP input file contents for multi-file submissions.
+///
+/// When `JobSubmission.dft_code == "vasp"`, the `parameters` field should
+/// contain a serialized `VaspInputFiles` struct for type-safe handling of
+/// VASP's four required input files.
+///
+/// # Example
+///
+/// ```ignore
+/// let vasp_files = VaspInputFiles {
+///     poscar: "Placeholder\n1.0\n5.0 0.0 0.0\n...".to_string(),
+///     incar: "ENCUT = 520\nEDIFF = 1E-6\n...".to_string(),
+///     kpoints: "Automatic\n0\nMonkhorst-Pack\n3 3 1\n...".to_string(),
+///     potcar_config: "Elements: Si O".to_string(),
+/// };
+/// let params = serde_json::to_value(&vasp_files)?;
+/// let job = JobSubmission::new("vasp-calc", DftCode::Vasp)
+///     .with_parameters(params);
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VaspInputFiles {
+    /// POSCAR: Atomic structure and lattice vectors
+    pub poscar: String,
+    /// INCAR: Calculation parameters (ENCUT, EDIFF, ISMEAR, etc.)
+    pub incar: String,
+    /// KPOINTS: k-point mesh for Brillouin zone sampling
+    pub kpoints: String,
+    /// POTCAR configuration: Space-separated element symbols (e.g., "Elements: Si O")
+    pub potcar_config: String,
 }
 
 // ==================== Materials Project API Models ====================
@@ -704,6 +909,114 @@ pub struct ApiError {
     pub message: String,
 }
 
+// ==================== Workflow Models ====================
+
+/// Available workflow types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowType {
+    /// Parameter convergence testing (SHRINK, k-points, ENCUT)
+    Convergence,
+    /// Band structure calculation with k-path
+    BandStructure,
+    /// Phonon calculation via finite displacements
+    Phonon,
+    /// Equation of state with Birch-Murnaghan fitting
+    Eos,
+    /// Geometry optimization (via AiiDA)
+    GeometryOptimization,
+}
+
+impl WorkflowType {
+    /// Get human-readable display name.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkflowType::Convergence => "Convergence Study",
+            WorkflowType::BandStructure => "Band Structure",
+            WorkflowType::Phonon => "Phonon Calculation",
+            WorkflowType::Eos => "Equation of State",
+            WorkflowType::GeometryOptimization => "Geometry Optimization",
+        }
+    }
+
+    /// Get a short description.
+    pub fn description(&self) -> &'static str {
+        match self {
+            WorkflowType::Convergence => "Test parameter convergence (k-points, cutoff, etc.)",
+            WorkflowType::BandStructure => "Calculate band structure along high-symmetry k-path",
+            WorkflowType::Phonon => "Compute phonon dispersion via finite displacements",
+            WorkflowType::Eos => "Fit Birch-Murnaghan equation of state",
+            WorkflowType::GeometryOptimization => "Optimize atomic positions and cell parameters",
+        }
+    }
+
+    /// Get all workflow types.
+    pub fn all() -> &'static [WorkflowType] {
+        &[
+            WorkflowType::Convergence,
+            WorkflowType::BandStructure,
+            WorkflowType::Phonon,
+            WorkflowType::Eos,
+            WorkflowType::GeometryOptimization,
+        ]
+    }
+}
+
+/// Workflow availability info from Python backend.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkflowAvailability {
+    /// Whether workflow module is available
+    #[serde(default)]
+    pub available: bool,
+    /// Available workflow types
+    #[serde(default)]
+    pub workflow_types: Vec<String>,
+    /// Whether AiiDA launcher is available
+    #[serde(default)]
+    pub aiida_available: bool,
+}
+
+/// Workflow status from Python backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl Default for WorkflowStatus {
+    fn default() -> Self {
+        WorkflowStatus::Pending
+    }
+}
+
+impl WorkflowStatus {
+    /// Get display color.
+    pub fn color(&self) -> Color {
+        match self {
+            WorkflowStatus::Pending => Color::Yellow,
+            WorkflowStatus::Running => Color::Green,
+            WorkflowStatus::Completed => Color::Blue,
+            WorkflowStatus::Failed => Color::Red,
+            WorkflowStatus::Cancelled => Color::DarkGray,
+        }
+    }
+
+    /// Get display string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkflowStatus::Pending => "Pending",
+            WorkflowStatus::Running => "Running",
+            WorkflowStatus::Completed => "Completed",
+            WorkflowStatus::Failed => "Failed",
+            WorkflowStatus::Cancelled => "Cancelled",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,6 +1041,16 @@ mod tests {
         assert_eq!(status.pk, 1);
         assert_eq!(status.state, JobState::Completed);
         assert_eq!(status.progress_percent, 100.0);
+    }
+
+    #[test]
+    fn test_workflow_status_helpers() {
+        assert_eq!(WorkflowStatus::Pending.as_str(), "Pending");
+        assert_eq!(WorkflowStatus::Running.as_str(), "Running");
+        assert_eq!(WorkflowStatus::Completed.as_str(), "Completed");
+        assert_eq!(WorkflowStatus::Failed.as_str(), "Failed");
+        assert_eq!(WorkflowStatus::Cancelled.as_str(), "Cancelled");
+        assert_eq!(WorkflowStatus::Failed.color(), Color::Red);
     }
 
     #[test]
@@ -861,6 +1184,75 @@ mod tests {
     }
 
     #[test]
+    fn test_cluster_type_deserialize() {
+        // Test lowercase JSON deserialization
+        assert_eq!(
+            serde_json::from_str::<ClusterType>("\"ssh\"").unwrap(),
+            ClusterType::Ssh
+        );
+        assert_eq!(
+            serde_json::from_str::<ClusterType>("\"slurm\"").unwrap(),
+            ClusterType::Slurm
+        );
+    }
+
+    #[test]
+    fn test_cluster_type_serialize() {
+        // Test lowercase JSON serialization
+        assert_eq!(serde_json::to_string(&ClusterType::Ssh).unwrap(), "\"ssh\"");
+        assert_eq!(
+            serde_json::to_string(&ClusterType::Slurm).unwrap(),
+            "\"slurm\""
+        );
+    }
+
+    #[test]
+    fn test_cluster_type_display() {
+        assert_eq!(ClusterType::Ssh.as_str(), "SSH");
+        assert_eq!(ClusterType::Slurm.as_str(), "SLURM");
+    }
+
+    #[test]
+    fn test_cluster_type_cycle() {
+        assert_eq!(ClusterType::Ssh.cycle(), ClusterType::Slurm);
+        assert_eq!(ClusterType::Slurm.cycle(), ClusterType::Ssh);
+    }
+
+    #[test]
+    fn test_cluster_type_default() {
+        assert_eq!(ClusterType::default(), ClusterType::Ssh);
+    }
+
+    #[test]
+    fn test_cluster_config_with_enum() {
+        // Test that ClusterConfig serializes/deserializes properly with ClusterType enum
+        let config = ClusterConfig {
+            id: Some(1),
+            name: "test-cluster".to_string(),
+            cluster_type: ClusterType::Slurm,
+            hostname: "hpc.example.com".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            key_file: None,
+            remote_workdir: Some("/scratch/user".to_string()),
+            queue_name: Some("compute".to_string()),
+            max_concurrent: 4,
+            status: ClusterStatus::Active,
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"cluster_type\":\"slurm\""));
+        assert!(json.contains("\"status\":\"active\""));
+
+        // Deserialize back
+        let deserialized: ClusterConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.cluster_type, ClusterType::Slurm);
+        assert_eq!(deserialized.status, ClusterStatus::Active);
+        assert_eq!(deserialized.name, "test-cluster");
+    }
+
+    #[test]
     fn test_job_details_with_none_values() {
         let json = r#"{
             "pk": 1,
@@ -881,16 +1273,24 @@ mod tests {
             JobSubmission::new("my-job", DftCode::Vasp).with_input_content("ENCUT = 400");
 
         assert_eq!(submission.name, "my-job");
-        assert_eq!(submission.dft_code, "vasp"); // Stored as String
+        assert_eq!(submission.dft_code, DftCode::Vasp);
         assert_eq!(submission.input_content, Some("ENCUT = 400".to_string()));
+
+        // Verify serialization produces snake_case
+        let json = serde_json::to_string(&submission).unwrap();
+        assert!(json.contains("\"dft_code\":\"vasp\""));
     }
 
     #[test]
     fn test_job_submission_crystal() {
         let submission = JobSubmission::new("crystal-calc", DftCode::Crystal);
-        assert_eq!(submission.dft_code, "crystal");
+        assert_eq!(submission.dft_code, DftCode::Crystal);
         assert_eq!(submission.cluster_id, None);
         assert_eq!(submission.structure_path, None);
+
+        // Verify serialization
+        let json = serde_json::to_string(&submission).unwrap();
+        assert!(json.contains("\"dft_code\":\"crystal\""));
     }
 
     #[test]
@@ -898,9 +1298,9 @@ mod tests {
         let submission =
             JobSubmission::new("test-job", DftCode::Crystal).with_runner_type(RunnerType::Slurm);
 
-        assert_eq!(submission.runner_type, Some("slurm".to_string()));
+        assert_eq!(submission.runner_type, Some(RunnerType::Slurm));
 
-        // Verify serialization includes runner_type
+        // Verify serialization includes runner_type as snake_case
         let json = serde_json::to_string(&submission).unwrap();
         assert!(json.contains("\"runner_type\":\"slurm\""));
 
@@ -993,5 +1393,133 @@ mod tests {
         let err = response.into_result().unwrap_err();
         assert!(err.contains("NOT_FOUND"));
         assert!(err.contains("Material not found"));
+    }
+
+    #[test]
+    fn test_vasp_input_files_serialize() {
+        let files = VaspInputFiles {
+            poscar: "Si\n1.0\n5.0 0.0 0.0\n".to_string(),
+            incar: "ENCUT = 520\n".to_string(),
+            kpoints: "Automatic\n0\n".to_string(),
+            potcar_config: "Elements: Si".to_string(),
+        };
+
+        let json = serde_json::to_value(&files).unwrap();
+        assert_eq!(json["poscar"], "Si\n1.0\n5.0 0.0 0.0\n");
+        assert_eq!(json["incar"], "ENCUT = 520\n");
+        assert_eq!(json["kpoints"], "Automatic\n0\n");
+        assert_eq!(json["potcar_config"], "Elements: Si");
+    }
+
+    #[test]
+    fn test_vasp_input_files_deserialize() {
+        let json = r#"{
+            "poscar": "Si\n1.0\n",
+            "incar": "ENCUT = 520\n",
+            "kpoints": "Automatic\n0\n",
+            "potcar_config": "Elements: Si"
+        }"#;
+        let files: VaspInputFiles = serde_json::from_str(json).unwrap();
+        assert_eq!(files.poscar, "Si\n1.0\n");
+        assert_eq!(files.incar, "ENCUT = 520\n");
+        assert_eq!(files.kpoints, "Automatic\n0\n");
+        assert_eq!(files.potcar_config, "Elements: Si");
+    }
+
+    #[test]
+    fn test_job_submission_with_vasp_files() {
+        let vasp_files = VaspInputFiles {
+            poscar: "Si structure".to_string(),
+            incar: "ENCUT = 520".to_string(),
+            kpoints: "3 3 3".to_string(),
+            potcar_config: "Elements: Si".to_string(),
+        };
+
+        let params = serde_json::to_value(&vasp_files).unwrap();
+        let submission = JobSubmission::new("vasp-test", DftCode::Vasp).with_parameters(params);
+
+        assert_eq!(submission.dft_code, DftCode::Vasp);
+        assert_eq!(
+            submission.parameters["poscar"],
+            serde_json::Value::String("Si structure".to_string())
+        );
+        assert_eq!(
+            submission.parameters["incar"],
+            serde_json::Value::String("ENCUT = 520".to_string())
+        );
+    }
+
+    // ==================== ClusterStatus Tests ====================
+
+    #[test]
+    fn test_cluster_status_deserialize() {
+        assert_eq!(
+            serde_json::from_str::<ClusterStatus>("\"active\"").unwrap(),
+            ClusterStatus::Active
+        );
+        assert_eq!(
+            serde_json::from_str::<ClusterStatus>("\"offline\"").unwrap(),
+            ClusterStatus::Offline
+        );
+        assert_eq!(
+            serde_json::from_str::<ClusterStatus>("\"testing\"").unwrap(),
+            ClusterStatus::Testing
+        );
+    }
+
+    #[test]
+    fn test_cluster_status_serialize() {
+        assert_eq!(
+            serde_json::to_string(&ClusterStatus::Active).unwrap(),
+            "\"active\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ClusterStatus::Offline).unwrap(),
+            "\"offline\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ClusterStatus::Testing).unwrap(),
+            "\"testing\""
+        );
+    }
+
+    #[test]
+    fn test_cluster_status_unknown_fallback() {
+        // Unknown status values should deserialize to Unknown variant
+        let status: ClusterStatus = serde_json::from_str("\"maintenance\"").unwrap();
+        assert_eq!(status, ClusterStatus::Unknown);
+
+        let status: ClusterStatus = serde_json::from_str("\"some_new_status\"").unwrap();
+        assert_eq!(status, ClusterStatus::Unknown);
+    }
+
+    #[test]
+    fn test_cluster_status_display() {
+        assert_eq!(ClusterStatus::Active.as_str(), "Active");
+        assert_eq!(ClusterStatus::Offline.as_str(), "Offline");
+        assert_eq!(ClusterStatus::Testing.as_str(), "Testing");
+        assert_eq!(ClusterStatus::Unknown.as_str(), "Unknown");
+    }
+
+    #[test]
+    fn test_cluster_status_is_available() {
+        assert!(ClusterStatus::Active.is_available());
+        assert!(!ClusterStatus::Offline.is_available());
+        assert!(!ClusterStatus::Testing.is_available());
+        assert!(!ClusterStatus::Unknown.is_available());
+    }
+
+    #[test]
+    fn test_cluster_status_default() {
+        assert_eq!(ClusterStatus::default(), ClusterStatus::Active);
+    }
+
+    #[test]
+    fn test_cluster_status_color() {
+        use ratatui::style::Color;
+        assert_eq!(ClusterStatus::Active.color(), Color::Green);
+        assert_eq!(ClusterStatus::Offline.color(), Color::Red);
+        assert_eq!(ClusterStatus::Testing.color(), Color::Yellow);
+        assert_eq!(ClusterStatus::Unknown.color(), Color::Gray);
     }
 }

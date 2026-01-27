@@ -261,9 +261,7 @@ class CrystalGeometryOptimizationWorkChain(WorkChain):
         """Collect and expose final results."""
         if not self.ctx.converged:
             if self.ctx.iteration >= self.ctx.max_iterations:
-                return self.exit_codes.ERROR_MAX_ITERATIONS.format(
-                    max_iter=self.ctx.max_iterations
-                )
+                return self.exit_codes.ERROR_MAX_ITERATIONS.format(max_iter=self.ctx.max_iterations)
 
         # Output structure
         self.out("output_structure", self.ctx.current_structure)

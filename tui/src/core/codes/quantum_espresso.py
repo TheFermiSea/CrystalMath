@@ -1,6 +1,7 @@
-"""Quantum Espresso code configuration and registration (stub).
+"""Quantum Espresso code configuration and registration.
 
-This is a stub implementation. Full QE support will be added in a future phase.
+Full QE support for pw.x (SCF, relax, vc-relax), ph.x (phonon),
+and other QE executables.
 """
 
 from __future__ import annotations
@@ -15,19 +16,48 @@ QE_CONFIG = DFTCodeConfig(
     # Input/Output files
     input_extensions=[".in", ".pwi"],
     output_extension=".out",
-    # Auxiliary file mappings (pseudopotentials handled separately)
+    # Auxiliary input file mappings for restart/continuation
+    # QE uses outdir/ for save directory, but these are common restart files
     auxiliary_inputs={
-        # Pseudopotential files are typically in a separate directory
-        # and referenced in the input file
+        # Restart from previous calculation
+        ".xml": "data-file-schema.xml",  # XML data file for restart
+        # Charge density and wavefunctions (for restart/nscf)
+        ".wfc1": "wfc1.dat",  # Wavefunction data
+        ".wfc2": "wfc2.dat",  # Wavefunction data (spin polarized)
+        # Mixing files for SCF restart
+        ".mix1": "mix1.dat",  # Charge mixing history
+        ".mix2": "mix2.dat",  # Charge mixing history
+        # Phonon/DFPT restart
+        ".dyn": "dyn.out",  # Dynamical matrix for phonon restart
+        ".recover": "recover.dat",  # Recovery file for ph.x
     },
     # Output file mappings
     auxiliary_outputs={
-        # QE outputs various files depending on calculation type
-        # xml output, wavefunctions, charge density, etc.
+        # Primary data output
+        "data-file-schema.xml": ".xml",  # XML data file with full results
+        "data-file.xml": ".xml",  # Older format (pre-6.x)
+        # Wavefunctions
+        "wfc1.dat": ".wfc1",  # Wavefunction data
+        "wfc2.dat": ".wfc2",  # Spin-down wavefunction
+        # Charge density
+        "charge-density.dat": ".rho",  # Charge density
+        "charge-density.hdf5": ".rho.h5",  # HDF5 charge density (newer)
+        # Band structure / DOS
+        "bands.dat": ".bands",  # Band structure data
+        "filband.dat": ".bands",  # Band structure alternative
+        "fildos.dat": ".dos",  # Density of states
+        "pdos_tot": ".pdos",  # Projected DOS total
+        # Phonon outputs
+        "dyn.out": ".dyn",  # Dynamical matrix
+        "matdyn.modes": ".modes",  # Phonon modes
+        # Projections
+        "projwfc.dat": ".projwfc",  # Projected wavefunctions
+        # XYZ coordinates (from pw2xyz.x post-processing)
+        "pwscf.xyz": ".xyz",  # Optimized structure
     },
     # Executables
     serial_executable="pw.x",
-    parallel_executable="mpirun pw.x",
+    parallel_executable="pw.x",  # pw.x handles MPI internally
     invocation_style=InvocationStyle.FLAG,  # pw.x -in input.in > output.out
     # Environment
     root_env_var="ESPRESSO_ROOT",
@@ -38,12 +68,15 @@ QE_CONFIG = DFTCodeConfig(
         "convergence has been achieved",
         "End of self-consistent calculation",
         "JOB DONE",
+        "BFGS converged",
     ],
     error_patterns=[
         "Error",
         "convergence NOT achieved",
         "stopping ...",
         "CRASH",
+        "task #",  # MPI error marker
+        "segmentation fault",
     ],
 )
 

@@ -13,12 +13,15 @@ mod new_job;
 mod results;
 mod slurm_queue;
 mod vasp_input;
+mod workflows;
 
 pub use cluster_manager::{
     ClusterFormField, ClusterManagerMode, ClusterManagerState, ConnectionTestResult,
 };
 pub use slurm_queue::SlurmQueueState;
-pub use vasp_input::{VaspFileTab, VaspInputFiles, VaspInputState};
+pub use vasp_input::{VaspFileTab, VaspInputState};
+pub use workflows::WorkflowState;
+// VaspInputFiles is now in crate::models
 
 use ratatui::prelude::*;
 
@@ -69,5 +72,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.vasp_input_state.active {
         vasp_input::render(frame, app);
+    }
+
+    if app.workflow_state.active {
+        workflows::render(frame, &app.workflow_state);
     }
 }

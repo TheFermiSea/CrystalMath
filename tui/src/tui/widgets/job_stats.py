@@ -7,7 +7,7 @@ from textual.widgets import Static
 from textual.reactive import reactive
 from rich.text import Text
 
-from ...core.database import Job
+from crystalmath.models import JobState, JobStatus
 
 
 class JobStatsWidget(Static):
@@ -34,7 +34,7 @@ class JobStatsWidget(Static):
         """Initialize the stats widget."""
         super().__init__("", **kwargs)
 
-    def update_stats(self, jobs: list[Job]) -> None:
+    def update_stats(self, jobs: list[JobStatus]) -> None:
         """
         Update statistics from job list.
 
@@ -42,11 +42,11 @@ class JobStatsWidget(Static):
             jobs: List of all jobs
         """
         self.total_jobs = len(jobs)
-        self.pending_jobs = sum(1 for j in jobs if j.status == "PENDING")
-        self.queued_jobs = sum(1 for j in jobs if j.status == "QUEUED")
-        self.running_jobs = sum(1 for j in jobs if j.status == "RUNNING")
-        self.completed_jobs = sum(1 for j in jobs if j.status == "COMPLETED")
-        self.failed_jobs = sum(1 for j in jobs if j.status == "FAILED")
+        self.pending_jobs = sum(1 for j in jobs if j.state == JobState.CREATED)
+        self.queued_jobs = sum(1 for j in jobs if j.state == JobState.QUEUED)
+        self.running_jobs = sum(1 for j in jobs if j.state == JobState.RUNNING)
+        self.completed_jobs = sum(1 for j in jobs if j.state == JobState.COMPLETED)
+        self.failed_jobs = sum(1 for j in jobs if j.state == JobState.FAILED)
 
         # Update display
         self._render_stats()

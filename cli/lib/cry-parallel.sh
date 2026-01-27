@@ -107,6 +107,31 @@ parallel_setup() {
     # CRYSTAL23-specific OpenMP stack size
     export OMP_STACKSIZE="$DEFAULT_OMP_STACKSIZE"
 
+    # Validate executable exists
+    if ! parallel_validate_executables "${job_state[EXE_PATH]}"; then
+        # For parallel mode, attempt fallback to serial
+        if [[ "${job_state[MODE]}" == "Hybrid MPI/OpenMP" ]]; then
+            local serial_exe="${BIN_DIR}/crystalOMP"
+            if [[ -x "$serial_exe" ]]; then
+                echo "WARNING: PcrystalOMP not found, falling back to serial mode" >&2
+                job_state[MODE]="Serial/OpenMP"
+                job_state[EXE_PATH]="$serial_exe"
+                job_state[MPI_RANKS]=""
+                job_state[THREADS_PER_RANK]="$total_cores"
+                export OMP_NUM_THREADS="$total_cores"
+                unset I_MPI_PIN_DOMAIN 2>/dev/null || true
+                unset KMP_AFFINITY 2>/dev/null || true
+            else
+                echo "ERROR: No CRYSTAL23 executables found (PcrystalOMP or crystalOMP)" >&2
+                return 1
+            fi
+        else
+            # Serial mode but crystalOMP not found
+            echo "ERROR: crystalOMP not found at ${job_state[EXE_PATH]}" >&2
+            return 1
+        fi
+    fi
+
     return 0
 }
 

@@ -24,8 +24,7 @@ Example:
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aiida.orm import Node
@@ -87,13 +86,13 @@ class AiiDASubmitter:
         """
         self._ensure_profile()
 
-        from aiida import engine, orm
+        from aiida import orm
 
         # Load code
         try:
             code = orm.load_code(code_label)
         except Exception as e:
-            raise RuntimeError(f"Code '{code_label}' not found: {e}")
+            raise RuntimeError(f"Code '{code_label}' not found: {e}") from e
 
         # Determine submission method
         if structure_data:
@@ -119,7 +118,7 @@ class AiiDASubmitter:
     async def _submit_raw(
         self,
         name: str,
-        code: "Node",
+        code: Node,
         input_content: str,
         optimization: bool,
         resources: dict | None,
@@ -160,7 +159,7 @@ class AiiDASubmitter:
     async def _submit_structured(
         self,
         name: str,
-        code: "Node",
+        code: Node,
         structure_data: dict,
         parameters: dict,
         optimization: bool,
@@ -206,7 +205,7 @@ class AiiDASubmitter:
 
         return node.pk
 
-    def _create_structure(self, data: dict) -> "Node":
+    def _create_structure(self, data: dict) -> Node:
         """Create StructureData from dictionary."""
         from aiida import orm
 
@@ -233,9 +232,7 @@ class AiiDASubmitter:
             if "num_machines" in resources:
                 options["resources"]["num_machines"] = resources["num_machines"]
             if "num_mpiprocs" in resources:
-                options["resources"]["num_mpiprocs_per_machine"] = resources[
-                    "num_mpiprocs"
-                ]
+                options["resources"]["num_mpiprocs_per_machine"] = resources["num_mpiprocs"]
             if "walltime" in resources:
                 options["max_wallclock_seconds"] = resources["walltime"]
             if "withmpi" in resources:
@@ -363,10 +360,12 @@ class AiiDASubmitter:
 
         for label, description in qb.all():
             if "crystal" in label.lower():
-                codes.append({
-                    "label": label,
-                    "description": description,
-                })
+                codes.append(
+                    {
+                        "label": label,
+                        "description": description,
+                    }
+                )
 
         return codes
 
@@ -382,11 +381,13 @@ class AiiDASubmitter:
 
         computers = []
         for computer in Computer.collection.all():
-            computers.append({
-                "label": computer.label,
-                "hostname": computer.hostname,
-                "scheduler": computer.scheduler_type,
-                "is_configured": computer.is_configured,
-            })
+            computers.append(
+                {
+                    "label": computer.label,
+                    "hostname": computer.hostname,
+                    "scheduler": computer.scheduler_type,
+                    "is_configured": computer.is_configured,
+                }
+            )
 
         return computers

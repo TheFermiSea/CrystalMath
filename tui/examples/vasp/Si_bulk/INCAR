@@ -1,0 +1,28 @@
+# INCAR - Silicon bulk SCF calculation
+# Example for CRYSTAL-TUI VASP integration testing
+
+# System description
+SYSTEM = Si bulk test
+
+# Precision and accuracy
+PREC = Accurate
+ENCUT = 400        # Plane-wave cutoff (eV)
+EDIFF = 1E-6       # SCF convergence (eV)
+
+# Electronic minimization
+ALGO = Normal      # Davidson algorithm
+NELM = 100         # Max SCF iterations
+
+# Smearing (semiconductors)
+ISMEAR = 0         # Gaussian smearing
+SIGMA = 0.1        # Smearing width (eV)
+
+# Output files
+LWAVE = .TRUE.     # Write WAVECAR
+LCHARG = .TRUE.    # Write CHGCAR
+LELF = .FALSE.     # No ELF output
+LORBIT = 0         # No PROCAR
+
+# Parallelization (adjust for your system)
+# NCORE = 4        # Cores per band group
+# KPAR = 1         # k-point parallelization

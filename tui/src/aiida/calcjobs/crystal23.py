@@ -23,7 +23,6 @@ Example:
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 from aiida import orm
@@ -205,7 +204,7 @@ class Crystal23Calculation(CalcJob):
 
         return None
 
-    def prepare_for_submission(self, folder: datastructures.Folder) -> "CalcInfo":
+    def prepare_for_submission(self, folder: datastructures.Folder) -> CalcInfo:
         """
         Prepare calculation for submission.
 
@@ -249,9 +248,7 @@ class Crystal23Calculation(CalcJob):
 
         # External geometry file
         if "gui_file" in crystal:
-            local_copy_list.append(
-                (crystal.gui_file.uuid, crystal.gui_file.filename, "fort.34")
-            )
+            local_copy_list.append((crystal.gui_file.uuid, crystal.gui_file.filename, "fort.34"))
 
         # Setup code execution
         codeinfo = datastructures.CodeInfo()
@@ -271,13 +268,13 @@ class Crystal23Calculation(CalcJob):
         # Files to retrieve after calculation
         calcinfo.retrieve_list = [
             self.options.output_filename,  # Main output
-            "fort.9",     # Binary wavefunction
-            "fort.98",    # Formatted wavefunction
-            "fort.34",    # Final geometry (if optimization)
+            "fort.9",  # Binary wavefunction
+            "fort.98",  # Formatted wavefunction
+            "fort.34",  # Final geometry (if optimization)
             "OPTINFO.DAT",  # Optimization status
             "HESSOPT.DAT",  # Hessian (if computed)
             "FREQINFO.DAT",  # Frequency restart
-            "*.xyz",      # XYZ coordinates
+            "*.xyz",  # XYZ coordinates
         ]
 
         return calcinfo
@@ -316,7 +313,7 @@ class Crystal23Calculation(CalcJob):
 
             # Lattice parameters
             cell = structure.cell
-            a, b, c = [sum(v ** 2 for v in row) ** 0.5 for row in cell]
+            a, b, c = [sum(v**2 for v in row) ** 0.5 for row in cell]
             # For simplicity, assume orthorhombic - full implementation would
             # compute angles and use appropriate format
             lines.append(f"{a:.10f} {b:.10f} {c:.10f}")
@@ -331,10 +328,8 @@ class Crystal23Calculation(CalcJob):
                 symbol = site.kind_name
                 # Get atomic number
                 from aiida.common.constants import elements
-                atomic_num = next(
-                    (n for n, s in elements.items() if s == symbol),
-                    0
-                )
+
+                atomic_num = next((n for n, s in elements.items() if s == symbol), 0)
                 pos = site.position
                 lines.append(f"{atomic_num} {pos[0]:.10f} {pos[1]:.10f} {pos[2]:.10f}")
 

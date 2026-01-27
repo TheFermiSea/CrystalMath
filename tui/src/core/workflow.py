@@ -5,6 +5,7 @@ This module provides the core infrastructure for defining, validating, and
 executing complex workflows of DFT calculations with dependencies.
 """
 
+import ast
 import asyncio
 import json
 import os
@@ -16,6 +17,87 @@ from enum import Enum
 from pathlib import Path
 from datetime import datetime
 import re
+
+
+# AST node types allowed in safe condition expressions
+_ALLOWED_AST_NODES = (
+    ast.Expression,
+    ast.BoolOp,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.Compare,
+    ast.Name,
+    ast.Load,
+    ast.Constant,
+    ast.Subscript,
+    ast.Attribute,
+    ast.Index,  # Python 3.8 compatibility
+    ast.And,
+    ast.Or,
+    ast.Not,
+    ast.Eq,
+    ast.NotEq,
+    ast.Lt,
+    ast.LtE,
+    ast.Gt,
+    ast.GtE,
+    ast.In,
+    ast.NotIn,
+    ast.Is,
+    ast.IsNot,
+    ast.Add,
+    ast.Sub,
+    ast.Mult,
+    ast.Div,
+    ast.Mod,
+    ast.Pow,
+    ast.USub,
+    ast.UAdd,
+)
+
+
+def _safe_eval_condition(expr: str, context: Dict[str, Any]) -> bool:
+    """
+    Safely evaluate a condition expression using AST whitelisting.
+
+    Only allows comparison and boolean operations over numeric/string values.
+    Prevents code injection by rejecting function calls, imports, and other
+    dangerous constructs.
+
+    Args:
+        expr: The condition expression string (e.g., "opt_result['converged'] == True")
+        context: Dictionary of variable names to values
+
+    Returns:
+        Boolean result of the condition evaluation
+
+    Raises:
+        ValueError: If the expression contains disallowed constructs
+    """
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError as e:
+        raise ValueError(f"Invalid condition syntax: {e}")
+
+    # Walk the AST and verify all nodes are allowed
+    for node in ast.walk(tree):
+        if not isinstance(node, _ALLOWED_AST_NODES):
+            raise ValueError(
+                f"Disallowed expression element: {type(node).__name__}. "
+                f"Conditions may only contain comparisons, boolean operators, "
+                f"and variable references."
+            )
+
+    # Compile and evaluate with empty builtins (no functions allowed)
+    code = compile(tree, "<condition_expr>", "eval")
+    # Provide safe constants but no callable functions
+    safe_globals = {
+        "__builtins__": {},
+        "True": True,
+        "False": False,
+        "None": None,
+    }
+    return bool(eval(code, safe_globals, context))
 
 if TYPE_CHECKING:
     from ..runners.base import BaseRunner, JobHandle, JobStatus, JobResult
@@ -998,8 +1080,14 @@ class Workflow:
         )
 
         # Fall back to stub behavior if no runner factory and no real input configured
-        # This maintains backward compatibility with existing tests
+        # SECURITY: Only allow stub execution if explicitly enabled via metadata
+        # This prevents silent fake results that could mislead researchers
         if not has_real_input and self._runner_factory is None:
+            if not self.metadata.get("allow_stub_execution", False):
+                raise ValueError(
+                    f"Node '{node.node_id}' has no real input configured and no runner factory. "
+                    f"Set workflow metadata['allow_stub_execution'] = True to enable stub mode for testing."
+                )
             await self._execute_calculation_node_stub(node, resolved_params)
             return
 
@@ -1144,25 +1232,10 @@ class Workflow:
             if dep_node.result_data:
                 context[dep_id] = dep_node.result_data
 
-        # Evaluate condition safely
+        # Evaluate condition safely using AST-based whitelist
         try:
-            # Use restricted builtins for safety
-            safe_builtins = {
-                "abs": abs,
-                "min": min,
-                "max": max,
-                "sum": sum,
-                "len": len,
-                "bool": bool,
-                "int": int,
-                "float": float,
-                "str": str,
-                "True": True,
-                "False": False,
-                "None": None,
-            }
-            result = eval(node.condition_expr, {"__builtins__": safe_builtins}, context)
-            condition_result = bool(result)
+            # Use safe evaluator that only allows comparisons and boolean ops
+            condition_result = _safe_eval_condition(node.condition_expr, context)
             node.result_data = {"condition_result": condition_result}
 
             # Activate appropriate branch by updating node statuses

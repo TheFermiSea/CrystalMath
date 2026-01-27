@@ -612,17 +612,21 @@ class CrystalTUI(App):
             (work_dir / "KPOINTS").write_text(message.kpoints)
 
             # Note: POTCAR will be retrieved from cluster during job submission
-            # Store POTCAR element in job metadata
+            # Store POTCAR elements and type in job metadata for multi-element support
             import json
             metadata = {
-                "potcar_element": message.potcar_element,
+                "potcar_elements": message.potcar_elements,  # List of elements in POSCAR order
+                "potcar_type": message.potcar_type,  # Library type (e.g., "potpaw_PBE")
+                "potcar_element": message.potcar_element,  # Backward compat: comma-separated
                 "dft_code": "vasp"
             }
             (work_dir / "vasp_metadata.json").write_text(json.dumps(metadata, indent=2))
 
             # Create combined input content for database storage
+            elem_list = ", ".join(message.potcar_elements)
             input_content = f"# VASP Job: {message.job_name}\n"
-            input_content += f"# POTCAR Element: {message.potcar_element}\n\n"
+            input_content += f"# POTCAR Elements: {elem_list}\n"
+            input_content += f"# POTCAR Type: {message.potcar_type}\n\n"
             input_content += "=== POSCAR ===\n" + message.poscar + "\n\n"
             input_content += "=== INCAR ===\n" + message.incar + "\n\n"
             input_content += "=== KPOINTS ===\n" + message.kpoints
@@ -641,7 +645,7 @@ class CrystalTUI(App):
             log.write_line(f"  POSCAR: {len(message.poscar.split(chr(10)))} lines")
             log.write_line(f"  INCAR: {len(message.incar.split(chr(10)))} lines")
             log.write_line(f"  KPOINTS: {len(message.kpoints.split(chr(10)))} lines")
-            log.write_line(f"  POTCAR: {message.potcar_element} (will retrieve from cluster)")
+            log.write_line(f"  POTCAR: {elem_list} ({message.potcar_type})")
             log.write_line(f"  Work dir: {work_dir_name}")
 
         except Exception as e:

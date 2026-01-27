@@ -179,7 +179,7 @@ impl LspClient {
     /// Spawn the LSP server and start the reader thread.
     ///
     /// # Arguments
-    /// * `server_path` - Path to the server.js file
+    /// * `server_path` - Path/command for the LSP server
     /// * `event_tx` - Channel to send LSP events to the main thread
     ///
     /// # Process Cleanup Safety
@@ -189,18 +189,34 @@ impl LspClient {
     pub fn start(server_path: &str, event_tx: Sender<LspEvent>) -> Result<Self> {
         info!("Starting LSP server: {}", server_path);
 
-        let node_binary = std::env::var("CRYSTAL_NODE_PATH")
-            .unwrap_or_else(|_| "node".to_string());
-        info!("Using node binary: {}", node_binary);
+        let server_path = server_path.trim();
+        let ext = std::path::Path::new(server_path)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        let is_js = matches!(ext, "js" | "mjs" | "cjs");
 
-        let mut child = Command::new(&node_binary)
-            .arg(server_path)
-            .arg("--stdio")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .context("Failed to spawn node process for LSP server")?;
+        let mut child = if is_js {
+            let node_binary =
+                std::env::var("CRYSTAL_NODE_PATH").unwrap_or_else(|_| "node".to_string());
+            info!("Using node binary: {}", node_binary);
+            Command::new(&node_binary)
+                .arg(server_path)
+                .arg("--stdio")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .context("Failed to spawn node process for LSP server")?
+        } else {
+            Command::new(server_path)
+                .arg("--stdio")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .context("Failed to spawn LSP server process")?
+        };
 
         let stdin = child
             .stdin
@@ -1054,9 +1070,10 @@ mod tests {
 
         match size {
             Some(0) => Err("Content-Length is zero".to_string()),
-            Some(s) if s > MAX_LSP_MESSAGE_SIZE => {
-                Err(format!("Message too large: {} bytes (max {})", s, MAX_LSP_MESSAGE_SIZE))
-            }
+            Some(s) if s > MAX_LSP_MESSAGE_SIZE => Err(format!(
+                "Message too large: {} bytes (max {})",
+                s, MAX_LSP_MESSAGE_SIZE
+            )),
             Some(s) => Ok(s),
             None => Err("Missing Content-Length".to_string()),
         }
@@ -1466,7 +1483,12 @@ done
         // Temporarily set CRYSTAL_NODE_PATH to bash
         std::env::set_var("CRYSTAL_NODE_PATH", "bash");
 
-        let result = LspClient::start(script_path.to_str().unwrap(), event_tx);
+        let result = LspClient::start(
+            script_path
+                .to_str()
+                .expect("Mock script path must be valid UTF-8"),
+            event_tx,
+        );
 
         // Reset environment variable
         std::env::remove_var("CRYSTAL_NODE_PATH");
@@ -1712,7 +1734,11 @@ done
 
         // Spawn the child process manually to simulate partial initialization
         let mut child = std::process::Command::new("bash")
-            .arg(script_path.to_str().unwrap())
+            .arg(
+                script_path
+                    .to_str()
+                    .expect("Mock script path must be valid UTF-8"),
+            )
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -1722,8 +1748,14 @@ done
         let pid = child.id();
 
         // Create a minimal LspClient struct for testing Drop
-        let stdin = child.stdin.take().unwrap();
-        let _stdout = child.stdout.take().unwrap();
+        let stdin = child
+            .stdin
+            .take()
+            .expect("stdin pipe should be available after spawn with Stdio::piped()");
+        let _stdout = child
+            .stdout
+            .take()
+            .expect("stdout pipe should be available after spawn with Stdio::piped()");
 
         let client = LspClient {
             stdin,
@@ -1736,9 +1768,7 @@ done
         #[cfg(unix)]
         {
             use std::process::Command;
-            let status = Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .status();
+            let status = Command::new("kill").args(["-0", &pid.to_string()]).status();
             assert!(
                 status.map(|s| s.success()).unwrap_or(false),
                 "Process should be running before drop"
@@ -1756,9 +1786,7 @@ done
             use std::process::Command;
             // Small delay to allow process to fully terminate
             std::thread::sleep(std::time::Duration::from_millis(100));
-            let status = Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .status();
+            let status = Command::new("kill").args(["-0", &pid.to_string()]).status();
             assert!(
                 !status.map(|s| s.success()).unwrap_or(true),
                 "Process should be dead after drop"
@@ -1785,7 +1813,10 @@ done
         let (tx, _rx) = std::sync::mpsc::channel::<LspEvent>();
 
         // Set CRYSTAL_NODE_PATH to a nonexistent binary
-        std::env::set_var("CRYSTAL_NODE_PATH", "/nonexistent/binary/that/does/not/exist");
+        std::env::set_var(
+            "CRYSTAL_NODE_PATH",
+            "/nonexistent/binary/that/does/not/exist",
+        );
 
         let result = LspClient::start("server.js", tx);
 

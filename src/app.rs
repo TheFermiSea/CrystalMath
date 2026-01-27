@@ -12,13 +12,11 @@ use tui_textarea::TextArea;
 
 use crate::bridge::{BridgeHandle, BridgeRequestKind, BridgeResponse, BridgeService};
 use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
-use crate::models::{JobDetails, JobStatus, MaterialResult, SlurmQueueEntry};
+use crate::models::{JobDetails, JobStatus, SlurmQueueEntry};
 use crate::ui::{ClusterManagerState, SlurmQueueState};
 
 // Re-export state types for backward compatibility with existing imports from crate::app
-pub use crate::state::{
-    Action, AppTab, DiffLineType, JobsState, MaterialsSearchState, NewJobField, NewJobState,
-};
+pub use crate::state::{Action, AppTab, JobsState, MaterialsSearchState, NewJobField, NewJobState};
 
 /// Main application state.
 pub struct App<'a> {
@@ -97,6 +95,9 @@ pub struct App<'a> {
     /// Job PK currently being viewed in log tab.
     pub log_job_pk: Option<i32>,
 
+    /// Job name currently being viewed in log tab (for display).
+    pub log_job_name: Option<String>,
+
     /// Whether log follow mode is active (auto-refresh every 2s).
     pub log_follow_mode: bool,
 
@@ -154,16 +155,24 @@ pub struct App<'a> {
     /// State for the SLURM queue modal.
     pub slurm_queue_state: SlurmQueueState,
 
+    /// Last SLURM cluster ID used (for 's' hotkey preference).
+    pub last_slurm_cluster_id: Option<i32>,
+
     // ===== VASP Input Modal =====
     /// State for the VASP multi-file input modal.
     pub vasp_input_state: crate::ui::VaspInputState,
+
+    // ===== Workflow Launcher Modal =====
+    /// State for the workflow launcher modal.
+    pub workflow_state: crate::ui::WorkflowState,
 }
 
 impl<'a> App<'a> {
-    /// Default relative path to the dft-language-server (fallback).
-    const LSP_SERVER_PATH_DEFAULT: &'static str = "dft-language-server/out/server.js";
+    /// Default LSP command (fallback).
+    /// Uses vasp-language-server CLI if installed on PATH.
+    const LSP_SERVER_PATH_DEFAULT: &'static str = "vasp-lsp";
 
-    /// Environment variable name for LSP server path override.
+    /// Environment variable name for LSP server path/command override.
     const LSP_SERVER_PATH_ENV: &'static str = "CRYSTAL_TUI_LSP_PATH";
 
     /// Timeout for pending bridge requests (30 seconds).
@@ -171,12 +180,13 @@ impl<'a> App<'a> {
     /// and the pending state is cleared to prevent deadlocks.
     const BRIDGE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-    /// Resolve the LSP server path using environment variable or relative to executable.
+    /// Resolve the LSP server path using environment variable, bundled repo, or PATH.
     ///
     /// Lookup order:
     /// 1. CRYSTAL_TUI_LSP_PATH environment variable
-    /// 2. Relative to executable directory
-    /// 3. Current working directory (fallback)
+    /// 2. Bundled repo (third_party/vasp-language-server) if built
+    /// 3. Relative to executable directory
+    /// 4. PATH command fallback
     fn resolve_lsp_path() -> String {
         use std::path::PathBuf;
 
@@ -188,16 +198,26 @@ impl<'a> App<'a> {
                     Self::LSP_SERVER_PATH_ENV,
                     env_path
                 );
-                return env_path;
+            } else {
+                info!(
+                    "Using LSP server command from {}: {}",
+                    Self::LSP_SERVER_PATH_ENV,
+                    env_path
+                );
             }
-            warn!(
-                "{} set to '{}' but file not found, trying fallbacks",
-                Self::LSP_SERVER_PATH_ENV,
-                env_path
-            );
+            return env_path;
         }
 
-        // 2. Relative to executable directory
+        // 2. Bundled repo (if present and built)
+        let local_repo = PathBuf::from("third_party/vasp-language-server");
+        let local_bin = local_repo.join("bin/vasp-lsp");
+        let local_out = local_repo.join("out/server.js");
+        if local_bin.exists() && local_out.exists() {
+            info!("Using bundled vasp-language-server: {}", local_bin.display());
+            return local_bin.to_string_lossy().to_string();
+        }
+
+        // 3. Relative to executable directory
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
                 let relative_path = exe_dir.join(Self::LSP_SERVER_PATH_DEFAULT);
@@ -209,17 +229,7 @@ impl<'a> App<'a> {
             }
         }
 
-        // 3. Current working directory fallback
-        let cwd_path = PathBuf::from(Self::LSP_SERVER_PATH_DEFAULT);
-        if cwd_path.exists() {
-            info!(
-                "Using LSP server from current directory: {}",
-                Self::LSP_SERVER_PATH_DEFAULT
-            );
-        } else {
-            debug!("LSP server not found at {}", Self::LSP_SERVER_PATH_DEFAULT);
-        }
-
+        // 4. PATH command fallback
         Self::LSP_SERVER_PATH_DEFAULT.to_string()
     }
 
@@ -290,6 +300,7 @@ impl<'a> App<'a> {
             log_lines: Vec::new(),
             log_scroll: 0,
             log_job_pk: None,
+            log_job_name: None,
             log_follow_mode: false,
             last_log_refresh: None,
             bridge,
@@ -305,7 +316,9 @@ impl<'a> App<'a> {
             new_job: NewJobState::default(),
             cluster_manager: ClusterManagerState::default(),
             slurm_queue_state: SlurmQueueState::default(),
+            last_slurm_cluster_id: None,
             vasp_input_state: crate::ui::VaspInputState::default(),
+            workflow_state: crate::ui::WorkflowState::default(),
         })
     }
 
@@ -392,8 +405,9 @@ impl<'a> App<'a> {
             Action::JobCancelRequest => self.request_cancel_selected_job(),
             Action::JobDiffRequest => self.request_diff_job(),
             Action::JobsRefresh => self.request_refresh_jobs(),
+            Action::JobsSync => self.request_sync_remote_jobs(),
 
-            // Results Tab
+            // ===== Results Tab =====
             Action::ResultsScrollUp => self.scroll_results_up(),
             Action::ResultsScrollDown => self.scroll_results_down(),
             Action::ResultsPageUp => self.scroll_results_page_up(),
@@ -432,31 +446,57 @@ impl<'a> App<'a> {
 
     /// Move to the next tab.
     pub fn next_tab(&mut self) {
-        self.current_tab = match self.current_tab {
+        let new_tab = match self.current_tab {
             AppTab::Jobs => AppTab::Editor,
             AppTab::Editor => AppTab::Results,
             AppTab::Results => AppTab::Log,
             AppTab::Log => AppTab::Jobs,
         };
-        self.mark_dirty();
+        self.set_tab(new_tab);
     }
 
     /// Move to the previous tab.
     pub fn prev_tab(&mut self) {
-        self.current_tab = match self.current_tab {
+        let new_tab = match self.current_tab {
             AppTab::Jobs => AppTab::Log,
             AppTab::Editor => AppTab::Jobs,
             AppTab::Results => AppTab::Editor,
             AppTab::Log => AppTab::Results,
         };
-        self.mark_dirty();
+        self.set_tab(new_tab);
     }
 
     /// Set the current tab directly.
+    ///
+    /// When switching to the Log tab, automatically refreshes logs for the
+    /// currently selected job to avoid showing stale logs from a different job.
     pub fn set_tab(&mut self, tab: AppTab) {
         if self.current_tab != tab {
             self.current_tab = tab;
             self.mark_dirty();
+
+            // Auto-refresh logs when switching to Log tab
+            if tab == AppTab::Log {
+                self.auto_refresh_log_for_selected_job();
+            }
+        }
+    }
+
+    /// Auto-refresh log when the selected job differs from the loaded log.
+    ///
+    /// Called when navigating to the Log tab to ensure logs match the selection.
+    fn auto_refresh_log_for_selected_job(&mut self) {
+        if let Some(job) = self.selected_job() {
+            let selected_pk = job.pk;
+            let selected_name = job.name.clone();
+            // Only refresh if the selected job differs from the loaded log
+            if self.log_job_pk != Some(selected_pk) {
+                self.log_job_pk = Some(selected_pk);
+                self.log_job_name = Some(selected_name);
+                self.log_lines.clear();
+                self.log_scroll = 0;
+                self.request_log_refresh(selected_pk);
+            }
         }
     }
 
@@ -488,6 +528,28 @@ impl<'a> App<'a> {
             }
             Err(e) => {
                 self.set_error(format!("Failed to request jobs: {}", e));
+            }
+        }
+    }
+
+    /// Request a sync of remote jobs (non-blocking).
+    ///
+    /// Queries squeue/sacct on remote clusters to update status of tracked jobs.
+    pub fn request_sync_remote_jobs(&mut self) {
+        if self.pending_bridge_request.is_some() {
+            return;
+        }
+
+        let request_id = self.next_request_id();
+        self.set_error("Syncing remote jobs (this may take a few seconds)...");
+        match self.bridge.request_sync_remote_jobs(request_id) {
+            Ok(()) => {
+                self.pending_bridge_request = Some(BridgeRequestKind::SyncRemoteJobs);
+                self.pending_request_id = Some(request_id);
+                self.pending_bridge_request_time = Some(std::time::Instant::now());
+            }
+            Err(e) => {
+                self.set_error(format!("Failed to request remote sync: {}", e));
             }
         }
     }
@@ -555,17 +617,23 @@ impl<'a> App<'a> {
                 | BridgeResponse::D12Generated { request_id, .. }
                 | BridgeResponse::SlurmQueue { request_id, .. }
                 | BridgeResponse::SlurmJobCancelled { request_id, .. }
+                | BridgeResponse::SlurmJobAdopted { request_id, .. }
                 | BridgeResponse::Clusters { request_id, .. }
                 | BridgeResponse::Cluster { request_id, .. }
                 | BridgeResponse::ClusterCreated { request_id, .. }
                 | BridgeResponse::ClusterUpdated { request_id, .. }
                 | BridgeResponse::ClusterDeleted { request_id, .. }
                 | BridgeResponse::ClusterConnectionTested { request_id, .. } => Some(*request_id),
+                BridgeResponse::Templates { request_id, .. }
+                | BridgeResponse::TemplateRendered { request_id, .. } => Some(*request_id),
+                BridgeResponse::WorkflowsAvailable { request_id, .. }
+                | BridgeResponse::WorkflowCreated { request_id, .. } => Some(*request_id),
             };
 
             // Check if response matches pending request by BOTH type AND request ID
             let is_pending_match = match (&response, &self.pending_bridge_request) {
                 (BridgeResponse::Jobs { .. }, Some(BridgeRequestKind::FetchJobs))
+                | (BridgeResponse::Jobs { .. }, Some(BridgeRequestKind::SyncRemoteJobs))
                 | (BridgeResponse::JobDetails { .. }, Some(BridgeRequestKind::FetchJobDetails))
                 | (BridgeResponse::JobSubmitted { .. }, Some(BridgeRequestKind::SubmitJob))
                 | (BridgeResponse::JobCancelled { .. }, Some(BridgeRequestKind::CancelJob))
@@ -585,6 +653,11 @@ impl<'a> App<'a> {
                 | (BridgeResponse::ClusterUpdated { .. }, _)
                 | (BridgeResponse::ClusterDeleted { .. }, _)
                 | (BridgeResponse::ClusterConnectionTested { .. }, _) => false,
+                (BridgeResponse::Templates { .. }, _)
+                | (BridgeResponse::TemplateRendered { .. }, _) => false,
+                // Workflow responses use their own request_id tracking
+                (BridgeResponse::WorkflowsAvailable { .. }, _)
+                | (BridgeResponse::WorkflowCreated { .. }, _) => false,
                 // Response doesn't match pending request type
                 _ => false,
             };
@@ -611,7 +684,8 @@ impl<'a> App<'a> {
                             // Track which jobs changed state since last refresh
                             self.jobs_state.changed_pks.clear();
                             let old_states: std::collections::HashMap<i32, _> = self
-                                .jobs_state.jobs
+                                .jobs_state
+                                .jobs
                                 .iter()
                                 .map(|j| (j.pk, j.state))
                                 .collect();
@@ -636,7 +710,8 @@ impl<'a> App<'a> {
                                     self.jobs_state.selected_index = Some(0);
                                 } else if let Some(idx) = self.jobs_state.selected_index {
                                     if idx >= self.jobs_state.jobs.len() {
-                                        self.jobs_state.selected_index = Some(self.jobs_state.jobs.len() - 1);
+                                        self.jobs_state.selected_index =
+                                            Some(self.jobs_state.jobs.len() - 1);
                                     }
                                 }
                             } else {
@@ -783,14 +858,17 @@ impl<'a> App<'a> {
                 // SLURM queue response
                 BridgeResponse::SlurmQueue { request_id, result } => {
                     // Handle both old slurm_request_id and new modal state
-                    if request_id == self.slurm_request_id || request_id == self.slurm_queue_state.request_id {
+                    if request_id == self.slurm_request_id
+                        || request_id == self.slurm_queue_state.request_id
+                    {
                         // Update modal state before consuming result
                         self.slurm_queue_state.loading = false;
                         if request_id == self.slurm_queue_state.request_id {
                             match &result {
                                 Ok(entries) => {
                                     if entries.is_empty() {
-                                        self.slurm_queue_state.error = Some("No jobs in queue".to_string());
+                                        self.slurm_queue_state.error =
+                                            Some("No jobs in queue".to_string());
                                     } else {
                                         self.slurm_queue_state.error = None;
                                     }
@@ -812,14 +890,19 @@ impl<'a> App<'a> {
                     }
                 }
                 BridgeResponse::SlurmJobCancelled { request_id, result } => {
-                    if request_id == self.slurm_request_id || request_id == self.slurm_queue_state.request_id {
+                    if request_id == self.slurm_request_id
+                        || request_id == self.slurm_queue_state.request_id
+                    {
                         self.slurm_queue_state.loading = false;
                         match result {
                             Ok(cancel_result) => {
                                 if cancel_result.success {
-                                    let msg = cancel_result.message.unwrap_or_else(|| "Job cancelled".to_string());
+                                    let msg = cancel_result
+                                        .message
+                                        .unwrap_or_else(|| "Job cancelled".to_string());
                                     info!("SLURM job cancelled: {}", msg);
-                                    self.slurm_queue_state.error = Some(format!("Success: {}", msg));
+                                    self.slurm_queue_state.error =
+                                        Some(format!("Success: {}", msg));
                                     // Refresh the queue to reflect the cancellation
                                     if self.slurm_queue_state.active {
                                         self.refresh_slurm_queue();
@@ -827,7 +910,9 @@ impl<'a> App<'a> {
                                         self.request_fetch_slurm_queue();
                                     }
                                 } else {
-                                    let msg = cancel_result.message.unwrap_or_else(|| "Unknown error".to_string());
+                                    let msg = cancel_result
+                                        .message
+                                        .unwrap_or_else(|| "Unknown error".to_string());
                                     let error_msg = format!("Cancel failed: {}", msg);
                                     self.set_error(&error_msg);
                                     self.slurm_queue_state.error = Some(error_msg);
@@ -846,6 +931,25 @@ impl<'a> App<'a> {
                         );
                     }
                 }
+                BridgeResponse::SlurmJobAdopted { request_id, result } => {
+                    if request_id == self.slurm_queue_state.request_id {
+                        self.slurm_queue_state.loading = false;
+                        match result {
+                            Ok(pk) => {
+                                let msg = format!("Job adopted successfully (ID: {})", pk);
+                                info!("{}", msg);
+                                self.slurm_queue_state.error = Some(msg);
+                                // Refresh local job list to show the new job
+                                self.request_refresh_jobs();
+                            }
+                            Err(e) => {
+                                let error_msg = format!("Adoption failed: {}", e);
+                                self.set_error(&error_msg);
+                                self.slurm_queue_state.error = Some(error_msg);
+                            }
+                        }
+                    }
+                }
                 // Cluster management responses
                 BridgeResponse::Clusters { request_id, result } => {
                     if request_id == self.cluster_manager.request_id {
@@ -857,28 +961,38 @@ impl<'a> App<'a> {
                                 if count > 0 && self.cluster_manager.selected_index.is_none() {
                                     self.cluster_manager.selected_index = Some(0);
                                 }
-                                self.cluster_manager.set_status(&format!("Loaded {} clusters", count), false);
+                                self.cluster_manager
+                                    .set_status(&format!("Loaded {} clusters", count), false);
                             }
                             Err(e) => {
-                                self.cluster_manager.set_status(&format!("Failed to load clusters: {}", e), true);
+                                self.cluster_manager
+                                    .set_status(&format!("Failed to load clusters: {}", e), true);
                             }
                         }
                     }
                 }
                 BridgeResponse::Cluster { request_id, result } => {
-                    debug!("Cluster response (request_id={}): {:?}", request_id, result.is_ok());
+                    debug!(
+                        "Cluster response (request_id={}): {:?}",
+                        request_id,
+                        result.is_ok()
+                    );
                 }
                 BridgeResponse::ClusterCreated { request_id, result } => {
                     if request_id == self.cluster_manager.request_id {
                         self.cluster_manager.loading = false;
                         match result {
                             Ok(cluster) => {
-                                self.cluster_manager.set_status(&format!("Created cluster '{}'", cluster.name), false);
+                                self.cluster_manager.set_status(
+                                    &format!("Created cluster '{}'", cluster.name),
+                                    false,
+                                );
                                 self.cluster_manager.cancel(); // Return to list view
                                 self.request_fetch_clusters(); // Refresh the list
                             }
                             Err(e) => {
-                                self.cluster_manager.set_status(&format!("Failed to create cluster: {}", e), true);
+                                self.cluster_manager
+                                    .set_status(&format!("Failed to create cluster: {}", e), true);
                             }
                         }
                     }
@@ -888,12 +1002,16 @@ impl<'a> App<'a> {
                         self.cluster_manager.loading = false;
                         match result {
                             Ok(cluster) => {
-                                self.cluster_manager.set_status(&format!("Updated cluster '{}'", cluster.name), false);
+                                self.cluster_manager.set_status(
+                                    &format!("Updated cluster '{}'", cluster.name),
+                                    false,
+                                );
                                 self.cluster_manager.cancel(); // Return to list view
                                 self.request_fetch_clusters(); // Refresh the list
                             }
                             Err(e) => {
-                                self.cluster_manager.set_status(&format!("Failed to update cluster: {}", e), true);
+                                self.cluster_manager
+                                    .set_status(&format!("Failed to update cluster: {}", e), true);
                             }
                         }
                     }
@@ -909,11 +1027,13 @@ impl<'a> App<'a> {
                                     self.cluster_manager.selected_index = None;
                                     self.request_fetch_clusters(); // Refresh the list
                                 } else {
-                                    self.cluster_manager.set_status("Failed to delete cluster", true);
+                                    self.cluster_manager
+                                        .set_status("Failed to delete cluster", true);
                                 }
                             }
                             Err(e) => {
-                                self.cluster_manager.set_status(&format!("Failed to delete cluster: {}", e), true);
+                                self.cluster_manager
+                                    .set_status(&format!("Failed to delete cluster: {}", e), true);
                             }
                         }
                     }
@@ -924,15 +1044,84 @@ impl<'a> App<'a> {
                         match result {
                             Ok(conn_result) => {
                                 use crate::ui::ConnectionTestResult;
-                                self.cluster_manager.connection_result = Some(ConnectionTestResult {
-                                    success: conn_result.success,
-                                    hostname: conn_result.hostname,
-                                    system_info: conn_result.system_info,
-                                    error: conn_result.error,
-                                });
+                                self.cluster_manager.connection_result =
+                                    Some(ConnectionTestResult {
+                                        success: conn_result.success,
+                                        system_info: conn_result.system_info,
+                                        error: conn_result.error,
+                                    });
                             }
                             Err(e) => {
-                                self.cluster_manager.set_status(&format!("Connection test failed: {}", e), true);
+                                self.cluster_manager
+                                    .set_status(&format!("Connection test failed: {}", e), true);
+                            }
+                        }
+                    }
+                }
+            BridgeResponse::Templates { request_id, result } => match result {
+                Ok(templates) => {
+                    debug!(
+                        "Received {} templates (request_id={})",
+                        templates.len(),
+                        request_id
+                    );
+                }
+                Err(e) => {
+                    self.set_error(format!("Failed to fetch templates: {}", e));
+                }
+            },
+            BridgeResponse::TemplateRendered { request_id, result } => match result {
+                Ok(rendered) => {
+                    debug!(
+                        "Template rendered ({} bytes, request_id={})",
+                        rendered.len(),
+                        request_id
+                    );
+                }
+                Err(e) => {
+                    self.set_error(format!("Failed to render template: {}", e));
+                }
+            },
+                // Workflow responses
+                BridgeResponse::WorkflowsAvailable { request_id, result } => {
+                    if Some(request_id) == self.workflow_state.request_id {
+                        self.workflow_state.set_loading(false);
+                        match result {
+                            Ok(availability) => {
+                                self.workflow_state.set_availability(
+                                    availability.available,
+                                    availability.aiida_available,
+                                );
+                                if availability.available {
+                                    self.workflow_state
+                                        .set_status("Workflows ready".to_string(), false);
+                                } else {
+                                    self.workflow_state.set_status(
+                                        "Workflow module not available".to_string(),
+                                        true,
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                self.workflow_state
+                                    .set_status(format!("Failed to check workflows: {}", e), true);
+                            }
+                        }
+                    }
+                }
+                BridgeResponse::WorkflowCreated { request_id, result } => {
+                    if Some(request_id) == self.workflow_state.request_id {
+                        self.workflow_state.set_loading(false);
+                        match result {
+                            Ok(_workflow_json) => {
+                                self.workflow_state
+                                    .set_status("Workflow created successfully".to_string(), false);
+                                // TODO: Parse workflow JSON and show in results or trigger next step
+                                info!("Workflow created successfully");
+                            }
+                            Err(e) => {
+                                self.workflow_state
+                                    .set_status(format!("Failed to create workflow: {}", e), true);
                             }
                         }
                     }
@@ -948,9 +1137,17 @@ impl<'a> App<'a> {
         self.request_refresh_jobs();
     }
 
+    /// Convenience method that triggers an async cluster list refresh.
+    /// Called at startup to populate the cluster list for SLURM access.
+    pub fn try_refresh_clusters(&mut self) {
+        self.request_fetch_clusters();
+    }
+
     /// Get the currently selected job.
     pub fn selected_job(&self) -> Option<&JobStatus> {
-        self.jobs_state.selected_index.and_then(|idx| self.jobs_state.jobs.get(idx))
+        self.jobs_state
+            .selected_index
+            .and_then(|idx| self.jobs_state.jobs.get(idx))
     }
 
     /// Select the previous job in the list.
@@ -1275,13 +1472,64 @@ impl<'a> App<'a> {
     // ===== SLURM Queue Management =====
 
     /// Toggle SLURM queue view visibility.
+    ///
+    /// Opens the SLURM queue modal if clusters are configured.
+    /// Prefers the last-used SLURM cluster, or the first available one.
     pub fn toggle_slurm_view(&mut self) {
-        self.slurm_view_active = !self.slurm_view_active;
-        if self.slurm_view_active {
-            // Request SLURM queue from bridge
-            self.set_error("SLURM queue: Connecting to cluster...");
-            self.request_fetch_slurm_queue();
+        tracing::info!("toggle_slurm_view() called");
+        tracing::info!(
+            "  slurm_queue_state.active = {}",
+            self.slurm_queue_state.active
+        );
+        tracing::info!(
+            "  cluster_manager.clusters.len() = {}",
+            self.cluster_manager.clusters.len()
+        );
+
+        // If modal is already open, close it
+        if self.slurm_queue_state.active {
+            tracing::info!("  Closing SLURM modal");
+            self.close_slurm_queue_modal();
+            return;
         }
+
+        // Find SLURM clusters
+        let slurm_clusters: Vec<i32> = self
+            .cluster_manager
+            .clusters
+            .iter()
+            .filter(|c| {
+                tracing::debug!("  Cluster: {:?}, type: {:?}", c.name, c.cluster_type);
+                c.cluster_type == crate::models::ClusterType::Slurm
+            })
+            .filter_map(|c| c.id)
+            .collect();
+
+        tracing::info!(
+            "  Found {} SLURM clusters: {:?}",
+            slurm_clusters.len(),
+            slurm_clusters
+        );
+
+        if slurm_clusters.is_empty() {
+            tracing::warn!("  No SLURM clusters found!");
+            self.set_error("No SLURM clusters configured. Press 'c' to open Cluster Manager.");
+            return;
+        }
+
+        // Prefer last-used cluster if valid, otherwise use first
+        let cluster_id = if let Some(last_id) = self.last_slurm_cluster_id {
+            if slurm_clusters.contains(&last_id) {
+                last_id
+            } else {
+                slurm_clusters[0]
+            }
+        } else {
+            slurm_clusters[0]
+        };
+
+        tracing::info!("  Opening SLURM modal for cluster_id={}", cluster_id);
+        self.open_slurm_queue_modal(cluster_id);
         self.mark_dirty();
     }
 
@@ -1289,12 +1537,31 @@ impl<'a> App<'a> {
     pub fn request_fetch_slurm_queue(&mut self) {
         // Use the cluster ID from new_job state if selected, otherwise default to 1
         let cluster_id = self.new_job.cluster_id.unwrap_or(1);
-        
+
         let request_id = self.next_request_id();
         self.slurm_request_id = request_id;
-        
-        if let Err(e) = self.bridge.request_fetch_slurm_queue(cluster_id, request_id) {
+
+        if let Err(e) = self
+            .bridge
+            .request_fetch_slurm_queue(cluster_id, request_id)
+        {
             self.set_error(format!("Failed to request SLURM queue: {}", e));
+        }
+    }
+
+    /// Request to adopt a SLURM job.
+    pub fn request_adopt_slurm_job(&mut self, cluster_id: i32, job_id: String) {
+        let request_id = self.next_request_id();
+        // We track this request ID in the modal state to handle the response
+        self.slurm_queue_state.request_id = request_id;
+        self.slurm_queue_state.loading = true;
+
+        if let Err(e) = self
+            .bridge
+            .request_adopt_slurm_job(cluster_id, &job_id, request_id)
+        {
+            self.set_error(format!("Failed to request job adoption: {}", e));
+            self.slurm_queue_state.loading = false;
         }
     }
 
@@ -1342,27 +1609,6 @@ impl<'a> App<'a> {
                 self.slurm_selected = Some(idx + 1);
                 self.mark_dirty();
             }
-        }
-    }
-
-    /// Cancel the selected SLURM job.
-    pub fn cancel_selected_slurm_job(&mut self) {
-        let cluster_id = self.new_job.cluster_id.unwrap_or(1);
-
-        if let Some(idx) = self.slurm_selected {
-            if let Some(job) = self.slurm_queue.get(idx) {
-                let job_id = job.job_id.clone();
-                let request_id = self.next_request_id();
-                self.slurm_request_id = request_id;
-
-                if let Err(e) = self.bridge.request_cancel_slurm_job(cluster_id, &job_id, request_id) {
-                    self.set_error(format!("Failed to request SLURM cancel: {}", e));
-                }
-            } else {
-                self.set_error("No SLURM job selected".to_string());
-            }
-        } else {
-            self.set_error("No SLURM job selected".to_string());
         }
     }
 
@@ -1563,7 +1809,9 @@ impl<'a> App<'a> {
     pub fn view_job_log(&mut self) {
         if let Some(job) = self.selected_job() {
             let pk = job.pk;
+            let name = job.name.clone();
             self.log_job_pk = Some(pk);
+            self.log_job_name = Some(name);
             self.log_lines.clear();
             self.log_scroll = 0;
             self.request_log_refresh(pk);
@@ -1808,21 +2056,65 @@ impl<'a> App<'a> {
         // Get editor content
         let content = self.editor.lines().join("\n");
         if content.trim().is_empty() {
-            self.new_job.set_error("Editor is empty - add input content first");
+            self.new_job
+                .set_error("Editor is empty - add input content first");
             self.mark_dirty();
             return;
         }
 
         // Build submission
-        let submission = crate::models::JobSubmission::new(&self.new_job.job_name, self.new_job.dft_code)
-            .with_input_content(&content)
-            .with_runner_type_str(&self.new_job.runner_type);
+        let mut submission =
+            crate::models::JobSubmission::new(&self.new_job.job_name, self.new_job.dft_code)
+                .with_input_content(&content)
+                .with_runner_type(self.new_job.runner_type);
 
-        let submission = if let Some(cluster_id) = self.new_job.cluster_id {
-            submission.with_cluster_id(cluster_id)
+        if let Some(cluster_id) = self.new_job.cluster_id {
+            submission = submission.with_cluster_id(cluster_id);
+        }
+
+        // Add parallelism settings
+        if self.new_job.is_parallel {
+            submission = submission.with_parallel_mode("parallel");
+            if let Ok(ranks) = self.new_job.mpi_ranks.parse::<i32>() {
+                submission = submission.with_mpi_ranks(ranks);
+            }
         } else {
-            submission
-        };
+            submission = submission.with_parallel_mode("serial");
+        }
+
+        // Add scheduler settings if SLURM
+        if self.new_job.runner_type == crate::models::RunnerType::Slurm {
+            let options = crate::models::SchedulerOptions {
+                walltime: self.new_job.walltime.clone(),
+                memory_gb: self.new_job.memory_gb.clone(),
+                cpus_per_task: self.new_job.cpus_per_task.parse().unwrap_or(4),
+                nodes: self.new_job.nodes.parse().unwrap_or(1),
+                partition: if self.new_job.partition.is_empty() {
+                    None
+                } else {
+                    Some(self.new_job.partition.clone())
+                },
+            };
+            submission = submission.with_scheduler_options(options);
+        }
+
+        // Add aux files if Crystal
+        if self.new_job.dft_code == crate::models::DftCode::Crystal {
+            let mut aux = std::collections::HashMap::new();
+            if self.new_job.aux_gui_enabled && !self.new_job.aux_gui_path.is_empty() {
+                aux.insert("gui".to_string(), self.new_job.aux_gui_path.clone());
+            }
+            if self.new_job.aux_f9_enabled && !self.new_job.aux_f9_path.is_empty() {
+                aux.insert("f9".to_string(), self.new_job.aux_f9_path.clone());
+            }
+            if self.new_job.aux_hessopt_enabled && !self.new_job.aux_hessopt_path.is_empty() {
+                aux.insert("hessopt".to_string(), self.new_job.aux_hessopt_path.clone());
+            }
+
+            if !aux.is_empty() {
+                submission = submission.with_auxiliary_files(aux);
+            }
+        }
 
         // Submit via bridge
         let request_id = self.next_request_id();
@@ -1869,7 +2161,8 @@ impl<'a> App<'a> {
         self.cluster_manager.request_id = request_id;
         self.cluster_manager.loading = true;
         if let Err(e) = self.bridge.request_fetch_clusters(request_id) {
-            self.cluster_manager.set_status(&format!("Failed to fetch clusters: {}", e), true);
+            self.cluster_manager
+                .set_status(&format!("Failed to fetch clusters: {}", e), true);
             self.cluster_manager.loading = false;
         }
         self.mark_dirty();
@@ -1883,7 +2176,8 @@ impl<'a> App<'a> {
                 self.cluster_manager.request_id = request_id;
                 self.cluster_manager.loading = true;
                 if let Err(e) = self.bridge.request_create_cluster(&config, request_id) {
-                    self.cluster_manager.set_status(&format!("Failed to create cluster: {}", e), true);
+                    self.cluster_manager
+                        .set_status(&format!("Failed to create cluster: {}", e), true);
                     self.cluster_manager.loading = false;
                 }
                 self.mark_dirty();
@@ -1900,7 +2194,8 @@ impl<'a> App<'a> {
         let cluster_id = match self.cluster_manager.editing_cluster_id {
             Some(id) => id,
             None => {
-                self.cluster_manager.set_status("No cluster selected for editing", true);
+                self.cluster_manager
+                    .set_status("No cluster selected for editing", true);
                 self.mark_dirty();
                 return;
             }
@@ -1911,8 +2206,12 @@ impl<'a> App<'a> {
                 let request_id = self.next_request_id();
                 self.cluster_manager.request_id = request_id;
                 self.cluster_manager.loading = true;
-                if let Err(e) = self.bridge.request_update_cluster(cluster_id, &config, request_id) {
-                    self.cluster_manager.set_status(&format!("Failed to update cluster: {}", e), true);
+                if let Err(e) = self
+                    .bridge
+                    .request_update_cluster(cluster_id, &config, request_id)
+                {
+                    self.cluster_manager
+                        .set_status(&format!("Failed to update cluster: {}", e), true);
                     self.cluster_manager.loading = false;
                 }
                 self.mark_dirty();
@@ -1946,7 +2245,8 @@ impl<'a> App<'a> {
         self.cluster_manager.request_id = request_id;
         self.cluster_manager.loading = true;
         if let Err(e) = self.bridge.request_delete_cluster(cluster_id, request_id) {
-            self.cluster_manager.set_status(&format!("Failed to delete cluster: {}", e), true);
+            self.cluster_manager
+                .set_status(&format!("Failed to delete cluster: {}", e), true);
             self.cluster_manager.loading = false;
         }
         self.mark_dirty();
@@ -1974,9 +2274,14 @@ impl<'a> App<'a> {
         self.cluster_manager.request_id = request_id;
         self.cluster_manager.loading = true;
         self.cluster_manager.connection_result = None;
-        self.cluster_manager.set_status("Testing connection...", false);
-        if let Err(e) = self.bridge.request_test_cluster_connection(cluster_id, request_id) {
-            self.cluster_manager.set_status(&format!("Failed to test connection: {}", e), true);
+        self.cluster_manager
+            .set_status("Testing connection...", false);
+        if let Err(e) = self
+            .bridge
+            .request_test_cluster_connection(cluster_id, request_id)
+        {
+            self.cluster_manager
+                .set_status(&format!("Failed to test connection: {}", e), true);
             self.cluster_manager.loading = false;
         }
         self.mark_dirty();
@@ -1992,6 +2297,7 @@ impl<'a> App<'a> {
     /// Open the SLURM queue modal for a given cluster and request queue fetch.
     pub fn open_slurm_queue_modal(&mut self, cluster_id: i32) {
         self.slurm_queue_state.open(cluster_id);
+        self.last_slurm_cluster_id = Some(cluster_id); // Remember for 's' hotkey preference
         self.request_fetch_slurm_queue_for_cluster(cluster_id);
         self.mark_dirty();
     }
@@ -2009,7 +2315,10 @@ impl<'a> App<'a> {
         self.slurm_queue_state.loading = true;
         self.slurm_queue_state.error = None;
 
-        if let Err(e) = self.bridge.request_fetch_slurm_queue(cluster_id, request_id) {
+        if let Err(e) = self
+            .bridge
+            .request_fetch_slurm_queue(cluster_id, request_id)
+        {
             self.slurm_queue_state.error = Some(format!("Failed to fetch SLURM queue: {}", e));
             self.slurm_queue_state.loading = false;
         }
@@ -2033,11 +2342,25 @@ impl<'a> App<'a> {
                 self.slurm_queue_state.loading = true;
                 self.slurm_queue_state.error = Some(format!("Cancelling job {}...", job_id));
 
-                if let Err(e) = self.bridge.request_cancel_slurm_job(cluster_id, &job_id, request_id) {
+                if let Err(e) = self
+                    .bridge
+                    .request_cancel_slurm_job(cluster_id, &job_id, request_id)
+                {
                     self.slurm_queue_state.error = Some(format!("Failed to cancel job: {}", e));
                     self.slurm_queue_state.loading = false;
                 }
                 self.mark_dirty();
+            }
+        }
+    }
+
+    /// Adopt the selected SLURM job.
+    pub fn adopt_selected_slurm_job(&mut self) {
+        if let Some(entry) = self.slurm_queue_state.selected_entry(&self.slurm_queue) {
+            if let Some(cluster_id) = self.slurm_queue_state.cluster_id {
+                self.request_adopt_slurm_job(cluster_id, entry.job_id.clone());
+            } else {
+                self.set_error("No cluster selected");
             }
         }
     }
@@ -2080,12 +2403,47 @@ impl<'a> App<'a> {
         info!("  KPOINTS: {} lines", files.kpoints.lines().count());
         info!("  POTCAR config: {}", files.potcar_config);
 
-        // Set success status (Dry-run)
-        self.vasp_input_state.set_status("VASP job validated (Submission pending backend integration)".to_string());
+        // Convert VaspInputFiles to models::VaspInputFiles for JobSubmission
+        let vasp_files = crate::models::VaspInputFiles {
+            poscar: files.poscar.clone(),
+            incar: files.incar.clone(),
+            kpoints: files.kpoints.clone(),
+            potcar_config: files.potcar_config.clone(),
+        };
+
+        // Serialize to JSON for parameters field
+        let params = match serde_json::to_value(&vasp_files) {
+            Ok(v) => v,
+            Err(e) => {
+                self.vasp_input_state
+                    .set_error(format!("Failed to serialize VASP files: {}", e));
+                self.mark_dirty();
+                return;
+            }
+        };
+
+        // Build JobSubmission with VASP files in parameters
+        let job_name = format!("vasp-calc-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+        let submission = crate::models::JobSubmission::new(&job_name, crate::models::DftCode::Vasp)
+            .with_parameters(params)
+            .with_runner_type(crate::models::RunnerType::Local);
+
+        // Submit via bridge
+        let request_id = self.next_request_id();
+        if let Err(e) = self.bridge.request_submit_job(&submission, request_id) {
+            self.vasp_input_state
+                .set_error(format!("Failed to submit: {}", e));
+            self.mark_dirty();
+            return;
+        }
+
+        self.pending_bridge_request = Some(BridgeRequestKind::SubmitJob);
+        self.pending_request_id = Some(request_id);
+        self.pending_bridge_request_time = Some(std::time::Instant::now());
         self.mark_dirty();
 
-        // TODO: Send to Python backend for actual job creation
-        // self.bridge.request_create_vasp_job(files, request_id)
+        // Close modal
+        self.vasp_input_state.close();
     }
 
     // ===== LSP Events =====
@@ -2153,50 +2511,39 @@ impl<'a> App<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use crate::models::MaterialResult;
+    use anyhow::Result;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
 
-    // =========================================================================
-    // Mock Services for Dependency Injection
-    // =========================================================================
-
-    /// Mock implementation of BridgeService for testing.
-    ///
-    /// Captures requests and returns predetermined responses.
-    /// Uses interior mutability (RefCell) to track calls.
+    // Mock Bridge Service
     struct MockBridgeService {
-        /// Responses to return from poll_response().
-        responses: RefCell<Vec<BridgeResponse>>,
-        /// Capture of requests made to the service.
-        requests: RefCell<Vec<String>>,
+        requests: Arc<Mutex<Vec<String>>>,
+        responses: Arc<Mutex<VecDeque<BridgeResponse>>>,
     }
 
     impl MockBridgeService {
         fn new() -> Self {
             Self {
-                responses: RefCell::new(Vec::new()),
-                requests: RefCell::new(Vec::new()),
+                requests: Arc::new(Mutex::new(Vec::new())),
+                responses: Arc::new(Mutex::new(VecDeque::new())),
             }
-        }
-
-        /// Add a response to be returned by poll_response().
-        #[allow(dead_code)]
-        fn add_response(&self, response: BridgeResponse) {
-            self.responses.borrow_mut().push(response);
         }
     }
 
     impl BridgeService for MockBridgeService {
-        fn request_fetch_jobs(&self, request_id: usize) -> anyhow::Result<()> {
-            self.requests
-                .borrow_mut()
-                .push(format!("fetch_jobs:{}", request_id));
+        fn request_fetch_jobs(&self, request_id: usize) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!("FetchJobs(request_id={})", request_id));
             Ok(())
         }
 
-        fn request_fetch_job_details(&self, pk: i32, request_id: usize) -> anyhow::Result<()> {
-            self.requests
-                .borrow_mut()
-                .push(format!("fetch_job_details:{}:{}", pk, request_id));
+        fn request_fetch_job_details(&self, pk: i32, request_id: usize) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "FetchJobDetails(pk={}, request_id={})",
+                pk, request_id
+            ));
             Ok(())
         }
 
@@ -2204,28 +2551,22 @@ mod tests {
             &self,
             _submission: &crate::models::JobSubmission,
             request_id: usize,
-        ) -> anyhow::Result<()> {
-            self.requests
-                .borrow_mut()
-                .push(format!("submit_job:{}", request_id));
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!("SubmitJob(request_id={})", request_id));
             Ok(())
         }
 
-        fn request_cancel_job(&self, pk: i32, request_id: usize) -> anyhow::Result<()> {
-            self.requests
-                .borrow_mut()
-                .push(format!("cancel_job:{}:{}", pk, request_id));
+        fn request_cancel_job(&self, pk: i32, request_id: usize) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!("CancelJob(pk={}, request_id={})", pk, request_id));
             Ok(())
         }
 
-        fn request_fetch_job_log(
-            &self,
-            pk: i32,
-            tail_lines: i32,
-            request_id: usize,
-        ) -> anyhow::Result<()> {
-            self.requests.borrow_mut().push(format!(
-                "fetch_job_log:{}:{}:{}",
+        fn request_fetch_job_log(&self, pk: i32, tail_lines: i32, request_id: usize) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "FetchJobLog(pk={}, tail_lines={}, request_id={})",
                 pk, tail_lines, request_id
             ));
             Ok(())
@@ -2236,9 +2577,10 @@ mod tests {
             formula: &str,
             limit: usize,
             request_id: usize,
-        ) -> anyhow::Result<()> {
-            self.requests.borrow_mut().push(format!(
-                "search_materials:{}:{}:{}",
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "SearchMaterials(formula={}, limit={}, request_id={})",
                 formula, limit, request_id
             ));
             Ok(())
@@ -2247,22 +2589,21 @@ mod tests {
         fn request_generate_d12(
             &self,
             mp_id: &str,
-            _config_json: &str,
+            config_json: &str,
             request_id: usize,
-        ) -> anyhow::Result<()> {
-            self.requests
-                .borrow_mut()
-                .push(format!("generate_d12:{}:{}", mp_id, request_id));
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "GenerateD12(mp_id={}, config_json={}, request_id={})",
+                mp_id, config_json, request_id
+            ));
             Ok(())
         }
 
-        fn request_fetch_slurm_queue(
-            &self,
-            cluster_id: i32,
-            request_id: usize,
-        ) -> anyhow::Result<()> {
-            self.requests.borrow_mut().push(format!(
-                "fetch_slurm_queue:{}:{}",
+        fn request_fetch_slurm_queue(&self, cluster_id: i32, request_id: usize) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "FetchSlurmQueue(cluster_id={}, request_id={})",
                 cluster_id, request_id
             ));
             Ok(())
@@ -2273,26 +2614,38 @@ mod tests {
             cluster_id: i32,
             slurm_job_id: &str,
             request_id: usize,
-        ) -> anyhow::Result<()> {
-            self.requests.borrow_mut().push(format!(
-                "cancel_slurm_job:{}:{}:{}",
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "CancelSlurmJob(cluster_id={}, slurm_job_id={}, request_id={})",
                 cluster_id, slurm_job_id, request_id
             ));
             Ok(())
         }
 
-        fn request_fetch_clusters(&self, request_id: usize) -> anyhow::Result<()> {
-            self.requests
-                .borrow_mut()
-                .push(format!("fetch_clusters:{}", request_id));
+        fn request_adopt_slurm_job(
+            &self,
+            cluster_id: i32,
+            slurm_job_id: &str,
+            request_id: usize,
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "AdoptSlurmJob(cluster_id={}, slurm_job_id={}, request_id={})",
+                cluster_id, slurm_job_id, request_id
+            ));
             Ok(())
         }
 
-        fn request_fetch_cluster(&self, cluster_id: i32, request_id: usize) -> anyhow::Result<()> {
-            self.requests.borrow_mut().push(format!(
-                "fetch_cluster:{}:{}",
-                cluster_id, request_id
-            ));
+        fn request_sync_remote_jobs(&self, request_id: usize) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!("SyncRemoteJobs(request_id={})", request_id));
+            Ok(())
+        }
+
+        fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!("FetchClusters(request_id={})", request_id));
             Ok(())
         }
 
@@ -2300,10 +2653,9 @@ mod tests {
             &self,
             _config: &crate::models::ClusterConfig,
             request_id: usize,
-        ) -> anyhow::Result<()> {
-            self.requests
-                .borrow_mut()
-                .push(format!("create_cluster:{}", request_id));
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!("CreateCluster(request_id={})", request_id));
             Ok(())
         }
 
@@ -2312,83 +2664,256 @@ mod tests {
             cluster_id: i32,
             _config: &crate::models::ClusterConfig,
             request_id: usize,
-        ) -> anyhow::Result<()> {
-            self.requests.borrow_mut().push(format!(
-                "update_cluster:{}:{}",
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "UpdateCluster(cluster_id={}, request_id={})",
                 cluster_id, request_id
             ));
             Ok(())
         }
 
-        fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> anyhow::Result<()> {
-            self.requests.borrow_mut().push(format!(
-                "delete_cluster:{}:{}",
+        fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "DeleteCluster(cluster_id={}, request_id={})",
                 cluster_id, request_id
             ));
             Ok(())
         }
 
-        fn request_test_cluster_connection(&self, cluster_id: i32, request_id: usize) -> anyhow::Result<()> {
-            self.requests.borrow_mut().push(format!(
-                "test_cluster_connection:{}:{}",
+        fn request_test_cluster_connection(
+            &self,
+            cluster_id: i32,
+            request_id: usize,
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "TestClusterConnection(cluster_id={}, request_id={})",
                 cluster_id, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_check_workflows_available(&self, request_id: usize) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "CheckWorkflowsAvailable(request_id={})",
+                request_id
+            ));
+            Ok(())
+        }
+
+        fn request_create_convergence_study(
+            &self,
+            config_json: &str,
+            request_id: usize,
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "CreateConvergenceStudy(config_json={}, request_id={})",
+                config_json, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_create_band_structure_workflow(
+            &self,
+            config_json: &str,
+            request_id: usize,
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "CreateBandStructureWorkflow(config_json={}, request_id={})",
+                config_json, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_create_phonon_workflow(
+            &self,
+            config_json: &str,
+            request_id: usize,
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "CreatePhononWorkflow(config_json={}, request_id={})",
+                config_json, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_create_eos_workflow(
+            &self,
+            config_json: &str,
+            request_id: usize,
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "CreateEosWorkflow(config_json={}, request_id={})",
+                config_json, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_launch_aiida_geopt(
+            &self,
+            config_json: &str,
+            request_id: usize,
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "LaunchAiidaGeopt(config_json={}, request_id={})",
+                config_json, request_id
+            ));
+            Ok(())
+        }
+
+        fn request_fetch_templates(&self, request_id: usize) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!("FetchTemplates(request_id={})", request_id));
+            Ok(())
+        }
+
+        fn request_render_template(
+            &self,
+            template_name: &str,
+            params_json: &str,
+            request_id: usize,
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "RenderTemplate(name={}, params={}, request_id={})",
+                template_name, params_json, request_id
             ));
             Ok(())
         }
 
         fn poll_response(&self) -> Option<BridgeResponse> {
-            let mut responses = self.responses.borrow_mut();
-            if responses.is_empty() {
-                None
-            } else {
-                Some(responses.remove(0))
-            }
+            let mut resps = self.responses.lock().unwrap();
+            resps.pop_front()
         }
     }
 
-    /// Mock implementation of LspService for testing.
+    // Mock LSP Service
     struct MockLspService {
-        calls: RefCell<Vec<String>>,
+        calls: Arc<Mutex<Vec<String>>>,
     }
 
     impl MockLspService {
         fn new() -> Self {
             Self {
-                calls: RefCell::new(Vec::new()),
+                calls: Arc::new(Mutex::new(Vec::new())),
             }
         }
     }
 
     impl LspService for MockLspService {
-        fn send_initialized(&mut self) -> anyhow::Result<()> {
-            self.calls.borrow_mut().push("initialized".to_string());
+        fn send_initialized(&mut self) -> Result<()> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push("send_initialized".to_string());
             Ok(())
         }
 
-        fn did_open(&mut self, file_path: &str, _text: &str) -> anyhow::Result<()> {
+        fn did_open(&mut self, path: &str, _content: &str) -> Result<()> {
             self.calls
-                .borrow_mut()
-                .push(format!("did_open:{}", file_path));
+                .lock()
+                .unwrap()
+                .push(format!("did_open:{}", path));
             Ok(())
         }
 
-        fn did_change(&mut self, file_path: &str, version: i32, _text: &str) -> anyhow::Result<()> {
+        fn did_change(&mut self, path: &str, _version: i32, _content: &str) -> Result<()> {
             self.calls
-                .borrow_mut()
-                .push(format!("did_change:{}:{}", file_path, version));
+                .lock()
+                .unwrap()
+                .push(format!("did_change:{}", path));
             Ok(())
         }
 
-        fn did_close(&mut self, file_path: &str) -> anyhow::Result<()> {
+        fn did_close(&mut self, path: &str) -> Result<()> {
             self.calls
-                .borrow_mut()
-                .push(format!("did_close:{}", file_path));
+                .lock()
+                .unwrap()
+                .push(format!("did_close:{}", path));
             Ok(())
         }
     }
 
+    // Helper to create app with mocks
+    fn create_test_app<'a>() -> App<'a> {
+        let (_, lsp_rx) = mpsc::channel();
+
+        let mut editor = TextArea::default();
+        editor.set_line_number_style(
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        );
+
+        App {
+            should_quit: false,
+            current_tab: AppTab::Jobs,
+            last_error: None,
+            last_error_time: None,
+            needs_redraw: false,
+            jobs_state: JobsState::default(),
+            slurm_queue: Vec::new(),
+            slurm_view_active: false,
+            slurm_request_id: 0,
+            slurm_selected: None,
+            last_slurm_refresh: None,
+            editor,
+            editor_file_path: None,
+            editor_file_uri: None,
+            editor_dft_code: None,
+            editor_version: 1,
+            lsp_diagnostics: Vec::new(),
+            current_job_details: None,
+            results_scroll: 0,
+            log_lines: Vec::new(),
+            log_scroll: 0,
+            log_job_pk: None,
+            log_job_name: None,
+            log_follow_mode: false,
+            last_log_refresh: None,
+            bridge: Box::new(MockBridgeService::new()), // Use mock bridge
+            next_request_id: 0,
+            pending_bridge_request: None,
+            pending_request_id: None,
+            pending_bridge_request_time: None,
+            lsp_client: Some(Box::new(MockLspService::new())), // Use mock LSP
+            lsp_receiver: lsp_rx,
+            last_editor_change: None,
+            pending_lsp_change: false,
+            materials: MaterialsSearchState::default(),
+            new_job: NewJobState::default(),
+            cluster_manager: ClusterManagerState::default(),
+            slurm_queue_state: SlurmQueueState::default(),
+            last_slurm_cluster_id: None,
+            vasp_input_state: crate::ui::VaspInputState::default(),
+            workflow_state: crate::ui::WorkflowState::default(),
+        }
+    }
+
+    // Test Helper for JobStatus
+    fn test_job(pk: i32, name: &str) -> JobStatus {
+        JobStatus {
+            pk,
+            uuid: format!("test-uuid-{}", pk),
+            name: name.to_string(),
+            dft_code: Some(crate::models::DftCode::Crystal),
+            state: crate::models::JobState::Completed,
+            runner_type: Some(crate::models::RunnerType::Local),
+            progress_percent: 100.0,
+            wall_time_seconds: Some(123.45),
+            created_at: Some("2023-01-01T00:00:00".to_string()),
+            error_snippet: None,
+        }
+    }
+
     // =========================================================================
-    // AppTab Tests
+    // General State Tests
     // =========================================================================
 
     #[test]
@@ -2410,7 +2935,7 @@ mod tests {
     }
 
     // =========================================================================
-    // JobsState Tests
+    // Jobs State Tests
     // =========================================================================
 
     #[test]
@@ -2418,8 +2943,8 @@ mod tests {
         let state = JobsState::default();
         assert!(state.jobs.is_empty());
         assert!(state.selected_index.is_none());
-        assert!(state.changed_pks.is_empty());
         assert!(state.last_refresh.is_none());
+        assert!(state.changed_pks.is_empty());
         assert!(state.pending_cancel_pk.is_none());
         assert!(!state.pending_submit);
     }
@@ -2447,7 +2972,6 @@ mod tests {
         };
 
         state.clear_pending_cancel();
-
         assert!(state.pending_cancel_pk.is_none());
     }
 
@@ -2460,12 +2984,11 @@ mod tests {
         };
 
         state.clear_pending_submit();
-
         assert!(!state.pending_submit);
     }
 
     // =========================================================================
-    // MaterialsSearchState Tests
+    // Materials Search State Tests
     // =========================================================================
 
     #[test]
@@ -2473,20 +2996,20 @@ mod tests {
         let state = MaterialsSearchState::default();
         assert!(!state.active);
         assert!(state.results.is_empty());
+        assert!(state.selected_for_import.is_none());
         assert!(!state.loading);
-        assert!(state.status.is_some());
         assert!(!state.status_is_error);
     }
 
-    /// Helper to create a minimal MaterialResult for testing.
+    // Helper for materials tests
     fn test_material(id: &str, formula: &str) -> MaterialResult {
         MaterialResult {
             material_id: id.to_string(),
             formula: Some(formula.to_string()),
             formula_pretty: None,
-            source: None,
+            source: Some("mp".to_string()),
             properties: Default::default(),
-            metadata: serde_json::Value::Null,
+            metadata: Default::default(),
             structure: None,
         }
     }
@@ -2496,11 +3019,13 @@ mod tests {
         let mut state = MaterialsSearchState::default();
         state.results.push(test_material("mp-1234", "MoS2"));
         state.loading = true;
+        state.status = Some("Searching...".to_string());
 
         state.open();
 
         assert!(state.active);
         assert!(state.results.is_empty()); // Cleared on open
+        assert!(state.status.is_some()); // Reset on open
         assert!(!state.loading); // Reset on open
     }
 
@@ -2509,6 +3034,7 @@ mod tests {
         let mut state = MaterialsSearchState::default();
         let initial_id = state.request_id;
 
+        state.active = true;
         state.close();
 
         assert!(!state.active);
@@ -2516,32 +3042,31 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)] // MaterialsSearchState has complex init
     fn test_materials_search_state_select_next() {
         let mut state = MaterialsSearchState::default();
         state.results = vec![test_material("mp-1", "A"), test_material("mp-2", "B")];
-
-        state.select_next();
-        assert_eq!(state.table_state.selected(), Some(0));
+        state.table_state.select(Some(0));
 
         state.select_next();
         assert_eq!(state.table_state.selected(), Some(1));
 
-        state.select_next(); // Wraps around
+        // Wrap around
+        state.select_next();
         assert_eq!(state.table_state.selected(), Some(0));
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)] // MaterialsSearchState has complex init
     fn test_materials_search_state_select_prev() {
         let mut state = MaterialsSearchState::default();
         state.results = vec![test_material("mp-1", "A"), test_material("mp-2", "B")];
+        state.table_state.select(Some(0));
+
+        // Wrap around
+        state.select_prev();
+        assert_eq!(state.table_state.selected(), Some(1));
 
         state.select_prev();
         assert_eq!(state.table_state.selected(), Some(0));
-
-        state.select_prev(); // Wraps around
-        assert_eq!(state.table_state.selected(), Some(1));
     }
 
     #[test]
@@ -2552,13 +3077,13 @@ mod tests {
         assert_eq!(state.status, Some("Test error".to_string()));
         assert!(state.status_is_error);
 
-        state.set_status("Test info", false);
-        assert_eq!(state.status, Some("Test info".to_string()));
+        state.set_status("Success", false);
+        assert_eq!(state.status, Some("Success".to_string()));
         assert!(!state.status_is_error);
     }
 
     // =========================================================================
-    // Action Enum Tests
+    // Action Tests
     // =========================================================================
 
     #[test]
@@ -2579,18 +3104,12 @@ mod tests {
     fn test_action_equality() {
         assert_eq!(Action::TabNext, Action::TabNext);
         assert_ne!(Action::TabNext, Action::TabPrev);
-        assert_eq!(
-            Action::TabSet(AppTab::Jobs),
-            Action::TabSet(AppTab::Jobs)
-        );
-        assert_ne!(
-            Action::TabSet(AppTab::Jobs),
-            Action::TabSet(AppTab::Editor)
-        );
+        assert_eq!(Action::TabSet(AppTab::Jobs), Action::TabSet(AppTab::Jobs));
+        assert_ne!(Action::TabSet(AppTab::Jobs), Action::TabSet(AppTab::Editor));
     }
 
     // =========================================================================
-    // Mock Service Tests (verify mocks work correctly)
+    // Mock Service Tests
     // =========================================================================
 
     #[test]
@@ -2599,38 +3118,61 @@ mod tests {
 
         mock.request_fetch_jobs(1).unwrap();
         mock.request_fetch_job_details(42, 2).unwrap();
+        mock.request_fetch_templates(3).unwrap();
+        mock.request_render_template("test", "{}", 4).unwrap();
+        mock.request_check_workflows_available(5).unwrap();
+        mock.request_create_convergence_study("{}", 6).unwrap();
+        mock.request_create_band_structure_workflow("{}", 7).unwrap();
+        mock.request_create_phonon_workflow("{}", 8).unwrap();
+        mock.request_create_eos_workflow("{}", 9).unwrap();
+        mock.request_launch_aiida_geopt("{}", 10).unwrap();
 
-        let requests = mock.requests.borrow();
-        assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0], "fetch_jobs:1");
-        assert_eq!(requests[1], "fetch_job_details:42:2");
+        let requests = mock.requests.lock().unwrap();
+        assert_eq!(requests.len(), 10);
+        assert_eq!(requests[0], "FetchJobs(request_id=1)");
+        assert_eq!(requests[1], "FetchJobDetails(pk=42, request_id=2)");
+        assert_eq!(requests[2], "FetchTemplates(request_id=3)");
+        assert_eq!(requests[3], "RenderTemplate(name=test, params={}, request_id=4)");
+        assert_eq!(requests[4], "CheckWorkflowsAvailable(request_id=5)");
+        assert_eq!(
+            requests[5],
+            "CreateConvergenceStudy(config_json={}, request_id=6)"
+        );
+        assert_eq!(
+            requests[6],
+            "CreateBandStructureWorkflow(config_json={}, request_id=7)"
+        );
+        assert_eq!(requests[7], "CreatePhononWorkflow(config_json={}, request_id=8)");
+        assert_eq!(requests[8], "CreateEosWorkflow(config_json={}, request_id=9)");
+        assert_eq!(requests[9], "LaunchAiidaGeopt(config_json={}, request_id=10)");
     }
 
     #[test]
     fn test_mock_bridge_service_returns_responses() {
         let mock = MockBridgeService::new();
 
-        // Initially no responses
+        // Initially empty
         assert!(mock.poll_response().is_none());
 
-        // Add a response
-        mock.add_response(BridgeResponse::Jobs {
-            request_id: 1,
-            result: Ok(vec![]),
-        });
-
-        // Now we get the response
-        let response = mock.poll_response();
-        assert!(response.is_some());
-        match response.unwrap() {
-            BridgeResponse::Jobs { request_id, result } => {
-                assert_eq!(request_id, 1);
-                assert!(result.is_ok());
-            }
-            _ => panic!("Expected Jobs response"),
+        // Add response
+        {
+            let mut resps = mock.responses.lock().unwrap();
+            resps.push_back(BridgeResponse::Jobs {
+                request_id: 1,
+                result: Ok(Vec::new()),
+            });
         }
 
-        // No more responses
+        // Should pop one
+        let resp = mock.poll_response();
+        assert!(resp.is_some());
+        if let Some(BridgeResponse::Jobs { request_id, .. }) = resp {
+            assert_eq!(request_id, 1);
+        } else {
+            panic!("Wrong response type");
+        }
+
+        // Should be empty again
         assert!(mock.poll_response().is_none());
     }
 
@@ -2643,11 +3185,515 @@ mod tests {
         mock.did_change("test.d12", 2, "new content").unwrap();
         mock.did_close("test.d12").unwrap();
 
-        let calls = mock.calls.borrow();
+        let calls = mock.calls.lock().unwrap();
         assert_eq!(calls.len(), 4);
-        assert_eq!(calls[0], "initialized");
+        assert_eq!(calls[0], "send_initialized");
         assert_eq!(calls[1], "did_open:test.d12");
-        assert_eq!(calls[2], "did_change:test.d12:2");
+        assert_eq!(calls[2], "did_change:test.d12");
         assert_eq!(calls[3], "did_close:test.d12");
+    }
+
+    // =========================================================================
+    // App Logic Tests
+    // =========================================================================
+
+    #[test]
+    fn test_tab_navigation_wraps_forward() {
+        let mut app = create_test_app();
+        assert_eq!(app.current_tab, AppTab::Jobs);
+
+        app.next_tab();
+        assert_eq!(app.current_tab, AppTab::Editor);
+
+        app.next_tab();
+        assert_eq!(app.current_tab, AppTab::Results);
+
+        app.next_tab();
+        assert_eq!(app.current_tab, AppTab::Log);
+
+        app.next_tab();
+        assert_eq!(app.current_tab, AppTab::Jobs);
+    }
+
+    #[test]
+    fn test_tab_navigation_wraps_backward() {
+        let mut app = create_test_app();
+        assert_eq!(app.current_tab, AppTab::Jobs);
+
+        app.prev_tab();
+        assert_eq!(app.current_tab, AppTab::Log);
+
+        app.prev_tab();
+        assert_eq!(app.current_tab, AppTab::Results);
+
+        app.prev_tab();
+        assert_eq!(app.current_tab, AppTab::Editor);
+
+        app.prev_tab();
+        assert_eq!(app.current_tab, AppTab::Jobs);
+    }
+
+    #[test]
+    fn test_tab_navigation_by_number() {
+        let mut app = create_test_app();
+
+        app.set_tab(AppTab::Jobs);
+        assert_eq!(app.current_tab, AppTab::Jobs);
+
+        app.set_tab(AppTab::Editor);
+        assert_eq!(app.current_tab, AppTab::Editor);
+
+        app.set_tab(AppTab::Results);
+        assert_eq!(app.current_tab, AppTab::Results);
+
+        app.set_tab(AppTab::Log);
+        assert_eq!(app.current_tab, AppTab::Log);
+
+        // Test setting same tab
+        app.set_tab(AppTab::Log);
+        assert_eq!(app.current_tab, AppTab::Log);
+
+        app.set_tab(AppTab::Jobs);
+        assert_eq!(app.current_tab, AppTab::Jobs);
+    }
+
+    #[test]
+    fn test_set_tab_same_tab_does_not_mark_dirty() {
+        let mut app = create_test_app();
+        app.needs_redraw = false; // Reset initial dirty
+
+        app.set_tab(AppTab::Jobs);
+        assert!(!app.needs_redraw());
+
+        app.set_tab(AppTab::Editor);
+        assert!(app.needs_redraw());
+    }
+
+    #[test]
+    fn test_needs_redraw_after_tab_change() {
+        let mut app = create_test_app();
+        app.take_needs_redraw(); // Clear initial
+
+        app.next_tab();
+        assert!(app.needs_redraw());
+
+        app.take_needs_redraw();
+        app.prev_tab();
+        assert!(app.needs_redraw());
+    }
+
+    #[test]
+    fn test_needs_redraw_after_job_selection_change() {
+        let mut app = create_test_app();
+        app.jobs_state.jobs = vec![test_job(1, "job1"), test_job(2, "job2")];
+        app.jobs_state.selected_index = Some(0);
+        app.take_needs_redraw();
+
+        app.select_next_job();
+        assert!(app.needs_redraw());
+
+        app.take_needs_redraw();
+        app.select_prev_job();
+        assert!(app.needs_redraw());
+    }
+
+    #[test]
+    fn test_update_action_tab_next() {
+        let mut app = create_test_app();
+        assert_eq!(app.current_tab, AppTab::Jobs);
+
+        app.update(Action::TabNext);
+        assert_eq!(app.current_tab, AppTab::Editor);
+    }
+
+    #[test]
+    fn test_update_action_tab_prev() {
+        let mut app = create_test_app();
+        app.current_tab = AppTab::Editor;
+
+        app.update(Action::TabPrev);
+        assert_eq!(app.current_tab, AppTab::Jobs);
+    }
+
+    #[test]
+    fn test_update_action_tab_set() {
+        let mut app = create_test_app();
+
+        app.update(Action::TabSet(AppTab::Log));
+        assert_eq!(app.current_tab, AppTab::Log);
+    }
+
+    #[test]
+    fn test_update_action_quit() {
+        let mut app = create_test_app();
+        assert!(!app.should_quit);
+
+        app.update(Action::Quit);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_update_action_error_clear() {
+        let mut app = create_test_app();
+        app.set_error("Test error");
+        assert!(app.last_error.is_some());
+
+        app.update(Action::ErrorClear);
+        assert!(app.last_error.is_none());
+    }
+
+    #[test]
+    fn test_log_scroll_bounds() {
+        let mut app = create_test_app();
+        app.log_lines = vec!["line1".to_string(), "line2".to_string()];
+
+        // Scroll down within bounds
+        app.scroll_log_down(); // max is 0 (2 lines - 20 height clamped to 0)
+        assert_eq!(app.log_scroll, 0);
+
+        // Scroll up at top
+        app.scroll_log_up();
+        assert_eq!(app.log_scroll, 0);
+
+        // Add more lines to allow scrolling
+        for i in 0..30 {
+            app.log_lines.push(format!("line{}", i + 3));
+        }
+        // Now 32 lines, max scroll = 12
+
+        app.scroll_log_down();
+        assert_eq!(app.log_scroll, 1);
+
+        app.scroll_log_up();
+        assert_eq!(app.log_scroll, 0);
+    }
+
+    #[test]
+    fn test_log_scroll_top_and_bottom() {
+        let mut app = create_test_app();
+        for i in 0..30 {
+            app.log_lines.push(format!("line{}", i));
+        }
+        // 30 lines, 20 visible -> max scroll 10
+
+        app.scroll_log_bottom();
+        assert_eq!(app.log_scroll, 10);
+
+        app.scroll_log_top();
+        assert_eq!(app.log_scroll, 0);
+
+        // Test page scrolling
+        app.scroll_log_page_down(); // +10
+        assert_eq!(app.log_scroll, 10);
+
+        app.scroll_log_page_up(); // -10
+        assert_eq!(app.log_scroll, 0);
+    }
+
+    #[test]
+    fn test_log_follow_mode_toggle() {
+        let mut app = create_test_app();
+        assert!(!app.log_follow_mode);
+
+        app.toggle_log_follow();
+        assert!(app.log_follow_mode);
+
+        app.toggle_log_follow();
+        assert!(!app.log_follow_mode);
+    }
+
+    #[test]
+    fn test_results_scroll_bounds() {
+        let mut app = create_test_app();
+        // No details loaded
+        app.scroll_results_down();
+        assert_eq!(app.results_scroll, 0);
+
+        // Add details
+        use crate::models::JobDetails;
+        app.current_job_details = Some(JobDetails {
+            pk: 1,
+            uuid: Some("uuid".to_string()),
+            name: "job".to_string(),
+            state: crate::models::JobState::Completed,
+            dft_code: Some(crate::models::DftCode::Crystal),
+            input_file: Some("input.d12".to_string()),
+            final_energy: None,
+            bandgap_ev: None,
+            convergence_met: false,
+            scf_cycles: None,
+            cpu_time_seconds: None,
+            wall_time_seconds: None,
+            warnings: vec![],
+            errors: vec![],
+            stdout_tail: vec!["line".to_string(); 30], // 30 lines
+            key_results: None,
+            work_dir: None,
+        });
+
+        // Display line count will be header (assume 10 lines) + 30 log lines = 40
+        // Scroll down
+        app.scroll_results_down();
+        assert_eq!(app.results_scroll, 1);
+
+        app.scroll_results_up();
+        assert_eq!(app.results_scroll, 0);
+    }
+
+    #[test]
+    fn test_job_selection_bounds_upper() {
+        let mut app = create_test_app();
+        app.jobs_state.jobs = vec![test_job(1, "j1"), test_job(2, "j2"), test_job(3, "j3")];
+        app.jobs_state.selected_index = Some(0);
+
+        app.select_next_job();
+        assert_eq!(app.jobs_state.selected_index, Some(1));
+
+        app.select_next_job();
+        assert_eq!(app.jobs_state.selected_index, Some(2));
+
+        // Should not go past end
+        app.select_next_job();
+        assert_eq!(app.jobs_state.selected_index, Some(2));
+    }
+
+    #[test]
+    fn test_job_selection_bounds_lower() {
+        let mut app = create_test_app();
+        app.jobs_state.jobs = vec![test_job(1, "j1"), test_job(2, "j2"), test_job(3, "j3")];
+        app.jobs_state.selected_index = Some(2);
+
+        app.select_prev_job();
+        assert_eq!(app.jobs_state.selected_index, Some(1));
+
+        app.select_prev_job();
+        assert_eq!(app.jobs_state.selected_index, Some(0));
+
+        // Should not go past 0
+        app.select_prev_job();
+        assert_eq!(app.jobs_state.selected_index, Some(0));
+    }
+
+    #[test]
+    fn test_job_selection_empty_list_select_next() {
+        let mut app = create_test_app();
+        assert!(app.jobs_state.jobs.is_empty());
+        assert!(app.jobs_state.selected_index.is_none());
+
+        app.select_next_job();
+        assert!(app.jobs_state.selected_index.is_none());
+    }
+
+    #[test]
+    fn test_job_selection_empty_list_select_prev() {
+        let mut app = create_test_app();
+        assert!(app.jobs_state.jobs.is_empty());
+        assert!(app.jobs_state.selected_index.is_none());
+
+        app.select_prev_job();
+        assert!(app.jobs_state.selected_index.is_none());
+    }
+
+    #[test]
+    fn test_job_selection_first_and_last() {
+        let mut app = create_test_app();
+        // 5 jobs
+        for i in 0..5 {
+            app.jobs_state.jobs.push(test_job(i, &format!("j{}", i)));
+        }
+        app.jobs_state.selected_index = Some(2);
+
+        app.select_first_job();
+        assert_eq!(app.jobs_state.selected_index, Some(0));
+
+        app.select_last_job();
+        assert_eq!(app.jobs_state.selected_index, Some(4));
+    }
+
+    #[test]
+    fn test_job_selection_first_on_empty_list() {
+        let mut app = create_test_app();
+        assert!(app.jobs_state.jobs.is_empty());
+
+        app.select_first_job();
+        assert!(app.jobs_state.selected_index.is_none());
+    }
+
+    #[test]
+    fn test_job_selection_last_on_empty_list() {
+        let mut app = create_test_app();
+        assert!(app.jobs_state.jobs.is_empty());
+
+        app.select_last_job();
+        assert!(app.jobs_state.selected_index.is_none());
+    }
+
+    #[test]
+    fn test_set_error_and_clear() {
+        let mut app = create_test_app();
+        assert!(app.last_error.is_none());
+
+        app.set_error("Something went wrong");
+        assert_eq!(app.last_error, Some("Something went wrong".to_string()));
+        assert!(app.last_error_time.is_some());
+
+        app.clear_error();
+        assert!(app.last_error.is_none());
+        assert!(app.last_error_time.is_none());
+    }
+
+    #[test]
+    fn test_set_error_marks_dirty() {
+        let mut app = create_test_app();
+        app.take_needs_redraw();
+
+        app.set_error("Error");
+        assert!(app.needs_redraw());
+    }
+
+    #[test]
+    fn test_clear_error_marks_dirty_only_if_error_exists() {
+        let mut app = create_test_app();
+        app.take_needs_redraw();
+
+        // No error to clear
+        app.clear_error();
+        assert!(!app.needs_redraw());
+
+        // Set error
+        app.set_error("Error");
+        app.take_needs_redraw();
+
+        // Clear error
+        app.clear_error();
+        assert!(app.needs_redraw());
+    }
+
+    #[test]
+    fn test_error_message_long_string() {
+        let mut app = create_test_app();
+        let long_message = "a".repeat(1000);
+        app.set_error(long_message.clone());
+        assert_eq!(app.last_error, Some(long_message));
+    }
+
+    #[test]
+    fn test_error_message_special_characters() {
+        let mut app = create_test_app();
+        let special_msg = "Error: <script>alert('xss')</script> & other chars";
+        app.set_error(special_msg);
+        assert_eq!(app.last_error, Some(special_msg.to_string()));
+    }
+
+    #[test]
+    fn test_last_slurm_cluster_remembered() {
+        let mut app = create_test_app();
+        assert!(app.last_slurm_cluster_id.is_none());
+
+        app.last_slurm_cluster_id = Some(99);
+        assert_eq!(app.last_slurm_cluster_id, Some(99));
+    }
+
+    #[test]
+    fn test_last_slurm_cluster_cleared() {
+        let mut app = create_test_app();
+        app.last_slurm_cluster_id = Some(1);
+
+        app.last_slurm_cluster_id = None;
+        assert!(app.last_slurm_cluster_id.is_none());
+    }
+
+    #[test]
+    fn test_mark_dirty_and_clear() {
+        let mut app = create_test_app();
+        // Initially created with needs_redraw = true (or not, depends on constructor logic)
+        // But let's force it
+        app.needs_redraw = false;
+
+        app.mark_dirty();
+        assert!(app.needs_redraw());
+
+        // Check without clearing
+        assert!(app.needs_redraw());
+
+        // Take and clear
+        assert!(app.take_needs_redraw());
+        assert!(!app.needs_redraw());
+    }
+
+    #[test]
+    fn test_take_needs_redraw_returns_and_clears() {
+        let mut app = create_test_app();
+        app.mark_dirty();
+
+        let dirty = app.take_needs_redraw();
+        assert!(dirty);
+        assert!(!app.needs_redraw());
+    }
+
+    #[test]
+    fn test_selected_job_returns_correct_job() {
+        let mut app = create_test_app();
+
+        app.jobs_state.jobs = vec![
+            test_job(1, "first"),
+            test_job(2, "second"),
+            test_job(3, "third"),
+        ];
+        app.jobs_state.selected_index = Some(1); // "second"
+
+        let selected = app.selected_job();
+        assert!(selected.is_some());
+        assert_eq!(selected.unwrap().name, "second");
+    }
+
+    #[test]
+    fn test_selected_job_returns_none_when_no_selection() {
+        let mut app = create_test_app();
+
+        app.jobs_state.jobs = vec![test_job(1, "job")];
+        app.jobs_state.selected_index = None;
+
+        assert!(app.selected_job().is_none());
+    }
+
+    #[test]
+    fn test_selected_job_returns_none_when_empty_list() {
+        let app = create_test_app();
+
+        assert!(app.jobs_state.jobs.is_empty());
+        assert!(app.selected_job().is_none());
+    }
+
+    #[test]
+    fn test_materials_modal_open_close() {
+        let mut app = create_test_app();
+
+        // Initially closed
+        assert!(!app.materials.active);
+
+        // Open
+        app.open_materials_modal();
+        assert!(app.materials.active);
+        assert!(app.needs_redraw());
+
+        // Clear dirty and close
+        app.take_needs_redraw();
+        app.close_materials_modal();
+        assert!(!app.materials.active);
+        assert!(app.needs_redraw());
+    }
+
+    #[test]
+    fn test_request_id_increments() {
+        let mut app = create_test_app();
+
+        let id1 = app.next_request_id();
+        let id2 = app.next_request_id();
+        let id3 = app.next_request_id();
+
+        assert_eq!(id1, 0);
+        assert_eq!(id2, 1);
+        assert_eq!(id3, 2);
     }
 }

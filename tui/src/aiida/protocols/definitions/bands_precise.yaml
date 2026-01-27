@@ -1,0 +1,33 @@
+# Precise Protocol for Band Structure
+# High-quality band structure for publication
+# Dense k-path with tight SCF convergence
+
+name: bands_precise
+description: "Publication-quality band structure"
+level: precise
+
+scf:
+  maxcycle: 200
+  toldee: 8          # 10^-8 Hartree convergence
+  fmixing: 30        # Conservative mixing
+  diis: true
+  smearing: false
+
+# SCF k-mesh (properties use dense path)
+kpoints:
+  mesh: [8, 8, 8]
+  offset: [0, 0, 0]
+
+# Band structure specific
+kpoints_distance: 0.03   # Very dense k-path (1/Å)
+first_band: 1
+last_band: -1           # All bands
+run_scf: true
+
+resources:
+  num_machines: 1
+  num_mpiprocs_per_machine: 4
+  max_wallclock_seconds: 28800  # 8 hours
+
+basis_set: pob-qzvp     # Quadruple-zeta for accuracy
+clean_workdir: true

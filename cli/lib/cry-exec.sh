@@ -177,16 +177,30 @@ exec_crystal_run() {
         return 1
     fi
 
-    # Build command based on execution mode
-    local cmd
+    # Validate EXE_PATH is a real executable (security check)
+    if [[ ! -x "${job_ref[EXE_PATH]}" ]]; then
+        ui_error "exec_crystal_run: EXE_PATH is not an executable: ${job_ref[EXE_PATH]}"
+        return 1
+    fi
+
+    # Build command array based on execution mode (avoiding eval for security)
+    local -a cmd_array=()
+    local cmd_display
     if [[ "${job_ref[MODE]}" == "Serial/OpenMP" ]]; then
         # Serial/OpenMP mode: direct execution
         # Note: OUTPUT to staging directory, stage_retrieve will rename to ${file_prefix}.out
-        cmd="${job_ref[EXE_PATH]} < INPUT > OUTPUT"
+        cmd_array=("${job_ref[EXE_PATH]}")
+        cmd_display="${job_ref[EXE_PATH]} < INPUT > OUTPUT"
     else
         # Parallel/MPI mode: use mpirun
         if [[ -z "${job_ref[MPI_RANKS]:-}" ]]; then
             ui_error "exec_crystal_run: MPI_RANKS required for Parallel/MPI mode"
+            return 1
+        fi
+
+        # Validate MPI_RANKS is a positive integer (security check)
+        if ! [[ "${job_ref[MPI_RANKS]}" =~ ^[0-9]+$ ]] || [[ "${job_ref[MPI_RANKS]}" -lt 1 ]]; then
+            ui_error "exec_crystal_run: MPI_RANKS must be a positive integer: ${job_ref[MPI_RANKS]}"
             return 1
         fi
 
@@ -198,7 +212,8 @@ exec_crystal_run() {
             mpi_bin="mpirun"
         fi
 
-        cmd="$mpi_bin -np ${job_ref[MPI_RANKS]} ${job_ref[EXE_PATH]} < INPUT > OUTPUT"
+        cmd_array=("$mpi_bin" "-np" "${job_ref[MPI_RANKS]}" "${job_ref[EXE_PATH]}")
+        cmd_display="$mpi_bin -np ${job_ref[MPI_RANKS]} ${job_ref[EXE_PATH]} < INPUT > OUTPUT"
     fi
 
     # Check if gum is available for spinner
@@ -220,8 +235,9 @@ exec_crystal_run() {
     fi
     echo ""
 
-    # Execute in background to enable live monitoring
-    eval "$cmd" 2>&1 &
+    # Execute in background using array expansion (secure - no eval)
+    # Redirect stdin from INPUT and stdout to OUTPUT
+    "${cmd_array[@]}" < INPUT > OUTPUT 2>&1 &
     pid=$!
 
     if $has_gum; then
@@ -236,9 +252,9 @@ exec_crystal_run() {
 
     # Log result and perform error analysis if failed
     if [[ $exit_code -eq 0 ]]; then
-        _exec_log "SUCCESS" "CRYSTAL23 calculation" "$cmd"
+        _exec_log "SUCCESS" "CRYSTAL23 calculation" "$cmd_display"
     else
-        _exec_log "FAILED" "CRYSTAL23 calculation" "$cmd" "$exit_code"
+        _exec_log "FAILED" "CRYSTAL23 calculation" "$cmd_display" "$exit_code"
         cry_log error "Calculation failed with exit code: $exit_code"
 
         # Run error analysis
@@ -261,127 +277,9 @@ exec_crystal_run() {
     return $exit_code
 }
 
-exec_stage_transform() {
-    # Execute a transformation on staged files
-    # Args: $1 - transformation command template (use {} for input, {output} for output)
-    # Returns: 0 on success, non-zero on failure
-    local cmd_template="$1"
-
-    # Get staged files
-    local stage_count
-    stage_count=$(stage_count)
-
-    if [[ $stage_count -eq 0 ]]; then
-        ui_warning "No files in stage"
-        return 0
-    fi
-
-    # Process each staged file
-    local failed=0
-    local processed=0
-
-    for stage_name in "${STAGE_FILES[@]}"; do
-        local input_file
-        if ! input_file=$(stage_get_path "$stage_name"); then
-            ((failed++))
-            continue
-        fi
-
-        local output_file="${input_file}.out"
-        local cmd="${cmd_template//\{\}/$input_file}"
-        cmd="${cmd//\{output\}/$output_file}"
-
-        if exec_run "Transform: $stage_name" bash -c "$cmd"; then
-            # Replace original with transformed output if exists
-            if [[ -f "$output_file" ]]; then
-                mv "$output_file" "$input_file"
-            fi
-            ((processed++))
-        else
-            ((failed++))
-        fi
-    done
-
-    ui_info "Processed $processed files ($failed failed)"
-    return $failed
-}
-
-exec_parallel_transform() {
-    # Execute transformations on staged files in parallel
-    # Args: $1 - transformation command template, $2 - max parallel jobs (optional)
-    # Returns: 0 on success, non-zero on failure
-    local cmd_template="$1"
-    local max_jobs="${2:-$PARALLEL_MAX_JOBS}"
-
-    # Initialize parallel execution
-    parallel_init "$max_jobs"
-
-    # Get staged files
-    local stage_count
-    stage_count=$(stage_count)
-
-    if [[ $stage_count -eq 0 ]]; then
-        ui_warning "No files in stage"
-        return 0
-    fi
-
-    # Queue transformations
-    for stage_name in "${STAGE_FILES[@]}"; do
-        local input_file
-        if ! input_file=$(stage_get_path "$stage_name"); then
-            continue
-        fi
-
-        local output_file="${input_file}.out"
-        local cmd="${cmd_template//\{\}/$input_file}"
-        cmd="${cmd//\{output\}/$output_file}"
-
-        parallel_run "transform_$stage_name" bash -c "$cmd"
-    done
-
-    # Wait for all to complete
-    local failed=0
-    if ! parallel_wait_all; then
-        failed=$?
-    fi
-
-    # Replace originals with outputs
-    for stage_name in "${STAGE_FILES[@]}"; do
-        local input_file
-        if ! input_file=$(stage_get_path "$stage_name"); then
-            continue
-        fi
-
-        local output_file="${input_file}.out"
-        if [[ -f "$output_file" ]]; then
-            mv "$output_file" "$input_file"
-        fi
-    done
-
-    ui_info "Parallel transformation completed"
-    return $failed
-}
-
-exec_pipeline() {
-    # Execute a pipeline of commands on staged files
-    # Args: $@ - pipeline stages (command templates)
-    # Returns: 0 on success, non-zero on failure
-    local stages=("$@")
-    local stage_num=0
-
-    for stage in "${stages[@]}"; do
-        ((stage_num++))
-        ui_header "Pipeline Stage $stage_num"
-
-        if ! exec_stage_transform "$stage"; then
-            ui_error "Pipeline failed at stage $stage_num"
-            return 1
-        fi
-    done
-
-    ui_success "Pipeline completed: $stage_num stages"
-    return 0
-}
+# NOTE: Legacy functions exec_stage_transform, exec_parallel_transform, and
+# exec_pipeline were removed as they used unimplemented staging/parallel APIs.
+# Production code uses exec_crystal_run() exclusively.
 
 exec_history() {
     # Show execution history

@@ -21,8 +21,10 @@ Example:
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import logging
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from aiida.orm import ProcessNode
@@ -132,14 +134,16 @@ class AiiDAQueryAdapter:
 
         jobs = []
         for pk, label, ctime, mtime, process_state in qb.all():
-            jobs.append({
-                "id": pk,
-                "name": label or f"Job {pk}",
-                "status": self._map_status(process_state, pk),
-                "created_at": ctime,
-                "updated_at": mtime,
-                "runner_type": "aiida",
-            })
+            jobs.append(
+                {
+                    "id": pk,
+                    "name": label or f"Job {pk}",
+                    "status": self._map_status(process_state, pk),
+                    "created_at": ctime,
+                    "updated_at": mtime,
+                    "runner_type": "aiida",
+                }
+            )
 
         return jobs
 
@@ -160,7 +164,8 @@ class AiiDAQueryAdapter:
 
         try:
             node = orm.load_node(job_id)
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to load node %s: %s", job_id, e)
             return None
 
         # Only accept calculation/workflow nodes
@@ -178,8 +183,8 @@ class AiiDAQueryAdapter:
         if hasattr(node, "get_remote_workdir"):
             try:
                 work_dir = node.get_remote_workdir()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to get remote workdir: %s", e)
 
         return {
             "id": node.pk,
@@ -192,7 +197,9 @@ class AiiDAQueryAdapter:
             "updated_at": node.mtime,
             "runner_type": "aiida",
             "cluster_id": None,  # AiiDA uses computers, not cluster_id
-            "computer": node.computer.label if hasattr(node, "computer") and node.computer else None,
+            "computer": node.computer.label
+            if hasattr(node, "computer") and node.computer
+            else None,
         }
 
     def create_job(
@@ -232,12 +239,14 @@ class AiiDAQueryAdapter:
 
         # Create a simple Dict node to hold job metadata
         # The actual CalcJob will be created when submitted
-        metadata = orm.Dict(dict={
-            "name": name,
-            "input_file_pk": input_file.pk,
-            "created_via": "crystal-tui",
-            "status": "draft",
-        })
+        metadata = orm.Dict(
+            dict={
+                "name": name,
+                "input_file_pk": input_file.pk,
+                "created_via": "crystal-tui",
+                "status": "draft",
+            }
+        )
         metadata.label = name
         metadata.store()
 
@@ -348,14 +357,16 @@ class AiiDAQueryAdapter:
 
         clusters = []
         for computer in Computer.collection.all():
-            clusters.append({
-                "id": computer.pk,
-                "name": computer.label,
-                "hostname": computer.hostname,
-                "username": computer.get_property("default_mpiprocs_per_machine", "N/A"),
-                "queue_type": computer.scheduler_type.replace("core.", ""),
-                "max_concurrent": 10,  # Default
-            })
+            clusters.append(
+                {
+                    "id": computer.pk,
+                    "name": computer.label,
+                    "hostname": computer.hostname,
+                    "username": computer.get_property("default_mpiprocs_per_machine", "N/A"),
+                    "queue_type": computer.scheduler_type.replace("core.", ""),
+                    "max_concurrent": 10,  # Default
+                }
+            )
 
         return clusters
 
@@ -383,7 +394,7 @@ class AiiDAQueryAdapter:
 
         return self.AIIDA_TO_STATUS.get(process_state, "unknown")
 
-    def _extract_input_content(self, node: "ProcessNode") -> str:
+    def _extract_input_content(self, node: ProcessNode) -> str:
         """
         Extract d12 input content from node inputs.
 
@@ -412,7 +423,7 @@ class AiiDAQueryAdapter:
 
         return ""
 
-    def _extract_results(self, node: "ProcessNode") -> str:
+    def _extract_results(self, node: ProcessNode) -> str:
         """
         Extract results JSON from node outputs.
 

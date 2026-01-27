@@ -11,6 +11,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs, Wrap};
 use tui_textarea::TextArea;
 
 use crate::app::App;
+use crate::models::VaspInputFiles;
 
 /// Active VASP file tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,15 +63,6 @@ impl VaspFileTab {
             VaspFileTab::Potcar,
         ]
     }
-}
-
-/// VASP input file contents.
-#[derive(Debug, Clone, Default)]
-pub struct VaspInputFiles {
-    pub poscar: String,
-    pub incar: String,
-    pub kpoints: String,
-    pub potcar_config: String,
 }
 
 /// VASP Input Modal state.
@@ -197,8 +189,7 @@ impl VaspInputState {
             return Err("KPOINTS cannot be empty".to_string());
         }
 
-        if contents.potcar_config.trim() == "Elements:"
-            || contents.potcar_config.trim().is_empty()
+        if contents.potcar_config.trim() == "Elements:" || contents.potcar_config.trim().is_empty()
         {
             return Err("POTCAR elements must be specified".to_string());
         }
@@ -292,7 +283,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .borders(Borders::ALL)
         .border_style(border_style)
         .title(" VASP Multi-File Input ")
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
     frame.render_widget(modal_block, modal_area);
 
     // Layout: Tabs, Editor, Status, Footer
@@ -322,10 +317,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 /// Render the tab bar showing all VASP files.
 fn render_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let titles: Vec<_> = VaspFileTab::all()
-        .iter()
-        .map(|tab| tab.name())
-        .collect();
+    let titles: Vec<_> = VaspFileTab::all().iter().map(|tab| tab.name()).collect();
 
     let selected = VaspFileTab::all()
         .iter()
@@ -446,9 +438,7 @@ fn render_footer(frame: &mut Frame, area: Rect) {
         Span::raw("  "),
         Span::styled(
             " Esc ",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
         Span::styled("Cancel", Style::default().fg(Color::White)),
     ]);
@@ -476,4 +466,18 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_set_status_clears_error() {
+        let mut state = VaspInputState::new();
+        state.error = Some("boom".to_string());
+        state.set_status("ok".to_string());
+        assert_eq!(state.status, Some("ok".to_string()));
+        assert!(state.error.is_none());
+    }
 }

@@ -11,9 +11,12 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             vec![
                 ("j/k", "Select"),
                 ("n", "New Job"),
+                ("c", "Clusters"),
+                ("s", "Queue"),
+                ("v", "VASP"),
                 ("Enter", "Details"),
                 ("L", "Logs"),
-                ("U", "SLURM"),
+                ("U", "SLURM View"),
                 ("C", "Cancel"),
             ]
         }

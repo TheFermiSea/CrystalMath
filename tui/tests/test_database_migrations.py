@@ -218,8 +218,8 @@ class TestMigrationAtomicity:
                     cursor = conn.execute("SELECT version FROM schema_version ORDER BY version")
                     versions = [row[0] for row in cursor.fetchall()]
 
-                    # Should have v1, v2, v3, v4, v5 entries (all migrations applied)
-                    assert versions == [1, 2, 3, 4, 5], f"Unexpected version history: {versions}"
+                    # Should have v1 through v7 entries (all migrations applied)
+                    assert versions == [1, 2, 3, 4, 5, 6, 7], f"Unexpected version history: {versions}"
 
                     # Verify all tables exist
                     cursor = conn.execute(
@@ -315,11 +315,11 @@ class TestMigrationEdgeCases:
             finally:
                 conn.close()
 
-            # Now open with Database class (should trigger migration to v5)
+            # Now open with Database class (should trigger migration to latest)
             db = Database(db_path)
             try:
                 version = db.get_schema_version()
-                assert version == 5, f"Database not upgraded to v5: version {version}"
+                assert version == Database.SCHEMA_VERSION, f"Database not upgraded to v{Database.SCHEMA_VERSION}: version {version}"
 
                 # Verify all tables exist
                 with db.connection() as conn:

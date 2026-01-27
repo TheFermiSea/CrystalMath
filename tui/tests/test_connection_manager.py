@@ -534,8 +534,8 @@ class TestConnectionManager:
         await connection_manager.connect(1)
 
         call_kwargs = mock_connect.call_args[1]
-        # When strict checking disabled, known_hosts should be empty tuple
-        assert call_kwargs["known_hosts"] == ()
+        # When strict checking disabled, known_hosts should be None (disables verification)
+        assert call_kwargs["known_hosts"] is None
 
     @pytest.mark.asyncio
     @patch("src.core.connection_manager.asyncssh.connect")

@@ -496,15 +496,59 @@ class BaseRunner(ABC):
 
     def acquire_slot(self):
         """
-        Acquire a job execution slot.
+        Acquire a job execution slot (DEPRECATED - use acquire_slot_for_job).
 
         This enforces max_concurrent_jobs limit using an asyncio semaphore.
         Use as an async context manager:
 
             async with runner.acquire_slot():
                 # Execute job
+
+        WARNING: This releases the slot when the context exits, not when the
+        job completes. For proper concurrency limiting, use acquire_slot_for_job()
+        which spawns a background task to release the slot on job completion.
         """
         return self._semaphore
+
+    async def acquire_slot_for_job(self, job_handle: str) -> None:
+        """
+        Acquire a job slot and hold it until job completion.
+
+        This properly enforces max_concurrent_jobs by:
+        1. Acquiring the semaphore immediately
+        2. Spawning a background task that releases it when job completes
+
+        Call this AFTER submit_job() returns a job_handle.
+
+        Args:
+            job_handle: The job handle to monitor for completion
+        """
+        await self._semaphore.acquire()
+
+        # Spawn background task to release slot when job completes
+        task = asyncio.create_task(
+            self._monitor_and_release_slot(job_handle),
+            name=f"slot_monitor_{job_handle}"
+        )
+        self._active_jobs[job_handle] = task
+
+    async def _monitor_and_release_slot(self, job_handle: str) -> None:
+        """
+        Background task that releases the semaphore when job completes.
+
+        Args:
+            job_handle: Job to monitor
+        """
+        try:
+            # Wait for job to reach terminal state
+            await self.wait_for_completion(job_handle, poll_interval=5.0)
+        except Exception:
+            # Job monitoring failed, still release the slot
+            pass
+        finally:
+            self._semaphore.release()
+            # Remove from active jobs
+            self._active_jobs.pop(job_handle, None)
 
     def is_connected(self) -> bool:
         """

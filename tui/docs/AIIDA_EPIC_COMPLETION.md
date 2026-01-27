@@ -160,15 +160,18 @@ uv run pytest tests/test_aiida_e2e.py --aiida -v
 | Migration | 30 | 3 | 33 |
 | Parser | 40 | 2 | 42 |
 | Submitter | 30 | - | 30 |
+| Diagnostics | 33 | - | 33 |
+| Multi-Code Workflows | 24 | - | 24 |
+| Protocols | 32 | - | 32 |
 | Infrastructure | - | 8 | 8 |
-| **Total** | **135** | **18** | **153** |
+| **Total** | **224** | **18** | **242** |
 
 ### Test Execution
 
 **Unit Tests** (mock-based):
 ```bash
 uv run pytest tests/test_aiida_*.py -v
-# Result: 28 passed, others need mock refinement
+# Result: 157 passed, 63 skipped (as of 2025-12-31)
 ```
 
 **E2E Tests** (requires infrastructure):
@@ -277,15 +280,114 @@ uv run pytest tests/test_aiida_e2e.py --aiida -v
    - Properties calculation support
    - Automated code discovery
 
-2. **WorkChain Support**:
-   - Geometry optimization workflows
-   - Band structure calculations
-   - Multi-step workflows
-
-3. **Advanced Features**:
+2. **Advanced Features**:
    - Result caching and reuse
    - Automatic restart handling
    - Parallel job submission
+
+---
+
+## Multi-Code Workflow Infrastructure (xr21 P2)
+
+**Completion Date**: 2025-12-31
+
+### Overview
+
+Extended the AiiDA integration with multi-code workflow support for post-SCF excited-state calculations. This enables chaining CRYSTAL23 DFT calculations with specialized codes for GW, BSE, and nonlinear optical properties.
+
+### Implemented WorkChains
+
+#### 1. YAMBO Integration (`src/aiida/workchains/multicode/yambo_gw.py`)
+
+- **YamboGWWorkChain**: G0W0 quasi-particle corrections
+  - One-shot GW calculations
+  - Plasmon-pole approximation support
+  - Quasi-particle band structure output
+
+- **YamboBSEWorkChain**: Bethe-Salpeter Equation for excitons
+  - Optical absorption spectra
+  - Exciton binding energies
+  - Optional GW corrections
+
+#### 2. YAMBO Nonlinear Optics (`src/aiida/workchains/multicode/yambo_nonlinear.py`)
+
+- **YamboNonlinearWorkChain**: Nonlinear optical susceptibilities
+  - χ⁽²⁾ second-harmonic generation (SHG)
+  - χ⁽³⁾ third-harmonic generation (THG)
+  - Real-time TDDFT approach
+  - Tensor component extraction
+
+#### 3. BerkeleyGW Integration (`src/aiida/workchains/multicode/berkeleygw.py`)
+
+- **BerkeleyGWWorkChain**: Full GW+BSE workflow
+  - Epsilon (dielectric screening) calculation
+  - Sigma (self-energy) calculation
+  - Optional kernel + absorption for BSE
+  - Support for metals and semiconductors
+
+### Converter Functions (`src/aiida/workchains/multicode/converters.py`)
+
+| Function | Purpose |
+|----------|---------|
+| `crystal_to_qe_wavefunction` | Prepare CRYSTAL23 output for YAMBO |
+| `crystal_to_yambo_input` | Generate YAMBO input parameters |
+| `crystal_to_berkeleygw` | Generate BerkeleyGW configuration |
+| `crystal_bands_to_wannier90` | Prepare Wannier90 MLWF inputs |
+| `extract_band_edges` | Extract VBM/CBM for energy windows |
+
+### Base Classes (`src/aiida/workchains/multicode/base.py`)
+
+- **MultiCodeWorkChain**: Base for all multi-code workflows
+  - Required codes validation
+  - Exit code standardization
+  - Error propagation
+
+- **PostSCFWorkChain**: Base for SCF → post-processing chains
+  - Automatic SCF execution if needed
+  - Wavefunction handoff
+  - Conversion step coordination
+
+### Test Coverage
+
+- **24 tests** in `tests/test_aiida_multicode.py`
+- Tests cover:
+  - Converter functions (GW, BSE, nonlinear, BerkeleyGW, Wannier90)
+  - WorkChain specifications (inputs, outputs, exit codes)
+  - Base class inheritance
+  - Module imports and availability flags
+  - Default parameter validation
+  - Code compatibility checking
+
+### Graceful Degradation
+
+All multi-code workflows support **simulated results** when external plugins are not installed:
+- `aiida-yambo` optional for YAMBO workflows
+- `aiida-wannier90` optional for Wannier90 conversion
+- numpy optional for band structure conversion
+
+### Parser-Based Diagnostics (xr21.15)
+
+Enhanced SCF diagnostics with parser-based analysis:
+
+- **`analyze_scf_from_parsed_output()`**: New robust diagnostic function
+  - Uses parsed output parameters instead of regex
+  - Handles edge cases (memory errors, timeouts, linear dependence)
+  - Provides convergence pattern classification
+  - Recommends parameter modifications
+
+### Files Created
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `multicode/__init__.py` | 25 | Module exports |
+| `multicode/base.py` | 180 | Base classes |
+| `multicode/converters.py` | 383 | Converter calcfunctions |
+| `multicode/yambo_gw.py` | 398 | YAMBO GW/BSE workflows |
+| `multicode/yambo_nonlinear.py` | 404 | YAMBO nonlinear optics |
+| `multicode/berkeleygw.py` | 386 | BerkeleyGW workflow |
+| `test_aiida_multicode.py` | 481 | 24 unit tests |
+
+**Total**: ~2,257 lines of new production code and tests
 
 ---
 

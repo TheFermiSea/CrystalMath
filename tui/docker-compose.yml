@@ -1,88 +1,121 @@
-version: '3.8'
-
 # AiiDA Infrastructure Stack for CRYSTAL-TUI
 # Provides PostgreSQL and RabbitMQ services for AiiDA workflows
 #
 # Usage:
-#   docker-compose up -d              # Start services
-#   docker-compose logs -f             # Watch logs
-#   docker-compose down -v             # Stop and remove (keeps volumes by default)
+#   docker-compose up -d                    # Start services
+#   docker-compose logs -f                  # Watch logs
+#   docker-compose down                     # Stop services (keeps data)
+#   docker-compose down -v                  # Stop and remove volumes (destroys data)
+#   docker-compose ps                       # Check service status
 #
-# Environment variables are loaded from .env file
+# Environment variables are loaded from .env file (copy from .env.example)
+#
+# Health checks:
+#   docker-compose exec postgres pg_isready -U aiida_user
+#   docker-compose exec rabbitmq rabbitmq-diagnostics -q ping
+#
+# After starting, run: ./scripts/docker_setup_aiida.sh
 
 services:
-  # PostgreSQL database for AiiDA
+  # PostgreSQL 15 database for AiiDA persistence
   postgres:
-    image: postgres:14-alpine
+    image: postgres:15-alpine
     container_name: crystal-tui-postgres
     environment:
+      # Database credentials
       POSTGRES_USER: ${POSTGRES_USER:-aiida_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: ${POSTGRES_DB:-aiida_crystal_tui}
-      POSTGRES_INITDB_ARGS: ${POSTGRES_INITDB_ARGS:--c max_connections=200 -c shared_buffers=256MB}
+      # PostgreSQL data directory
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      # Named volume for data persistence
+      # Named volume for data persistence (survives container restarts)
       - postgres_data:/var/lib/postgresql/data
-      # Optional: initialization scripts
-      - ./scripts/postgres_init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    environment:
-      # Configure PostgreSQL for AiiDA
-      PGDATA: /var/lib/postgresql/data
+      # Initialization scripts (run once on first start)
+      - ./scripts/postgres_init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    # PostgreSQL tuning for AiiDA workloads via command args
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "effective_cache_size=512MB"
+      - "-c"
+      - "timezone=UTC"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aiida_user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aiida_user} -d ${POSTGRES_DB:-aiida_crystal_tui}"]
       interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
-    networks:
-      - crystal-network
-
-  # RabbitMQ message broker for AiiDA daemon
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    container_name: crystal-tui-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-aiida_user}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-changeme}
-      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:-/aiida}
-    ports:
-      # AMQP protocol (message broker)
-      - "${RABBITMQ_PORT:-5672}:5672"
-      # Management UI HTTP
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
-    volumes:
-      # Named volume for data persistence
-      - rabbitmq_data:/var/lib/rabbitmq
-      # RabbitMQ configuration (optional)
-      - ./scripts/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
-    healthcheck:
-      test: rabbitmq-diagnostics -q ping
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      retries: 10
       start_period: 15s
     restart: unless-stopped
     networks:
       - crystal-network
-    # Enable management plugin
-    labels:
-      - "management_ui=http://localhost:${RABBITMQ_MANAGEMENT_PORT:-15672}"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # RabbitMQ 3.x message broker for AiiDA daemon communication
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: crystal-tui-rabbitmq
+    hostname: crystal-tui-rabbitmq
+    environment:
+      # RabbitMQ credentials
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-aiida_user}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-changeme}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:-/aiida}
+      # Node name for clustering (single-node setup)
+      RABBITMQ_NODENAME: rabbit@crystal-tui-rabbitmq
+    ports:
+      # AMQP protocol (message broker)
+      - "${RABBITMQ_PORT:-5672}:5672"
+      # Management UI (http://localhost:15672)
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      # Named volume for message persistence
+      - rabbitmq_data:/var/lib/rabbitmq
+      # Custom configuration
+      - ./scripts/rabbitmq.conf:/etc/rabbitmq/conf.d/99-aiida.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - crystal-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    labels:
+      - "traefik.enable=false"
+      - "description=RabbitMQ message broker for AiiDA daemon"
+
+# Persistent named volumes (data survives container restarts)
 volumes:
   postgres_data:
+    name: crystal-tui-postgres-data
     driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
   rabbitmq_data:
+    name: crystal-tui-rabbitmq-data
     driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
 
+# Internal network for service communication
 networks:
   crystal-network:
+    name: crystal-tui-network
     driver: bridge

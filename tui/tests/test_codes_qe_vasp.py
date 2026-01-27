@@ -183,6 +183,130 @@ VASP_WITH_WARNINGS = """
   Total CPU time used (sec):       30.123
 """
 
+# Comprehensive VASP output with full timing information for benchmark testing
+VASP_BENCHMARK_OUTPUT = """
+ running on   16 total cores
+ distrk:  each k-point on   16 cores,    1 groups
+ distr:  one band on NCORES_PER_BAND=   4 cores,    4 groups
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+ vasp.5.4.4.18Apr17-6-g9f103f2a35 (build Dec 15 2023 14:50:32) complex
+
+ executed on             LinuxIFC date 2024.12.15  10:30:00
+ running on   16 total cores
+ distrk:  each k-point on   16 cores,    1 groups
+ distr:  one band on NCORES_PER_BAND=   4 cores,    4 groups
+
+ POTCAR:    PAW_PBE Si 05Jan2001
+
+   NPAR =       4
+   NCORE=       4
+   KPAR =       2
+
+ total amount of memory used by VASP MPI-rank0   524288. kBytes
+
+   FREE ENERGIE OF THE ION-ELECTRON SYSTEM (eV)
+   ---------------------------------------------------
+
+       1       -10.12345       0.12E-02
+       2       -10.45678       0.45E-03
+       3       -10.78910       0.12E-05
+
+------------------------ aborting loop because EDIFF is reached --------------------
+
+   POTLOK:  cpu time    1.23: real time    1.45
+   SETDIJ:  cpu time    0.56: real time    0.78
+   EDDIAG:  cpu time    2.34: real time    2.89
+   RMM-DIIS: cpu time    3.45: real time    4.12
+   ORTHCH:  cpu time    0.12: real time    0.15
+   DOS:     cpu time    0.02: real time    0.03
+   CHARGE:  cpu time    1.23: real time    1.56
+   MIXING:  cpu time    0.34: real time    0.45
+   LOOP:    cpu time   12.34: real time   15.67
+
+   FREE ENERGIE OF THE ION-ELECTRON SYSTEM (eV)
+   ---------------------------------------------------
+
+       1       -10.98765       0.12E-03
+       2       -11.23456       0.45E-05
+
+------------------------ aborting loop because EDIFF is reached --------------------
+
+   POTLOK:  cpu time    1.12: real time    1.34
+   SETDIJ:  cpu time    0.45: real time    0.67
+   EDDIAG:  cpu time    2.12: real time    2.67
+   RMM-DIIS: cpu time    3.23: real time    3.89
+   ORTHCH:  cpu time    0.11: real time    0.14
+   DOS:     cpu time    0.02: real time    0.02
+   CHARGE:  cpu time    1.12: real time    1.45
+   MIXING:  cpu time    0.32: real time    0.42
+   FORCES:  cpu time    0.89: real time    1.12
+   STRESS:  cpu time    1.23: real time    1.56
+   LOOP:    cpu time   11.23: real time   14.34
+
+                   LOOP+:  cpu time   24.56: real time   31.45
+
+ reached required accuracy - stopping structural energy minimisation
+
+  free  energy   TOTEN  =       -85.54234987 eV
+
+  energy  without entropy =       -85.53789012
+
+ General timing and accounting informations for this job:
+
+  Total CPU time used (sec):      125.678
+  Elapsed time (sec):              45.234
+
+  Maximum memory used (kb):      654321.
+
+--------------------------------------------------------------------------------------------------------
+
+"""
+
+# VASP output with minimal timing (single-point calculation)
+VASP_SINGLE_POINT_OUTPUT = """
+ running on    8 total cores
+
+   NPAR =       2
+   NCORE=       4
+
+ POTCAR:    PAW_PBE Fe 06Sep2000
+
+ total amount of memory used by VASP MPI-rank0   262144. kBytes
+
+   FREE ENERGIE OF THE ION-ELECTRON SYSTEM (eV)
+   ---------------------------------------------------
+
+       1       -25.12345       0.12E-01
+       2       -26.45678       0.45E-02
+       3       -27.78910       0.12E-03
+       4       -27.89012       0.45E-05
+
+------------------------ aborting loop because EDIFF is reached --------------------
+
+   POTLOK:  cpu time    0.98: real time    1.12
+   SETDIJ:  cpu time    0.34: real time    0.45
+   EDDIAG:  cpu time    1.56: real time    1.89
+   RMM-DIIS: cpu time    2.34: real time    2.78
+   ORTHCH:  cpu time    0.08: real time    0.10
+   CHARGE:  cpu time    0.89: real time    1.12
+   MIXING:  cpu time    0.23: real time    0.31
+   LOOP:    cpu time    8.45: real time   10.23
+
+  free  energy   TOTEN  =       -27.89012345 eV
+
+ General timing and accounting informations for this job:
+
+  Total CPU time used (sec):       32.456
+  Elapsed time (sec):              12.345
+
+--------------------------------------------------------------------------------------------------------
+
+"""
+
 
 class TestQuantumEspressoConfig:
     """Tests for Quantum Espresso code configuration."""
@@ -761,3 +885,274 @@ class TestVASPConfigAuxiliaryMappings:
         """Test VASP uses CWD invocation style."""
         from src.core.codes.base import InvocationStyle
         assert VASP_CONFIG.invocation_style == InvocationStyle.CWD
+
+
+class TestVASPBenchmarkExtraction:
+    """Tests for VASP benchmark timing extraction (task ct3.6)."""
+
+    @pytest.fixture
+    def parser(self):
+        """Get the VASP parser instance."""
+        return get_parser(DFTCode.VASP)
+
+    def test_extract_total_timing(self, parser):
+        """Test extraction of total CPU and elapsed time."""
+        timing = parser.extract_timing_data(VASP_BENCHMARK_OUTPUT)
+
+        assert "total_cpu_time_sec" in timing
+        assert timing["total_cpu_time_sec"] == pytest.approx(125.678, rel=1e-3)
+
+        assert "elapsed_time_sec" in timing
+        assert timing["elapsed_time_sec"] == pytest.approx(45.234, rel=1e-3)
+
+    def test_extract_loop_timing(self, parser):
+        """Test extraction of LOOP (SCF) timing - summed across iterations."""
+        timing = parser.extract_timing_data(VASP_BENCHMARK_OUTPUT)
+
+        # Should sum both LOOP entries: 12.34 + 11.23 = 23.57
+        assert "loop_cpu_time_sec" in timing
+        assert timing["loop_cpu_time_sec"] == pytest.approx(23.57, rel=1e-2)
+
+        # Real time: 15.67 + 14.34 = 30.01
+        assert "loop_real_time_sec" in timing
+        assert timing["loop_real_time_sec"] == pytest.approx(30.01, rel=1e-2)
+
+        # Two ionic steps = two LOOP entries
+        assert "loop_count" in timing
+        assert timing["loop_count"] == 2
+
+    def test_extract_loop_plus_timing(self, parser):
+        """Test extraction of LOOP+ (ionic step) timing."""
+        timing = parser.extract_timing_data(VASP_BENCHMARK_OUTPUT)
+
+        assert "loop_plus_cpu_time_sec" in timing
+        assert timing["loop_plus_cpu_time_sec"] == pytest.approx(24.56, rel=1e-2)
+
+        assert "loop_plus_real_time_sec" in timing
+        assert timing["loop_plus_real_time_sec"] == pytest.approx(31.45, rel=1e-2)
+
+        assert "loop_plus_count" in timing
+        assert timing["loop_plus_count"] == 1
+
+    def test_extract_routine_timings(self, parser):
+        """Test extraction of per-routine timing breakdown."""
+        timing = parser.extract_timing_data(VASP_BENCHMARK_OUTPUT)
+
+        assert "routine_timings" in timing
+        routines = timing["routine_timings"]
+
+        # Check POTLOK timing (summed across 2 ionic steps)
+        assert "POTLOK" in routines
+        assert routines["POTLOK"]["cpu_sec"] == pytest.approx(1.23 + 1.12, rel=1e-2)
+        assert routines["POTLOK"]["real_sec"] == pytest.approx(1.45 + 1.34, rel=1e-2)
+        assert routines["POTLOK"]["count"] == 2
+
+        # Check SETDIJ timing
+        assert "SETDIJ" in routines
+        assert routines["SETDIJ"]["cpu_sec"] == pytest.approx(0.56 + 0.45, rel=1e-2)
+
+        # Check EDDIAG timing
+        assert "EDDIAG" in routines
+        assert routines["EDDIAG"]["cpu_sec"] == pytest.approx(2.34 + 2.12, rel=1e-2)
+
+        # Check CHARGE timing
+        assert "CHARGE" in routines
+        assert routines["CHARGE"]["cpu_sec"] == pytest.approx(1.23 + 1.12, rel=1e-2)
+
+        # Check FORCES (only in second ionic step)
+        assert "FORCES" in routines
+        assert routines["FORCES"]["count"] == 1
+
+        # Check STRESS (only in second ionic step)
+        assert "STRESS" in routines
+        assert routines["STRESS"]["count"] == 1
+
+    def test_extract_memory_usage(self, parser):
+        """Test extraction of memory usage per core."""
+        timing = parser.extract_timing_data(VASP_BENCHMARK_OUTPUT)
+
+        # 524288 kBytes = 512 MB
+        assert "memory_per_core_mb" in timing
+        assert timing["memory_per_core_mb"] == pytest.approx(512.0, rel=1e-2)
+
+        # Maximum memory: 654321 kb = ~639 MB
+        assert "maximum_memory_used_mb" in timing
+        assert timing["maximum_memory_used_mb"] == pytest.approx(639.18, rel=1e-2)
+
+    def test_extract_parallelization_settings(self, parser):
+        """Test extraction of NPAR, NCORE, KPAR."""
+        timing = parser.extract_timing_data(VASP_BENCHMARK_OUTPUT)
+
+        assert "npar" in timing
+        assert timing["npar"] == 4
+
+        assert "ncore" in timing
+        assert timing["ncore"] == 4
+
+        assert "kpar" in timing
+        assert timing["kpar"] == 2
+
+    def test_extract_num_cores(self, parser):
+        """Test extraction of number of cores."""
+        timing = parser.extract_timing_data(VASP_BENCHMARK_OUTPUT)
+
+        assert "num_cores" in timing
+        assert timing["num_cores"] == 16
+
+    def test_calculate_efficiency_metrics(self, parser):
+        """Test calculation of efficiency metrics."""
+        timing = parser.extract_timing_data(VASP_BENCHMARK_OUTPUT)
+
+        # CPU to wall ratio
+        assert "cpu_to_wall_ratio" in timing
+        expected_ratio = 125.678 / 45.234
+        assert timing["cpu_to_wall_ratio"] == pytest.approx(expected_ratio, rel=1e-3)
+
+        # Parallel efficiency: CPU time / (wall time * num_cores)
+        assert "parallel_efficiency" in timing
+        expected_efficiency = 125.678 / (45.234 * 16)
+        assert timing["parallel_efficiency"] == pytest.approx(expected_efficiency, rel=1e-3)
+
+    def test_single_point_calculation(self, parser):
+        """Test timing extraction for single-point (no ionic steps) calculation."""
+        timing = parser.extract_timing_data(VASP_SINGLE_POINT_OUTPUT)
+
+        # Should have total timing
+        assert "total_cpu_time_sec" in timing
+        assert timing["total_cpu_time_sec"] == pytest.approx(32.456, rel=1e-3)
+
+        assert "elapsed_time_sec" in timing
+        assert timing["elapsed_time_sec"] == pytest.approx(12.345, rel=1e-3)
+
+        # Single LOOP entry
+        assert "loop_count" in timing
+        assert timing["loop_count"] == 1
+        assert timing["loop_cpu_time_sec"] == pytest.approx(8.45, rel=1e-2)
+
+        # No LOOP+ for single-point calculation
+        assert "loop_plus_count" not in timing or timing.get("loop_plus_count", 0) == 0
+
+        # Should have routine timings
+        assert "routine_timings" in timing
+        assert "POTLOK" in timing["routine_timings"]
+
+        # Parallelization settings
+        assert timing["npar"] == 2
+        assert timing["ncore"] == 4
+        assert timing["num_cores"] == 8
+
+    @pytest.mark.asyncio
+    async def test_benchmark_in_parsing_result(self, parser):
+        """Test that benchmark data appears in ParsingResult metadata."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".out", delete=False) as f:
+            f.write(VASP_BENCHMARK_OUTPUT)
+            f.flush()
+            result = await parser.parse(Path(f.name))
+
+        assert result.success is True
+        assert "benchmark" in result.metadata
+
+        benchmark = result.metadata["benchmark"]
+        assert "total_cpu_time_sec" in benchmark
+        assert "elapsed_time_sec" in benchmark
+        assert "routine_timings" in benchmark
+
+    def test_empty_content(self, parser):
+        """Test timing extraction with empty content."""
+        timing = parser.extract_timing_data("")
+
+        # Should return empty or minimal dict, not crash
+        assert isinstance(timing, dict)
+        assert "total_cpu_time_sec" not in timing
+
+    def test_partial_content(self, parser):
+        """Test timing extraction with partial/incomplete OUTCAR."""
+        partial_content = """
+ running on    4 total cores
+
+   NPAR =       2
+
+   POTLOK:  cpu time    1.23: real time    1.45
+   LOOP:    cpu time   12.34: real time   15.67
+
+  free  energy   TOTEN  =       -50.12345678 eV
+"""
+        timing = parser.extract_timing_data(partial_content)
+
+        # Should extract what's available
+        assert timing.get("num_cores") == 4
+        assert timing.get("npar") == 2
+        assert timing.get("loop_count") == 1
+        assert "POTLOK" in timing.get("routine_timings", {})
+
+        # These shouldn't be present (no timing section at end)
+        assert "total_cpu_time_sec" not in timing
+
+
+class TestVASPBenchmarkMetricsDataclass:
+    """Tests for VASPBenchmarkMetrics dataclass."""
+
+    def test_to_dict_complete(self):
+        """Test to_dict with all fields populated."""
+        from src.core.codes.parsers.vasp import VASPBenchmarkMetrics
+
+        metrics = VASPBenchmarkMetrics(
+            total_cpu_time_sec=100.0,
+            elapsed_time_sec=50.0,
+            loop_cpu_time_sec=80.0,
+            loop_real_time_sec=40.0,
+            loop_count=5,
+            loop_plus_cpu_time_sec=95.0,
+            loop_plus_real_time_sec=48.0,
+            loop_plus_count=2,
+            routine_timings={"POTLOK": {"cpu_sec": 10.0, "real_sec": 8.0, "count": 5}},
+            memory_per_core_mb=512.0,
+            maximum_memory_used_mb=1024.0,
+            npar=4,
+            ncore=4,
+            kpar=2,
+            num_cores=16,
+            cpu_to_wall_ratio=2.0,
+            parallel_efficiency=0.125,
+        )
+
+        d = metrics.to_dict()
+
+        assert d["total_cpu_time_sec"] == 100.0
+        assert d["elapsed_time_sec"] == 50.0
+        assert d["loop_count"] == 5
+        assert d["loop_plus_count"] == 2
+        assert d["memory_per_core_mb"] == 512.0
+        assert d["npar"] == 4
+        assert d["num_cores"] == 16
+        assert "POTLOK" in d["routine_timings"]
+
+    def test_to_dict_minimal(self):
+        """Test to_dict with minimal fields (default values)."""
+        from src.core.codes.parsers.vasp import VASPBenchmarkMetrics
+
+        metrics = VASPBenchmarkMetrics()
+        d = metrics.to_dict()
+
+        # Empty dict when nothing is set
+        assert isinstance(d, dict)
+        # Default loop_count is 0, which should not be included
+        assert "loop_count" not in d
+        assert "total_cpu_time_sec" not in d
+
+    def test_to_dict_partial(self):
+        """Test to_dict with some fields populated."""
+        from src.core.codes.parsers.vasp import VASPBenchmarkMetrics
+
+        metrics = VASPBenchmarkMetrics(
+            total_cpu_time_sec=50.0,
+            elapsed_time_sec=25.0,
+            num_cores=8,
+        )
+        d = metrics.to_dict()
+
+        assert d["total_cpu_time_sec"] == 50.0
+        assert d["elapsed_time_sec"] == 25.0
+        assert d["num_cores"] == 8
+        assert "npar" not in d  # Not set
+        assert "routine_timings" not in d  # Empty dict excluded

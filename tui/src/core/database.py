@@ -122,7 +122,8 @@ class Database:
     """Manages the SQLite database for DFT-TUI project."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 6
+    # Note: Must match the highest version after all migrations are applied
+    SCHEMA_VERSION = 7
 
     # Base schema (version 1 - Phase 1)
     # Note: CANCELLED added in v4, but included here for new databases

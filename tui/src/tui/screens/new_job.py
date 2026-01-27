@@ -14,9 +14,9 @@ from textual.widgets import Input, TextArea, Button, Static, Label, Select, Radi
 from textual.message import Message
 from textual.binding import Binding
 
-from ...core.core_adapter import CrystalCoreClient
+from ...core.core_adapter import CrystalCoreClient, job_record_to_status
 from ...core.database import Database
-from crystalmath.models import DftCode, JobSubmission, RunnerType, SchedulerOptions
+from crystalmath.models import DftCode, JobSubmission, RunnerType, SchedulerOptions, JobStatus
 
 
 class JobCreated(Message):
@@ -511,8 +511,8 @@ class NewJobScreen(ModalScreen):
         job_name = job_name_input.value.strip()
 
         if job_name:
-            existing_jobs = self.database.get_all_jobs()
-            next_id = max([job.id for job in existing_jobs], default=0) + 1
+            statuses = self._list_all_job_statuses()
+            next_id = max((status.pk for status in statuses if status.pk), default=0) + 1
             work_dir_name = f"{next_id:04d}_{job_name}"
             work_dir_input.value = f"calculations/{work_dir_name}"
         else:
@@ -572,8 +572,8 @@ class NewJobScreen(ModalScreen):
             job_name_input.focus()
             return
 
-        existing_jobs = self.database.get_all_jobs()
-        if any(job.name == job_name for job in existing_jobs):
+        existing_jobs = self._list_all_job_statuses()
+        if any(status.name == job_name for status in existing_jobs):
             self._show_error(f"Job name '{job_name}' already exists")
             job_name_input.focus()
             return
@@ -662,7 +662,7 @@ class NewJobScreen(ModalScreen):
                     mpi_ranks=mpi_ranks,
                     parallel_mode=parallel_mode_value,
                     scheduler_options=scheduler_options,
-                    existing_jobs=existing_jobs,
+                    existing_statuses=existing_jobs,
                 )
         except Exception as exc:
             self._show_error(f"Failed to create job: {exc}")
@@ -676,6 +676,19 @@ class NewJobScreen(ModalScreen):
         error_message = self.query_one("#error_message", Static)
         error_message.update(f"Error: {message}")
         error_message.add_class("visible")
+
+    def _list_all_job_statuses(self) -> list[JobStatus]:
+        """Return job statuses from the core client or legacy database."""
+        if self.core_client:
+            try:
+                return self.core_client.list_jobs()
+            except Exception:
+                pass
+
+        if self.database:
+            return [job_record_to_status(job) for job in self.database.get_all_jobs()]
+
+        return []
 
     def _build_scheduler_options(self, runner_type: str) -> SchedulerOptions | None:
         """Return SchedulerOptions when SLURM runner is selected."""
@@ -718,10 +731,10 @@ class NewJobScreen(ModalScreen):
         mpi_ranks: int,
         parallel_mode: str,
         scheduler_options: SchedulerOptions | None,
-        existing_jobs: list,
+        existing_statuses: list[JobStatus],
     ) -> int:
         """Fallback path that writes files and inserts into the legacy database."""
-        next_id = max([job.id for job in existing_jobs], default=0) + 1
+        next_id = max((status.pk for status in existing_statuses if status.pk), default=0) + 1
         work_dir_name = f"{next_id:04d}_{job_name}"
         work_dir = self.calculations_dir / work_dir_name
 

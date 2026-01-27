@@ -40,6 +40,15 @@ from .slurm_runner import (
     SLURMSubmissionError,
     SLURMStatusError,
 )
+from .container_runner import (
+    ContainerRunner,
+    ContainerConfig,
+    ContainerRunnerError,
+    ContainerPullError,
+    ContainerValidationError,
+    create_yambo_runner,
+    create_qe_container_runner,
+)
 
 __all__ = [
     # Base classes and types
@@ -77,4 +86,12 @@ __all__ = [
     "SLURMJobState",
     "SLURMSubmissionError",
     "SLURMStatusError",
+    # Container Runner
+    "ContainerRunner",
+    "ContainerConfig",
+    "ContainerRunnerError",
+    "ContainerPullError",
+    "ContainerValidationError",
+    "create_yambo_runner",
+    "create_qe_container_runner",
 ]

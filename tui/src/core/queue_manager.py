@@ -258,7 +258,6 @@ class QueueManager:
         CREATE INDEX IF NOT EXISTS idx_queue_cluster ON queue_state (cluster_id);
         """
 
-        # FIX: Use connection context manager instead of raw self.db.conn
         with self.db.connection() as conn:
             conn.executescript(schema_extension)
             conn.commit()
@@ -273,7 +272,6 @@ class QueueManager:
         that exist in queue_state back to QUEUED status. This prevents
         "zombie" jobs that are stuck in RUNNING state after a crash.
         """
-        # FIX: Use connection context manager instead of raw self.db.conn
         with self.db.connection() as conn:
             # CRASH RECOVERY: Reset any RUNNING jobs in queue_state to QUEUED
             # These are jobs that were running when the app crashed/was killed
@@ -393,7 +391,7 @@ class QueueManager:
 
         # Persist final state under lock to prevent race with handle_job_completion
         async with self._lock:
-            self._persist_to_database()
+            await self._run_db(self._persist_to_database)
         logger.info("Queue manager stopped")
 
     async def enqueue(
@@ -425,8 +423,8 @@ class QueueManager:
             CircularDependencyError: If dependencies form a cycle
         """
         async with self._lock:
-            # Validate job exists
-            job = self.db.get_job(job_id)
+            # Validate job exists (non-blocking via thread)
+            job = await self._run_db(self.db.get_job, job_id)
             if not job:
                 raise InvalidJobError(f"Job {job_id} not found in database")
 
@@ -454,13 +452,13 @@ class QueueManager:
             for dep_id in deps:
                 self._dependents[dep_id].add(job_id)
 
-            # Update database status
-            self.db.update_status(job_id, JobStatus.QUEUED)
+            # Update database status (non-blocking via thread)
+            await self._run_db(self.db.update_status, job_id, JobStatus.QUEUED)
             # Invalidate cache since status changed
             self._invalidate_status_cache(job_id)
 
-            # Persist queue state
-            self._persist_job_to_database(queued_job)
+            # Persist queue state (non-blocking via thread)
+            await self._run_db(self._persist_job_to_database, queued_job)
 
             logger.info(
                 f"Enqueued job {job_id} with priority {priority} "
@@ -795,7 +793,7 @@ class QueueManager:
         async with self._lock:
             cluster = self._get_cluster(cluster_id)
             cluster.paused = True
-            self._persist_cluster_to_database(cluster)
+            await self._run_db(self._persist_cluster_to_database, cluster)
             logger.info(f"Paused queue for cluster {cluster_id}")
 
     async def resume_queue(self, cluster_id: int) -> None:
@@ -808,7 +806,7 @@ class QueueManager:
         async with self._lock:
             cluster = self._get_cluster(cluster_id)
             cluster.paused = False
-            self._persist_cluster_to_database(cluster)
+            await self._run_db(self._persist_cluster_to_database, cluster)
             logger.info(f"Resumed queue for cluster {cluster_id}")
 
     async def reorder_queue(self, job_id: int, new_priority: int) -> None:
@@ -830,8 +828,8 @@ class QueueManager:
             old_priority = queued_job.priority
             queued_job.priority = Priority(new_priority)
 
-            # Persist change
-            self._persist_job_to_database(queued_job)
+            # Persist change (non-blocking via thread)
+            await self._run_db(self._persist_job_to_database, queued_job)
 
             logger.info(
                 f"Reordered job {job_id}: priority {old_priority} → {new_priority}"
@@ -854,8 +852,8 @@ class QueueManager:
             (already completed, failed, or not found)
         """
         async with self._lock:
-            # Get current job status from database
-            job = self.db.get_job(job_id)
+            # Get current job status from database (non-blocking via thread)
+            job = await self._run_db(self.db.get_job, job_id)
             if not job:
                 logger.warning(f"Cannot cancel job {job_id}: not found")
                 return False
@@ -887,14 +885,14 @@ class QueueManager:
             for other_job in self._jobs.values():
                 other_job.dependencies.discard(job_id)
 
-            # Update database status to CANCELLED
-            self.db.update_status(job_id, JobStatus.CANCELLED)
+            # Update database status to CANCELLED (non-blocking via thread)
+            await self._run_db(self.db.update_status, job_id, JobStatus.CANCELLED)
 
             # Invalidate cache
             self._invalidate_status_cache(job_id)
 
-            # Remove from queue_state table
-            self._remove_job_from_database(job_id)
+            # Remove from queue_state table (non-blocking via thread)
+            await self._run_db(self._remove_job_from_database, job_id)
 
             logger.info(f"Cancelled job {job_id}")
             return True
@@ -945,12 +943,12 @@ class QueueManager:
                     # Dependent jobs will be picked up by scheduler
                     del self._dependents[job_id]
 
-                # Remove from queue_state on successful completion
-                self._remove_job_from_database(job_id)
+                # Remove from queue_state on successful completion (non-blocking via thread)
+                await self._run_db(self._remove_job_from_database, job_id)
 
             # Update metrics
             self._update_metrics()
-            self._persist_to_database()
+            await self._run_db(self._persist_to_database)
 
     async def _handle_job_failure(self, job_id: int) -> None:
         """
@@ -959,7 +957,6 @@ class QueueManager:
         Args:
             job_id: Failed job ID
         """
-        # FIX: Use connection context manager instead of raw self.db.conn
         with self.db.connection() as conn:
             # Check if job was queued (might have retry metadata)
             cursor = conn.execute(
@@ -1083,9 +1080,9 @@ class QueueManager:
                         self.metrics.queue_depth_by_cluster[cluster_id] = queue_depth
                         total_queued += queue_depth
 
-                    # Update and persist metrics
+                    # Update and persist metrics (non-blocking via thread)
                     self._update_metrics()
-                    self._persist_to_database()
+                    await self._run_db(self._persist_to_database)
 
                 # Log iteration completion
                 elapsed = time.time() - start_time

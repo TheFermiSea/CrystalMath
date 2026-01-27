@@ -16,8 +16,9 @@ Provides UI for:
 
 import asyncio
 import logging
+import re
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Tuple
 
 from textual import on
 from textual.app import ComposeResult
@@ -44,6 +45,77 @@ from ...core.codes import DFTCode
 logger = logging.getLogger(__name__)
 
 
+# Valid element symbols (subset commonly used in VASP)
+VALID_ELEMENTS = {
+    "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
+    "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar",
+    "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
+    "Ga", "Ge", "As", "Se", "Br", "Kr",
+    "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",
+    "In", "Sn", "Sb", "Te", "I", "Xe",
+    "Cs", "Ba", "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy",
+    "Ho", "Er", "Tm", "Yb", "Lu",
+    "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg",
+    "Tl", "Pb", "Bi", "Po", "At", "Rn",
+    "Fr", "Ra", "Ac", "Th", "Pa", "U", "Np", "Pu",
+}
+
+# POTCAR library types available in common VASP distributions
+POTCAR_TYPES = [
+    ("PBE (recommended)", "potpaw_PBE"),
+    ("PBE.52", "potpaw_PBE.52"),
+    ("PBE.54", "potpaw_PBE.54"),
+    ("PW91", "potpaw_GGA"),
+    ("LDA", "potpaw_LDA"),
+    ("LDA.52", "potpaw_LDA.52"),
+]
+
+
+def parse_elements_from_poscar(poscar_content: str) -> Tuple[List[str], str]:
+    """Parse element symbols and counts from POSCAR content.
+
+    POSCAR format (VASP 5+):
+    Line 1: Comment
+    Line 2: Scale factor
+    Lines 3-5: Lattice vectors
+    Line 6: Element symbols (VASP 5+) OR element counts (VASP 4)
+    Line 7: Element counts (if line 6 has symbols)
+
+    Args:
+        poscar_content: Content of POSCAR file.
+
+    Returns:
+        Tuple of (list of element symbols, error message or empty string).
+    """
+    lines = poscar_content.strip().split('\n')
+
+    if len(lines) < 7:
+        return [], "POSCAR too short - needs at least 7 lines"
+
+    # Line 6 contains either element symbols (VASP 5+) or counts (VASP 4)
+    line6 = lines[5].split()
+
+    # Check if line 6 contains element symbols or numbers
+    try:
+        # If all tokens are numbers, this is VASP 4 format (no element line)
+        [int(x) for x in line6]
+        return [], "POSCAR uses VASP 4 format - element symbols not found. Add element symbols on line 6."
+    except ValueError:
+        # Line 6 contains element symbols (VASP 5+ format)
+        elements = []
+        for token in line6:
+            # Normalize element symbol (capitalize first letter)
+            elem = token.strip().capitalize()
+            if elem not in VALID_ELEMENTS:
+                return [], f"Unknown element symbol: '{token}'"
+            elements.append(elem)
+
+        if not elements:
+            return [], "No element symbols found on line 6"
+
+        return elements, ""
+
+
 class VASPFilesReady(Message):
     """Message posted when VASP input files are ready."""
 
@@ -52,15 +124,22 @@ class VASPFilesReady(Message):
         poscar: str,
         incar: str,
         kpoints: str,
-        potcar_element: str,
+        potcar_elements: List[str],
+        potcar_type: str,
         job_name: str
     ):
         self.poscar = poscar
         self.incar = incar
         self.kpoints = kpoints
-        self.potcar_element = potcar_element
+        self.potcar_elements = potcar_elements  # List of elements in POSCAR order
+        self.potcar_type = potcar_type  # POTCAR library type (e.g., "potpaw_PBE")
         self.job_name = job_name
         super().__init__()
+
+    @property
+    def potcar_element(self) -> str:
+        """Backward compatibility: return first element or comma-separated list."""
+        return ",".join(self.potcar_elements) if self.potcar_elements else "Si"
 
 
 class POSCARValidator(Validator):
@@ -191,6 +270,23 @@ class VASPInputManagerScreen(ModalScreen):
         text-align: center;
         color: $text;
     }
+
+    #detected_elements {
+        padding: 1;
+        border: solid $accent;
+        background: $surface-darken-1;
+    }
+
+    #potcar_actions {
+        height: 3;
+        padding: 1 0;
+    }
+
+    #potcar_preview {
+        padding: 1;
+        color: $text-muted;
+        border: dashed $accent-darken-2;
+    }
     """
 
     BINDINGS = [
@@ -220,7 +316,8 @@ class VASPInputManagerScreen(ModalScreen):
         self._poscar_content = ""
         self._incar_content = ""
         self._kpoints_content = ""
-        self._potcar_element = "Si"  # Default element
+        self._potcar_elements: List[str] = []  # Elements detected from POSCAR
+        self._potcar_type = "potpaw_PBE"  # Default POTCAR library type
 
     def compose(self) -> ComposeResult:
         """Create the UI layout."""
@@ -262,21 +359,29 @@ class VASPInputManagerScreen(ModalScreen):
 
                 # POTCAR tab
                 with TabPane("POTCAR", id="tab_potcar"):
-                    yield Label("Select element for pseudopotential:", classes="field_label")
+                    yield Label("Detected Elements from POSCAR:", classes="field_label")
+                    yield Static(
+                        "⚠️ Enter POSCAR first to detect elements",
+                        id="detected_elements",
+                        classes="file_info"
+                    )
+                    with Horizontal(id="potcar_actions"):
+                        yield Button("Refresh Elements", id="refresh_elements_btn", variant="default")
+
+                    yield Label("POTCAR Library Type:", classes="field_label")
                     yield Select(
-                        options=[
-                            ("Silicon (Si)", "Si"),
-                            ("Carbon (C)", "C"),
-                            ("Oxygen (O)", "O"),
-                            ("Titanium (Ti)", "Ti"),
-                            ("Nitrogen (N)", "N"),
-                            ("Hydrogen (H)", "H"),
-                        ],
-                        value="Si",
-                        id="potcar_element_select",
+                        options=[(label, value) for label, value in POTCAR_TYPES],
+                        value="potpaw_PBE",
+                        id="potcar_type_select",
+                    )
+
+                    yield Static(
+                        "POTCARs will be concatenated in element order from VASP_PP_PATH on cluster",
+                        classes="file_info"
                     )
                     yield Static(
-                        "Note: POTCAR will be retrieved from cluster's VASP_PP_PATH",
+                        "",
+                        id="potcar_preview",
                         classes="file_info"
                     )
 
@@ -327,10 +432,66 @@ Gamma
 0. 0. 0.
 """
 
-    @on(Select.Changed, "#potcar_element_select")
-    def _on_potcar_changed(self, event: Select.Changed) -> None:
-        """Handle POTCAR element selection."""
-        self._potcar_element = str(event.value)
+    async def on_mount(self) -> None:
+        """Initialize screen when mounted."""
+        # Parse elements from initial POSCAR if provided
+        if self.initial_poscar:
+            self._update_detected_elements()
+
+    @on(Select.Changed, "#potcar_type_select")
+    def _on_potcar_type_changed(self, event: Select.Changed) -> None:
+        """Handle POTCAR type selection."""
+        self._potcar_type = str(event.value)
+        self._update_potcar_preview()
+
+    @on(Button.Pressed, "#refresh_elements_btn")
+    def _on_refresh_elements(self, event: Button.Pressed) -> None:
+        """Refresh element detection from POSCAR."""
+        self._update_detected_elements()
+
+    def _update_detected_elements(self) -> None:
+        """Parse POSCAR and update the detected elements display."""
+        poscar_textarea = self.query_one("#poscar_textarea", TextArea)
+        detected_elements = self.query_one("#detected_elements", Static)
+        status = self.query_one("#status_message", Static)
+
+        poscar_content = poscar_textarea.text.strip()
+
+        if not poscar_content:
+            detected_elements.update("⚠️ Enter POSCAR first to detect elements")
+            self._potcar_elements = []
+            self._update_potcar_preview()
+            return
+
+        elements, error = parse_elements_from_poscar(poscar_content)
+
+        if error:
+            detected_elements.update(f"❌ {error}")
+            self._potcar_elements = []
+            status.update(f"⚠️ POSCAR element parsing: {error}")
+        else:
+            self._potcar_elements = elements
+            elem_list = ", ".join(elements)
+            detected_elements.update(f"✅ Detected {len(elements)} element(s): {elem_list}")
+            status.update("")
+
+        self._update_potcar_preview()
+
+    def _update_potcar_preview(self) -> None:
+        """Update the POTCAR path preview."""
+        preview = self.query_one("#potcar_preview", Static)
+
+        if not self._potcar_elements:
+            preview.update("")
+            return
+
+        # Show which POTCARs will be concatenated
+        paths = []
+        for elem in self._potcar_elements:
+            paths.append(f"$VASP_PP_PATH/{self._potcar_type}/{elem}/POTCAR")
+
+        preview_text = "Will concatenate:\n" + "\n".join(f"  → {p}" for p in paths)
+        preview.update(preview_text)
 
     @on(Button.Pressed, "#validate_btn")
     def _validate_files(self, event: Button.Pressed) -> None:
@@ -398,16 +559,27 @@ Gamma
                 status.update(f"❌ {name} invalid: {error_msg}")
                 return
 
+        # Ensure elements are parsed from POSCAR
+        if not self._potcar_elements:
+            self._update_detected_elements()
+
+        # Validate elements were detected
+        if not self._potcar_elements:
+            status.update("❌ Could not detect elements from POSCAR. Check format (VASP 5+ required).")
+            return
+
         # Post message with files (POTCAR will be retrieved from cluster)
         self.post_message(VASPFilesReady(
             poscar=poscar,
             incar=incar,
             kpoints=kpoints,
-            potcar_element=self._potcar_element,
+            potcar_elements=self._potcar_elements,
+            potcar_type=self._potcar_type,
             job_name=job_name
         ))
 
-        status.update(f"✅ VASP job '{job_name}' created successfully!")
+        elem_list = ", ".join(self._potcar_elements)
+        status.update(f"✅ VASP job '{job_name}' created! POTCARs: {elem_list}")
 
         # Dismiss screen
         await asyncio.sleep(1)

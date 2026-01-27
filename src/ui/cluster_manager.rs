@@ -8,10 +8,10 @@
 //! - Delete clusters
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 
 use crate::app::App;
-use crate::models::ClusterConfig;
+use crate::models::{ClusterConfig, ClusterType};
 
 /// Cluster Manager view mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -102,7 +102,7 @@ pub struct ClusterManagerState {
     /// Form: cluster name.
     pub form_name: String,
     /// Form: cluster type (ssh, slurm).
-    pub form_cluster_type: String,
+    pub form_cluster_type: ClusterType,
     /// Form: hostname.
     pub form_hostname: String,
     /// Form: port.
@@ -125,17 +125,11 @@ pub struct ClusterManagerState {
 #[derive(Debug, Clone)]
 pub struct ConnectionTestResult {
     pub success: bool,
-    pub hostname: Option<String>,
     pub system_info: Option<String>,
     pub error: Option<String>,
 }
 
 impl ClusterManagerState {
-    /// Create a new cluster manager state.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Open the cluster manager modal.
     pub fn open(&mut self) {
         self.active = true;
@@ -155,7 +149,7 @@ impl ClusterManagerState {
     /// Clear the form fields.
     pub fn clear_form(&mut self) {
         self.form_name.clear();
-        self.form_cluster_type = "ssh".to_string();
+        self.form_cluster_type = ClusterType::Ssh;
         self.form_hostname.clear();
         self.form_port = "22".to_string();
         self.form_username.clear();
@@ -181,7 +175,7 @@ impl ClusterManagerState {
                 self.mode = ClusterManagerMode::Edit;
                 self.editing_cluster_id = cluster.id;
                 self.form_name = cluster.name.clone();
-                self.form_cluster_type = cluster.cluster_type.clone();
+                self.form_cluster_type = cluster.cluster_type;
                 self.form_hostname = cluster.hostname.clone();
                 self.form_port = cluster.port.to_string();
                 self.form_username = cluster.username.clone();
@@ -249,13 +243,19 @@ impl ClusterManagerState {
             return Err("Username is required".to_string());
         }
 
-        let port = self.form_port.parse::<i32>().map_err(|_| "Invalid port number")?;
-        let max_concurrent = self.form_max_concurrent.parse::<i32>().map_err(|_| "Invalid max concurrent")?;
+        let port = self
+            .form_port
+            .parse::<i32>()
+            .map_err(|_| "Invalid port number")?;
+        let max_concurrent = self
+            .form_max_concurrent
+            .parse::<i32>()
+            .map_err(|_| "Invalid max concurrent")?;
 
         Ok(ClusterConfig {
             id: self.editing_cluster_id,
             name: self.form_name.trim().to_string(),
-            cluster_type: self.form_cluster_type.clone(),
+            cluster_type: self.form_cluster_type,
             hostname: self.form_hostname.trim().to_string(),
             port,
             username: self.form_username.trim().to_string(),
@@ -275,7 +275,7 @@ impl ClusterManagerState {
                 Some(self.form_queue_name.trim().to_string())
             },
             max_concurrent,
-            status: "active".to_string(),
+            status: crate::models::ClusterStatus::Active,
         })
     }
 
@@ -303,7 +303,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     match app.cluster_manager.mode {
         ClusterManagerMode::List => render_list_view(frame, app, modal_area),
-        ClusterManagerMode::Add | ClusterManagerMode::Edit => render_form_view(frame, app, modal_area),
+        ClusterManagerMode::Add | ClusterManagerMode::Edit => {
+            render_form_view(frame, app, modal_area)
+        }
         ClusterManagerMode::ConfirmDelete => render_delete_confirm(frame, app, modal_area),
     }
 }
@@ -323,7 +325,11 @@ fn render_list_view(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(border_style)
         .title(" Cluster Manager ")
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
     frame.render_widget(modal_block, area);
 
     // Layout: Table, Status, Buttons
@@ -364,15 +370,13 @@ fn render_cluster_table(frame: &mut Frame, app: &App, area: Rect) {
     let state = &app.cluster_manager;
 
     let header = Row::new(vec![
-        "Name",
-        "Type",
-        "Hostname",
-        "User",
-        "Port",
-        "Max Jobs",
-        "Status",
+        "Name", "Type", "Hostname", "User", "Port", "Max Jobs", "Status",
     ])
-    .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+    .style(
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )
     .height(1);
 
     let rows: Vec<Row> = state
@@ -381,20 +385,29 @@ fn render_cluster_table(frame: &mut Frame, app: &App, area: Rect) {
         .enumerate()
         .map(|(idx, cluster)| {
             let is_selected = state.selected_index == Some(idx);
+            // Use is_available() to dim unavailable clusters
+            let is_available = cluster.status.is_available();
             let style = if is_selected {
                 Style::default().bg(Color::DarkGray).fg(Color::White)
+            } else if !is_available {
+                // Dim unavailable clusters for visual distinction
+                Style::default().fg(Color::DarkGray)
             } else {
                 Style::default().fg(Color::White)
             };
 
+            // Use ClusterStatus::color() for status display
+            let status_cell = Cell::from(cluster.status.as_str().to_string())
+                .style(Style::default().fg(cluster.status.color()));
+
             Row::new(vec![
-                cluster.name.clone(),
-                cluster.cluster_type.clone(),
-                cluster.hostname.clone(),
-                cluster.username.clone(),
-                cluster.port.to_string(),
-                cluster.max_concurrent.to_string(),
-                cluster.status.clone(),
+                Cell::from(cluster.name.clone()),
+                Cell::from(cluster.cluster_type.as_str().to_string()),
+                Cell::from(cluster.hostname.clone()),
+                Cell::from(cluster.username.clone()),
+                Cell::from(cluster.port.to_string()),
+                Cell::from(cluster.max_concurrent.to_string()),
+                status_cell,
             ])
             .style(style)
             .height(1)
@@ -459,19 +472,42 @@ fn render_list_status(frame: &mut Frame, app: &App, area: Rect) {
 /// Render action buttons for list view.
 fn render_list_buttons(_frame: &mut Frame, _area: Rect) {
     let buttons = Line::from(vec![
-        Span::styled(" a ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " a ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Add", Style::default().fg(Color::White)),
         Span::raw("  "),
-        Span::styled(" e ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " e ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Edit", Style::default().fg(Color::White)),
         Span::raw("  "),
-        Span::styled(" t ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " t ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Test", Style::default().fg(Color::White)),
         Span::raw("  "),
-        Span::styled(" d ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " d ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Delete", Style::default().fg(Color::White)),
         Span::raw("  "),
-        Span::styled(" Esc ", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Esc ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Close", Style::default().fg(Color::White)),
     ]);
 
@@ -483,7 +519,11 @@ fn render_list_buttons(_frame: &mut Frame, _area: Rect) {
 fn render_form_view(frame: &mut Frame, app: &App, area: Rect) {
     let state = &app.cluster_manager;
     let is_edit = state.mode == ClusterManagerMode::Edit;
-    let title = if is_edit { " Edit Cluster " } else { " Add Cluster " };
+    let title = if is_edit {
+        " Edit Cluster "
+    } else {
+        " Add Cluster "
+    };
 
     // Modal border
     let border_style = if state.error.is_some() {
@@ -496,7 +536,11 @@ fn render_form_view(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(border_style)
         .title(title)
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
     frame.render_widget(modal_block, area);
 
     // Form layout
@@ -517,34 +561,90 @@ fn render_form_view(frame: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     // Render form fields
-    render_text_input(frame, "Name", &state.form_name, state.focused_field == ClusterFormField::Name, chunks[0]);
-    render_type_selector(frame, &state.form_cluster_type, state.focused_field == ClusterFormField::ClusterType, chunks[1]);
-    render_text_input(frame, "Hostname", &state.form_hostname, state.focused_field == ClusterFormField::Hostname, chunks[2]);
+    render_text_input(
+        frame,
+        "Name",
+        &state.form_name,
+        state.focused_field == ClusterFormField::Name,
+        chunks[0],
+    );
+    render_type_selector(
+        frame,
+        state.form_cluster_type,
+        state.focused_field == ClusterFormField::ClusterType,
+        chunks[1],
+    );
+    render_text_input(
+        frame,
+        "Hostname",
+        &state.form_hostname,
+        state.focused_field == ClusterFormField::Hostname,
+        chunks[2],
+    );
 
     // Port + Username in horizontal layout
     let port_user_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(chunks[3]);
-    render_text_input(frame, "Port", &state.form_port, state.focused_field == ClusterFormField::Port, port_user_chunks[0]);
-    render_text_input(frame, "Username", &state.form_username, state.focused_field == ClusterFormField::Username, port_user_chunks[1]);
+    render_text_input(
+        frame,
+        "Port",
+        &state.form_port,
+        state.focused_field == ClusterFormField::Port,
+        port_user_chunks[0],
+    );
+    render_text_input(
+        frame,
+        "Username",
+        &state.form_username,
+        state.focused_field == ClusterFormField::Username,
+        port_user_chunks[1],
+    );
 
-    render_text_input(frame, "Key File (optional)", &state.form_key_file, state.focused_field == ClusterFormField::KeyFile, chunks[4]);
-    render_text_input(frame, "Remote Workdir (optional)", &state.form_remote_workdir, state.focused_field == ClusterFormField::RemoteWorkdir, chunks[5]);
+    render_text_input(
+        frame,
+        "Key File (optional)",
+        &state.form_key_file,
+        state.focused_field == ClusterFormField::KeyFile,
+        chunks[4],
+    );
+    render_text_input(
+        frame,
+        "Remote Workdir (optional)",
+        &state.form_remote_workdir,
+        state.focused_field == ClusterFormField::RemoteWorkdir,
+        chunks[5],
+    );
 
     // Queue Name + Max Concurrent in horizontal layout
     let queue_max_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
         .split(chunks[6]);
-    render_text_input(frame, "Queue Name (SLURM)", &state.form_queue_name, state.focused_field == ClusterFormField::QueueName, queue_max_chunks[0]);
-    render_text_input(frame, "Max Jobs", &state.form_max_concurrent, state.focused_field == ClusterFormField::MaxConcurrent, queue_max_chunks[1]);
+    render_text_input(
+        frame,
+        "Queue Name (SLURM)",
+        &state.form_queue_name,
+        state.focused_field == ClusterFormField::QueueName,
+        queue_max_chunks[0],
+    );
+    render_text_input(
+        frame,
+        "Max Jobs",
+        &state.form_max_concurrent,
+        state.focused_field == ClusterFormField::MaxConcurrent,
+        queue_max_chunks[1],
+    );
 
     // Status
     let (text, style) = if let Some(ref error) = state.error {
         (error.clone(), Style::default().fg(Color::Red))
     } else {
-        ("Tab to navigate, Enter to save".to_string(), Style::default().fg(Color::DarkGray))
+        (
+            "Tab to navigate, Enter to save".to_string(),
+            Style::default().fg(Color::DarkGray),
+        )
     };
     let status = Paragraph::new(text)
         .style(style)
@@ -553,10 +653,20 @@ fn render_form_view(frame: &mut Frame, app: &App, area: Rect) {
 
     // Buttons
     let buttons = Line::from(vec![
-        Span::styled(" Enter ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Enter ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Save", Style::default().fg(Color::White)),
         Span::raw("  "),
-        Span::styled(" Esc ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Esc ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Cancel", Style::default().fg(Color::White)),
     ]);
     let paragraph = Paragraph::new(buttons).alignment(Alignment::Center);
@@ -592,25 +702,27 @@ fn render_text_input(frame: &mut Frame, label: &str, value: &str, focused: bool,
 }
 
 /// Render the cluster type selector.
-fn render_type_selector(frame: &mut Frame, current_type: &str, focused: bool, area: Rect) {
+fn render_type_selector(frame: &mut Frame, current_type: ClusterType, focused: bool, area: Rect) {
     let border_style = if focused {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::DarkGray)
     };
 
-    let types = ["ssh", "slurm"];
+    let types = [ClusterType::Ssh, ClusterType::Slurm];
     let items: Vec<ListItem> = types
         .iter()
         .map(|t| {
             let selected = *t == current_type;
             let prefix = if selected { "[*] " } else { "[ ] " };
             let style = if selected {
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
-            ListItem::new(format!("{}{}", prefix, t.to_uppercase())).style(style)
+            ListItem::new(format!("{}{}", prefix, t.as_str())).style(style)
         })
         .collect();
 
@@ -666,10 +778,18 @@ fn render_delete_confirm(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(message, chunks[0]);
 
     let buttons = Line::from(vec![
-        Span::styled(" y ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " y ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Yes, Delete", Style::default().fg(Color::White)),
         Span::raw("    "),
-        Span::styled(" n ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " n ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("No, Cancel", Style::default().fg(Color::White)),
     ]);
     let paragraph = Paragraph::new(buttons).alignment(Alignment::Center);

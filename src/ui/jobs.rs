@@ -154,11 +154,15 @@ fn count_job_states(jobs: &[crate::models::JobStatus]) -> (usize, usize, usize) 
     let mut completed = 0;
 
     for job in jobs {
-        match job.state {
-            JobState::Running => running += 1,
-            JobState::Failed => failed += 1,
-            JobState::Completed => completed += 1,
-            _ => {}
+        // Use is_terminal() to distinguish active from finished jobs
+        if job.state.is_terminal() {
+            match job.state {
+                JobState::Failed => failed += 1,
+                JobState::Completed => completed += 1,
+                _ => {} // Cancelled counts as terminal but not shown separately
+            }
+        } else if job.state == JobState::Running {
+            running += 1;
         }
     }
 
@@ -185,7 +189,8 @@ fn render_empty_state(frame: &mut Frame, app: &App, area: Rect) {
 
     // Last refresh info
     let refresh_info = app
-        .jobs_state.last_refresh
+        .jobs_state
+        .last_refresh
         .map(|t| format!("Last refresh: {}", format_elapsed(t.elapsed())))
         .unwrap_or_else(|| "Press Ctrl+R to refresh".to_string());
 

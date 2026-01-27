@@ -14,6 +14,7 @@ Security:
 import asyncio
 import asyncssh
 import logging
+import re
 import shlex
 import time
 from pathlib import Path, PurePosixPath
@@ -32,6 +33,10 @@ from ..core.connection_manager import ConnectionManager
 
 
 logger = logging.getLogger(__name__)
+
+# Security: Regex pattern for valid chemical element symbols (1-2 letters, first capitalized)
+# Prevents command injection when element is used in shell commands
+_ELEMENT_PATTERN = re.compile(r'^[A-Z][a-z]?$')
 
 
 class SSHRunner(RemoteBaseRunner):
@@ -113,6 +118,8 @@ class SSHRunner(RemoteBaseRunner):
 
         # Track active jobs: job_handle -> job_info
         self._active_jobs: Dict[str, Dict[str, Any]] = {}
+        # Track slot monitor tasks: job_handle -> asyncio.Task
+        self._slot_monitors: Dict[str, asyncio.Task] = {}
 
         # Validate cluster is registered
         if cluster_id not in connection_manager._configs:
@@ -139,6 +146,9 @@ class SSHRunner(RemoteBaseRunner):
         Creates remote directory, uploads files, writes execution script,
         and starts the job in the background.
 
+        Note: max_concurrent_jobs is enforced by acquiring a semaphore slot
+        that is held until the job completes (not just until submission).
+
         Args:
             job_id: Database ID for tracking
             work_dir: Local working directory
@@ -154,8 +164,12 @@ class SSHRunner(RemoteBaseRunner):
             FileNotFoundError: If input file doesn't exist
             JobSubmissionError: If submission fails
         """
-        # Acquire slot to enforce max_concurrent_jobs limit
-        async with self.acquire_slot():
+        # Acquire slot - blocks until a slot is available
+        # Slot is held until job completes (via background monitor task)
+        await self._semaphore.acquire()
+        slot_acquired = True
+
+        try:
             # Validate input file
             if not input_file.exists():
                 raise FileNotFoundError(f"Input file not found: {input_file}")
@@ -226,12 +240,54 @@ class SSHRunner(RemoteBaseRunner):
                     logger.info(
                         f"Submitted job {job_id} with PID {pid} on cluster {self.cluster_id}"
                     )
+
+                    # Spawn background task to monitor job and release slot when done
+                    monitor_task = asyncio.create_task(
+                        self._monitor_and_release_slot(job_handle),
+                        name=f"slot_monitor_{job_handle}"
+                    )
+                    self._slot_monitors[job_handle] = monitor_task
+                    slot_acquired = False  # Monitor will release it
+
                     return job_handle
 
             except asyncssh.Error as e:
                 raise JobSubmissionError(f"SSH error during job submission: {e}") from e
             except Exception as e:
                 raise JobSubmissionError(f"Failed to submit job: {e}") from e
+
+        finally:
+            # Release slot immediately if submission failed (monitor not spawned)
+            if slot_acquired:
+                self._semaphore.release()
+
+    async def _monitor_and_release_slot(self, job_handle: str) -> None:
+        """
+        Background task that monitors job and releases semaphore slot when done.
+
+        This ensures max_concurrent_jobs limits actual running jobs, not just
+        submission rate.
+
+        Args:
+            job_handle: Job handle to monitor
+        """
+        try:
+            # Poll until job reaches terminal state
+            while True:
+                try:
+                    status = await self.get_status(job_handle)
+                    if status in (JobStatus.COMPLETED, JobStatus.FAILED,
+                                  JobStatus.CANCELLED, JobStatus.UNKNOWN):
+                        logger.debug(f"Job {job_handle} reached terminal state: {status}")
+                        break
+                except Exception as e:
+                    logger.warning(f"Error checking job status for {job_handle}: {e}")
+                    # Continue monitoring - transient errors shouldn't abort
+                await asyncio.sleep(5.0)  # Poll every 5 seconds
+        finally:
+            self._semaphore.release()
+            self._slot_monitors.pop(job_handle, None)
+            logger.debug(f"Released slot for job {job_handle}")
 
     async def get_status(self, job_handle: str) -> str:
         """
@@ -468,14 +524,22 @@ class SSHRunner(RemoteBaseRunner):
                 tail_cmd = f"tail -f {output_file}"
                 async with conn.create_process(tail_cmd) as process:
                     if process.stdout:
+                        # Debounce status checks to avoid per-line overhead
+                        # Only check status every 5 seconds, not every line
+                        last_status_check = 0.0
+                        status_check_interval = 5.0  # seconds
+
                         async for line in process.stdout:
                             yield line.strip()
 
-                            # Check if job has finished
-                            status = await self.get_status(job_handle)
-                            if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
-                                # Read any remaining output
-                                break
+                            # Check if job has finished (with debounce)
+                            now = time.time()
+                            if now - last_status_check >= status_check_interval:
+                                last_status_check = now
+                                status = await self.get_status(job_handle)
+                                if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+                                    # Read any remaining output
+                                    break
 
         except asyncssh.Error as e:
             logger.error(f"SSH error while streaming output: {e}")
@@ -658,6 +722,15 @@ class SSHRunner(RemoteBaseRunner):
         cluster_id, pid, remote_work_dir = self._parse_job_handle(job_handle)
 
         try:
+            # Cancel slot monitor if running
+            monitor_task = self._slot_monitors.pop(job_handle, None)
+            if monitor_task and not monitor_task.done():
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
+
             if remove_files:
                 async with self.connection_manager.get_connection(cluster_id) as conn:
                     # Properly escape the directory path for removal
@@ -673,6 +746,26 @@ class SSHRunner(RemoteBaseRunner):
             logger.error(f"Error during cleanup: {e}")
             # Still remove from tracking even if cleanup failed
             self._active_jobs.pop(job_handle, None)
+            self._slot_monitors.pop(job_handle, None)
+
+    async def cleanup_all(self) -> None:
+        """
+        Clean up all resources and cancel all slot monitors.
+
+        Call this when shutting down the runner to ensure proper cleanup.
+        """
+        # Cancel all slot monitor tasks
+        for job_handle, task in list(self._slot_monitors.items()):
+            if not task.done():
+                task.cancel()
+
+        # Wait for all monitor tasks to finish
+        if self._slot_monitors:
+            await asyncio.gather(*self._slot_monitors.values(), return_exceptions=True)
+
+        self._slot_monitors.clear()
+        self._active_jobs.clear()
+        logger.info("SSHRunner cleanup complete")
 
     # Helper methods
 
@@ -913,10 +1006,10 @@ exit $EXIT_CODE
         remote_dir: PurePosixPath
     ) -> None:
         """
-        Retrieve POTCAR from cluster's VASP_PP_PATH for VASP calculations.
+        Retrieve and concatenate POTCARs from cluster's VASP_PP_PATH for VASP calculations.
 
-        Reads vasp_metadata.json to determine which element POTCAR to retrieve,
-        then copies the appropriate POTCAR file from VASP_PP_PATH to the work directory.
+        Reads vasp_metadata.json to determine which elements need POTCARs,
+        then concatenates all POTCARs in order to the work directory.
 
         Args:
             conn: SSH connection
@@ -929,58 +1022,96 @@ exit $EXIT_CODE
         """
         import json
 
-        # Read metadata to get POTCAR element
+        # Read metadata to get POTCAR elements and type
         metadata_file = local_dir / "vasp_metadata.json"
         if not metadata_file.exists():
             raise FileNotFoundError(f"VASP metadata file not found: {metadata_file}")
 
         metadata = json.loads(metadata_file.read_text())
-        element = metadata.get("potcar_element", "Si")
 
-        # Get VASP_PP_PATH from cluster configuration
-        # This should be set in the cluster's connection_config
+        # Support new multi-element format or legacy single element
+        potcar_elements = metadata.get("potcar_elements")
+        potcar_type = metadata.get("potcar_type", "potpaw_PBE")
+
+        if not potcar_elements:
+            # Fallback to legacy single element format
+            element = metadata.get("potcar_element", "Si")
+            # Handle comma-separated elements from legacy format
+            potcar_elements = [e.strip() for e in element.split(",")]
+
+        # Security: Validate all elements are valid chemical symbols (1-2 letters)
+        for element in potcar_elements:
+            if not _ELEMENT_PATTERN.match(element):
+                raise JobSubmissionError(
+                    f"Invalid POTCAR element '{element}': must be a valid chemical symbol "
+                    "(1-2 letters, e.g., 'Si', 'O', 'Fe')"
+                )
+
+        # Get cluster configuration for VASP_PP_PATH
         cluster_config = self.connection_manager._configs.get(self.cluster_id)
         if not cluster_config:
             raise ValueError(f"Cluster {self.cluster_id} not found in ConnectionManager")
 
-        # VASP_PP_PATH should be in the environment or cluster metadata
-        # For now, assume it's set as an environment variable on the cluster
-        # Users configure this in the cluster manager UI
+        # Try to get explicit VASP_PP_PATH from cluster config, otherwise use env var
+        vasp_pp_path = getattr(cluster_config, 'vasp_pp_path', None)
+        if vasp_pp_path:
+            base_path = vasp_pp_path
+        else:
+            base_path = "$VASP_PP_PATH"
 
-        logger.info(f"Retrieving POTCAR for element: {element}")
+        logger.info(f"Retrieving POTCARs for elements: {potcar_elements} (type: {potcar_type})")
 
-        # Try multiple common POTCAR library paths
-        potcar_paths = [
-            f"$VASP_PP_PATH/potpaw_PBE/{element}/POTCAR",  # Standard PBE
-            f"$VASP_PP_PATH/{element}/POTCAR",  # Alternate
-            f"$VASP_PP_PATH/PAW_PBE/{element}/POTCAR",  # Another common structure
-        ]
+        # Find POTCAR for each element and build concatenation command
+        potcar_paths = []
+        missing_elements = []
 
-        # Try each path
-        potcar_found = False
-        for potcar_path in potcar_paths:
-            try:
-                # Check if POTCAR exists at this path
-                check_cmd = f"test -f {potcar_path} && echo OK"
-                result = await conn.run(check_cmd)
+        for element in potcar_elements:
+            # Try multiple common POTCAR library paths in order of preference
+            search_paths = [
+                f"{base_path}/{potcar_type}/{element}/POTCAR",  # User-selected type
+                f"{base_path}/potpaw_PBE/{element}/POTCAR",  # Standard PBE fallback
+                f"{base_path}/{element}/POTCAR",  # Direct element path
+                f"{base_path}/PAW_PBE/{element}/POTCAR",  # Another common structure
+            ]
 
-                if "OK" in result.stdout:
-                    # Copy POTCAR to work directory
-                    copy_cmd = f"cp {potcar_path} {shlex.quote(str(remote_dir))}/POTCAR"
-                    await conn.run(copy_cmd, check=True)
-                    logger.info(f"Retrieved POTCAR from: {potcar_path}")
-                    potcar_found = True
-                    break
+            # Find first existing POTCAR for this element
+            found = False
+            for path in search_paths:
+                try:
+                    check_cmd = f"test -f {path} && echo OK"
+                    result = await conn.run(check_cmd)
+                    if "OK" in result.stdout:
+                        potcar_paths.append(path)
+                        logger.debug(f"Found POTCAR for {element}: {path}")
+                        found = True
+                        break
+                except Exception as e:
+                    logger.debug(f"POTCAR not found at {path}: {e}")
+                    continue
 
-            except Exception as e:
-                logger.debug(f"POTCAR not found at {potcar_path}: {e}")
-                continue
+            if not found:
+                missing_elements.append(element)
 
-        if not potcar_found:
+        # Error if any elements are missing
+        if missing_elements:
             raise JobSubmissionError(
-                f"POTCAR not found for element '{element}'. "
-                f"Ensure VASP_PP_PATH is set on cluster and contains POTCAR for {element}."
+                f"POTCAR not found for element(s): {', '.join(missing_elements)}. "
+                f"Ensure VASP_PP_PATH is set on cluster and contains POTCARs for all elements. "
+                f"Searched in: {base_path}/{potcar_type}/"
             )
+
+        # Concatenate all POTCARs into single file
+        remote_potcar = f"{shlex.quote(str(remote_dir))}/POTCAR"
+        if len(potcar_paths) == 1:
+            # Single element: just copy
+            copy_cmd = f"cp {potcar_paths[0]} {remote_potcar}"
+        else:
+            # Multiple elements: concatenate in order
+            concat_cmd = "cat " + " ".join(potcar_paths) + f" > {remote_potcar}"
+            copy_cmd = concat_cmd
+
+        await conn.run(copy_cmd, check=True)
+        logger.info(f"Retrieved and concatenated {len(potcar_paths)} POTCARs for: {', '.join(potcar_elements)}")
 
     async def _download_files(
         self,
@@ -1031,8 +1162,8 @@ exit $EXIT_CODE
                         logger.warning(f"Skipping file with suspicious name: {filename}")
                         continue
 
-                    # Use shlex.quote for remote path construction
-                    remote_file = f"{shlex.quote(remote_dir)}/{shlex.quote(filename)}"
+                    # Use PurePosixPath for SFTP paths (not shlex.quote - SFTP is not shell)
+                    remote_file = str(PurePosixPath(remote_dir) / filename)
                     local_file = local_dir / filename
                     try:
                         await sftp.get(remote_file, str(local_file))

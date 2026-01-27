@@ -1,0 +1,37 @@
+# Moderate Protocol for Geometry Relaxation
+# Balanced accuracy and computational cost
+# Suitable for production calculations
+
+name: relax_moderate
+description: "Balanced geometry optimization (default)"
+level: moderate
+
+scf:
+  maxcycle: 100
+  toldee: 7          # 10^-7 Hartree convergence
+  fmixing: 40        # 40% mixing
+  diis: true         # DIIS acceleration
+  smearing: false    # No smearing (insulator default)
+
+kpoints:
+  mesh: [6, 6, 6]
+  offset: [0, 0, 0]
+
+optimization:
+  type: FULLOPTG     # Full geometry optimization
+  maxcycle: 100
+  toldeg: 0.0003     # Gradient tolerance (Hartree/Bohr)
+  toldex: 0.0012     # Displacement tolerance (Bohr)
+  fix_volume: false
+  fix_shape: false
+
+resources:
+  num_machines: 1
+  num_mpiprocs_per_machine: 1
+  max_wallclock_seconds: 14400  # 4 hours
+
+basis_set: pob-tzvp
+clean_workdir: true
+relax_type: positions_cell
+spin_type: none
+electronic_type: automatic

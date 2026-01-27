@@ -1,0 +1,260 @@
+name: "Parameter Convergence Scan"
+version: "1.0"
+description: "Automated parameter sweeps for ENCUT, k-points, or basis set convergence"
+author: "Crystal-TUI Team"
+tags: ["workflow", "convergence", "parameter-sweep", "vasp", "qe", "crystal"]
+
+parameters:
+  # Structure input
+  structure_file:
+    type: "file"
+    description: "Input structure file"
+    required: true
+
+  # DFT code
+  dft_code:
+    type: "select"
+    options:
+      - label: "VASP"
+        value: "vasp"
+      - label: "Quantum ESPRESSO"
+        value: "qe"
+      - label: "CRYSTAL"
+        value: "crystal"
+    default: "vasp"
+    description: "DFT code to use"
+    required: true
+
+  # Parameter to converge
+  parameter:
+    type: "select"
+    options:
+      - label: "Energy Cutoff (ENCUT/ecutwfc)"
+        value: "encut"
+      - label: "K-point Mesh"
+        value: "kpoints"
+      - label: "Basis Set (CRYSTAL only)"
+        value: "basis_set"
+    default: "encut"
+    description: "Parameter to test for convergence"
+    required: true
+
+  # Parameter values to test
+  values:
+    type: "string"
+    default: "400,450,500,550,600"
+    description: "Comma-separated values to test"
+    required: true
+
+  # Convergence threshold
+  convergence_threshold:
+    type: "float"
+    default: 0.001
+    min: 0.0001
+    max: 0.01
+    description: "Energy convergence threshold (eV/atom)"
+
+  # Reference parameter (held constant while varying the other)
+  reference_kpoints:
+    type: "string"
+    default: "8 8 8"
+    description: "Reference k-point grid (when varying encut)"
+
+  reference_encut:
+    type: "float"
+    default: 600.0
+    description: "Reference energy cutoff (when varying kpoints)"
+
+  # Additional settings
+  ismear:
+    type: "integer"
+    default: 0
+    description: "VASP smearing method"
+
+  sigma:
+    type: "float"
+    default: 0.05
+    description: "VASP smearing width (eV)"
+
+  ediff:
+    type: "float"
+    default: 1.0e-7
+    description: "SCF convergence (eV)"
+
+workflow:
+  nodes:
+    # Step 1: Parameter sweep (BATCH node with parameter_sweep)
+    - id: sweep
+      type: batch
+      code: "{{ dft_code }}"
+      template: "{{ dft_code }}/scf"
+      parameter_sweep:
+        parameter: "{{ parameter }}"
+        values: "{{ values | split(',') | map('trim') | list }}"
+      max_parallel: 10
+      parameters:
+        # VASP/QE common
+        {% if parameter == 'encut' %}
+        kpoints_grid: "{{ reference_kpoints }}"
+        # encut comes from sweep
+        {% elif parameter == 'kpoints' %}
+        encut: "{{ reference_encut }}"
+        # kpoints comes from sweep
+        {% endif %}
+        ismear: "{{ ismear }}"
+        sigma: "{{ sigma }}"
+        ediff: "{{ ediff }}"
+        ibrion: "-1"
+        nsw: 0
+        lwave: false
+        lcharg: false
+
+    # Step 2: Analyze convergence
+    - id: analyze
+      type: script
+      command: |
+        python3 << 'EOF'
+        import json
+        import os
+        import re
+        import sys
+
+        # Collect results from sweep directories
+        results = []
+        threshold = {{ convergence_threshold }}
+
+        # Find all sweep directories
+        sweep_dirs = sorted([d for d in os.listdir('.') if d.startswith('sweep_')])
+
+        for sweep_dir in sweep_dirs:
+            # Extract parameter value from directory name
+            param_value = sweep_dir.split('_')[1]
+
+            {% if dft_code == 'vasp' %}
+            # Parse VASP OUTCAR
+            outcar_path = os.path.join(sweep_dir, 'OUTCAR')
+            if os.path.exists(outcar_path):
+                with open(outcar_path) as f:
+                    content = f.read()
+
+                # Extract total energy
+                energy_match = re.search(r'energy\(sigma->0\)\s*=\s*([\d.-]+)', content)
+                # Extract number of atoms
+                natoms_match = re.search(r'NIONS\s*=\s*(\d+)', content)
+
+                if energy_match and natoms_match:
+                    energy = float(energy_match.group(1))
+                    natoms = int(natoms_match.group(1))
+                    energy_per_atom = energy / natoms
+                    results.append({
+                        'parameter_value': float(param_value),
+                        'total_energy': energy,
+                        'energy_per_atom': energy_per_atom,
+                        'converged': True
+                    })
+
+            {% elif dft_code == 'qe' %}
+            # Parse QE output
+            out_files = [f for f in os.listdir(sweep_dir) if f.endswith('.out')]
+            if out_files:
+                with open(os.path.join(sweep_dir, out_files[0])) as f:
+                    content = f.read()
+
+                energy_match = re.search(r'!\s*total energy\s*=\s*([\d.-]+)\s*Ry', content)
+                natoms_match = re.search(r'number of atoms/cell\s*=\s*(\d+)', content)
+
+                if energy_match and natoms_match:
+                    energy_ry = float(energy_match.group(1))
+                    energy_ev = energy_ry * 13.6057  # Ry to eV
+                    natoms = int(natoms_match.group(1))
+                    energy_per_atom = energy_ev / natoms
+                    results.append({
+                        'parameter_value': float(param_value),
+                        'total_energy': energy_ev,
+                        'energy_per_atom': energy_per_atom,
+                        'converged': True
+                    })
+            {% endif %}
+
+        # Sort by parameter value
+        results = sorted(results, key=lambda x: x['parameter_value'])
+
+        # Find converged value
+        converged_value = None
+        if len(results) >= 2:
+            for i in range(1, len(results)):
+                delta = abs(results[i]['energy_per_atom'] - results[i-1]['energy_per_atom'])
+                results[i]['delta'] = delta
+
+                if delta < threshold and converged_value is None:
+                    converged_value = results[i-1]['parameter_value']
+
+        # Write results
+        output = {
+            'parameter': '{{ parameter }}',
+            'threshold': threshold,
+            'converged_value': converged_value,
+            'results': results
+        }
+
+        with open('convergence_results.json', 'w') as f:
+            json.dump(output, f, indent=2)
+
+        # Print summary
+        print("=" * 60)
+        print("CONVERGENCE ANALYSIS RESULTS")
+        print("=" * 60)
+        print(f"Parameter: {{ parameter }}")
+        print(f"Threshold: {threshold} eV/atom")
+        print()
+        print(f"{'Value':>10} {'E/atom (eV)':>15} {'Delta':>12}")
+        print("-" * 40)
+
+        for r in results:
+            delta_str = f"{r.get('delta', 0):.6f}" if 'delta' in r else "---"
+            print(f"{r['parameter_value']:>10.1f} {r['energy_per_atom']:>15.6f} {delta_str:>12}")
+
+        print()
+        if converged_value:
+            print(f"CONVERGED VALUE: {converged_value}")
+            print(f"(First value where delta < {threshold} eV/atom)")
+        else:
+            print("NOT CONVERGED within tested range")
+            print("Consider testing higher values")
+
+        print("=" * 60)
+        EOF
+      dependencies:
+        - sweep
+      outputs:
+        - converged_value
+        - convergence_plot
+
+  edges:
+    - from: sweep
+      to: analyze
+
+  outputs:
+    - name: "convergence_results"
+      source: "analyze"
+      file: "convergence_results.json"
+
+notes: |
+  Parameter Convergence Scan
+
+  This workflow systematically tests parameter values to find the
+  converged setting for production calculations.
+
+  Common convergence targets:
+  - ENCUT: Test 400-700 eV, threshold 1 meV/atom
+  - K-points: Test 4x4x4 to 12x12x12, threshold 1 meV/atom
+
+  Example usage:
+    crystal-tui workflow run parameter_convergence \
+      --parameter encut \
+      --values "400,450,500,550,600,650,700" \
+      --convergence_threshold 0.001
+
+  Outputs:
+  - convergence_results.json: Full results with energies
+  - Console output with recommended converged value

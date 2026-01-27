@@ -10,7 +10,6 @@ CRYSTAL23 calculations on various backends:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,7 +20,7 @@ if TYPE_CHECKING:
 def setup_localhost_computer(
     workdir: str | Path | None = None,
     label: str = "localhost",
-) -> "Computer":
+) -> Computer:
     """
     Setup localhost Computer for local CRYSTAL23 execution.
 
@@ -82,7 +81,7 @@ def setup_ssh_computer(
     key_filename: str | None = None,
     look_for_keys: bool = True,
     mpirun_command: list[str] | None = None,
-) -> "Computer":
+) -> Computer:
     """
     Setup remote SSH Computer for CRYSTAL23 execution.
 
@@ -168,7 +167,7 @@ def setup_ssh_computer(
 def setup_beefcake2_computer(
     username: str = "brian",
     node: str = "pve2",
-) -> "Computer":
+) -> Computer:
     """
     Setup beefcake2 cluster Computer.
 
@@ -215,13 +214,15 @@ def list_computers() -> list[dict]:
 
     computers = []
     for computer in orm.Computer.collection.all():
-        computers.append({
-            "label": computer.label,
-            "hostname": computer.hostname,
-            "transport_type": computer.transport_type,
-            "scheduler_type": computer.scheduler_type,
-            "is_configured": computer.is_configured,
-        })
+        computers.append(
+            {
+                "label": computer.label,
+                "hostname": computer.hostname,
+                "transport_type": computer.transport_type,
+                "scheduler_type": computer.scheduler_type,
+                "is_configured": computer.is_configured,
+            }
+        )
 
     return computers
 

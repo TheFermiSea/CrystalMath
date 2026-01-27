@@ -27,6 +27,16 @@ from src.core.workflow import (
 )
 
 
+# Metadata that enables stub execution for testing
+# Production workflows require real runners or explicit opt-in
+TEST_METADATA = {"allow_stub_execution": True}
+
+
+def create_test_workflow(workflow_id: str = "test", name: str = "Test", description: str = "") -> Workflow:
+    """Create a workflow configured for testing (stub execution enabled)."""
+    return Workflow(workflow_id, name, description, metadata=TEST_METADATA)
+
+
 class TestWorkflowConstruction:
     """Test basic workflow construction."""
 
@@ -609,7 +619,7 @@ class TestWorkflowExecution:
     @pytest.mark.asyncio
     async def test_execute_simple_workflow(self):
         """Test executing a simple two-node workflow."""
-        wf = Workflow("test", "Test")
+        wf = create_test_workflow()
         wf.add_node("opt", {}, node_id="opt")
         wf.add_node("freq", {}, node_id="freq")
         wf.add_dependency("opt", "freq")
@@ -624,7 +634,7 @@ class TestWorkflowExecution:
     @pytest.mark.asyncio
     async def test_execute_validates_first(self):
         """Test that execution validates workflow first."""
-        wf = Workflow("test", "Test")
+        wf = create_test_workflow()
         wf.add_node("a", {}, node_id="a")
         wf.add_node("b", {}, node_id="b")
         wf.add_dependency("a", "b")
@@ -636,7 +646,7 @@ class TestWorkflowExecution:
     @pytest.mark.asyncio
     async def test_execute_parallel_nodes(self):
         """Test executing parallel nodes."""
-        wf = Workflow("test", "Test")
+        wf = create_test_workflow()
         wf.add_node("opt", {}, node_id="opt")
         wf.add_node("dos", {}, node_id="dos")
         wf.add_node("band", {}, node_id="band")
@@ -653,7 +663,7 @@ class TestWorkflowExecution:
     @pytest.mark.asyncio
     async def test_execute_respects_dependencies(self):
         """Test that execution respects dependencies."""
-        wf = Workflow("test", "Test")
+        wf = create_test_workflow()
         wf.add_node("a", {}, node_id="a")
         wf.add_node("b", {}, node_id="b")
         wf.add_node("c", {}, node_id="c")
@@ -668,7 +678,7 @@ class TestWorkflowExecution:
     @pytest.mark.asyncio
     async def test_execute_aggregation_node(self):
         """Test executing an aggregation node."""
-        wf = Workflow("test", "Test")
+        wf = create_test_workflow()
         wf.add_node("calc1", {}, node_id="calc1")
         wf.add_node("calc2", {}, node_id="calc2")
         agg = wf.add_aggregation_node(

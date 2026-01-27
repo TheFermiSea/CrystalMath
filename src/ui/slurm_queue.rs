@@ -37,11 +37,6 @@ pub struct SlurmQueueState {
 }
 
 impl SlurmQueueState {
-    /// Create a new SLURM queue state.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Open the modal and trigger a queue fetch for the given cluster.
     pub fn open(&mut self, cluster_id: i32) {
         self.active = true;
@@ -121,7 +116,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         .borders(Borders::ALL)
         .border_style(border_style)
         .title(title)
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
     frame.render_widget(modal_block, modal_area);
 
     // Layout: Queue table, Status, Footer
@@ -213,7 +212,11 @@ fn render_queue_table(frame: &mut Frame, app: &App, area: Rect) {
         "Time",
         "NodeList",
     ])
-    .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+    .style(
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )
     .height(1);
 
     let rows: Vec<Row> = app
@@ -235,17 +238,36 @@ fn render_queue_table(frame: &mut Frame, app: &App, area: Rect) {
                 "PENDING" | "CONFIGURING" => Color::Yellow,
                 "COMPLETED" => Color::Blue,
                 "FAILED" | "CANCELLED" | "TIMEOUT" | "NODE_FAIL" | "PREEMPTED" => Color::Red,
-                _ => if is_selected { Color::White } else { Color::Gray },
+                _ => {
+                    if is_selected {
+                        Color::White
+                    } else {
+                        Color::Gray
+                    }
+                }
             };
 
             Row::new(vec![
                 Cell::from(entry.job_id.clone()),
                 Cell::from(entry.user.clone()),
                 Cell::from(truncate(&entry.name, 18)),
-                Cell::from(Span::styled(entry.state.clone(), Style::default().fg(state_color))),
+                Cell::from(Span::styled(
+                    entry.state.clone(),
+                    Style::default().fg(state_color),
+                )),
                 Cell::from(entry.partition.clone()),
-                Cell::from(entry.nodes.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string())),
-                Cell::from(entry.gpus.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string())),
+                Cell::from(
+                    entry
+                        .nodes
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                ),
+                Cell::from(
+                    entry
+                        .gpus
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                ),
                 Cell::from(format_time(&entry.time_used, &entry.time_limit)),
                 Cell::from(entry.node_list.clone().unwrap_or_else(|| "-".to_string())),
             ])
@@ -282,9 +304,10 @@ fn render_status_area(frame: &mut Frame, app: &App, area: Rect) {
         (format!("Error: {}", error), Style::default().fg(Color::Red))
     } else if let Some(entry) = state.selected_entry(&app.slurm_queue) {
         // Show detailed info about selected job
-        let mut details = vec![
-            format!("Job ID: {} | User: {} | Partition: {}", entry.job_id, entry.user, entry.partition),
-        ];
+        let mut details = vec![format!(
+            "Job ID: {} | User: {} | Partition: {}",
+            entry.job_id, entry.user, entry.partition
+        )];
 
         if let Some(ref reason) = entry.state_reason {
             if !reason.is_empty() {
@@ -317,16 +340,34 @@ fn render_status_area(frame: &mut Frame, app: &App, area: Rect) {
 /// Render footer with keybindings.
 fn render_footer(frame: &mut Frame, area: Rect) {
     let buttons = Line::from(vec![
-        Span::styled(" r ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " r ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Refresh", Style::default().fg(Color::White)),
         Span::raw("  "),
-        Span::styled(" c ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " c ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Cancel Job", Style::default().fg(Color::White)),
         Span::raw("  "),
-        Span::styled(" j/k ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " j/k ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Navigate", Style::default().fg(Color::White)),
         Span::raw("  "),
-        Span::styled(" Esc ", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Esc ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Close", Style::default().fg(Color::White)),
     ]);
 

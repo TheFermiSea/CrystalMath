@@ -9,6 +9,7 @@ construction that higher-level runners can adapt or override as needed.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -21,6 +22,7 @@ class DFTCode(Enum):
     CRYSTAL = "crystal"
     QUANTUM_ESPRESSO = "quantum_espresso"
     VASP = "vasp"
+    YAMBO = "yambo"
 
 
 class InvocationStyle(Enum):
@@ -93,17 +95,21 @@ class DFTCodeConfig:
 
         executable = self.get_executable(parallel)
 
+        # Security: Quote paths to prevent shell injection via filenames with metacharacters
+        quoted_input = shlex.quote(str(input_file))
+        quoted_output = shlex.quote(str(output_file))
+
         if self.invocation_style is InvocationStyle.STDIN:
-            cmd = f"{executable} < {input_file} > {output_file}"
+            cmd = f"{executable} < {quoted_input} > {quoted_output}"
             return ["bash", "-lc", cmd]
 
         if self.invocation_style is InvocationStyle.FLAG:
-            cmd = f"{executable} -in {input_file} > {output_file}"
+            cmd = f"{executable} -in {quoted_input} > {quoted_output}"
             return ["bash", "-lc", cmd]
 
         # InvocationStyle.CWD: assume caller sets cwd appropriately; we still
         # redirect stdout to the requested output file for consistency.
-        cmd = f"{executable} > {output_file}"
+        cmd = f"{executable} > {quoted_output}"
         return ["bash", "-lc", cmd]
 
 

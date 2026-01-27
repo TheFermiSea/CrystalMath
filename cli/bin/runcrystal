@@ -106,10 +106,13 @@ main() {
 
     # Execute in scratch directory
     cd "$WORK_DIR" || { ui_error "Failed to change to scratch directory"; exit 1; }
-    exec_crystal_run CRY_JOB
-    local EXIT_CODE=$?
 
-    # Return and retrieve results
+    # Run calculation, capturing exit code without triggering set -e
+    # This ensures we always retrieve results and run error analysis even on failure
+    local EXIT_CODE=0
+    exec_crystal_run CRY_JOB || EXIT_CODE=$?
+
+    # Always return and retrieve results (even on failure)
     cd "$ORIGINAL_DIR" || cry_warn "Failed to return to original directory"
     stage_retrieve_results "$FILE_PREFIX" "$WORK_DIR" "$ORIGINAL_DIR" || ui_warning "Some result files may not have been retrieved"
 

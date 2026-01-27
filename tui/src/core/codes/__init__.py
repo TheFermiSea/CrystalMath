@@ -25,3 +25,4 @@ __all__ = [
 from . import crystal  # noqa: F401  pylint: disable=wrong-import-position
 from . import quantum_espresso  # noqa: F401  pylint: disable=wrong-import-position
 from . import vasp  # noqa: F401  pylint: disable=wrong-import-position
+from . import yambo  # noqa: F401  pylint: disable=wrong-import-position

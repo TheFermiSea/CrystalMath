@@ -184,7 +184,8 @@ class LocalRunner(BaseRunner):
         self,
         job_id: int,
         work_dir: Path,
-        threads: Optional[int] = None
+        threads: Optional[int] = None,
+        input_file: Optional[Path] = None
     ) -> AsyncIterator[str]:
         """
         Execute a DFT job and stream output in real-time.
@@ -200,6 +201,7 @@ class LocalRunner(BaseRunner):
             job_id: Database ID of the job (for tracking)
             work_dir: Path to the job's working directory
             threads: Number of OpenMP threads (default: use self.default_threads)
+            input_file: Optional explicit path to input file (default: work_dir/input{ext})
 
         Yields:
             Lines of output from stdout/stderr as they are produced
@@ -215,8 +217,11 @@ class LocalRunner(BaseRunner):
         input_ext = self.code_config.input_extensions[0]  # Primary extension
         output_ext = self.code_config.output_extension
 
+        # Use provided input_file or fall back to default location
+        if input_file is None:
+            input_file = work_dir / f"input{input_ext}"
+
         # Validate input file
-        input_file = work_dir / f"input{input_ext}"
         if not input_file.exists():
             raise InputFileError(f"Input file not found: {input_file}")
         if input_file.stat().st_size == 0:
@@ -288,7 +293,21 @@ class LocalRunner(BaseRunner):
             yield result
 
         except Exception as e:
-            self._active_processes.pop(job_id, None)
+            # Ensure subprocess is terminated before removing from tracking
+            process = self._active_processes.pop(job_id, None)
+            if process is not None and process.returncode is None:
+                try:
+                    # Attempt graceful termination first
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        # Force kill if graceful termination fails
+                        process.kill()
+                        await process.wait()
+                except Exception:
+                    # Ignore errors during cleanup
+                    pass
             raise LocalRunnerError(f"Failed to execute {self.code_config.display_name} job: {e}") from e
 
     async def _create_process(
@@ -547,12 +566,19 @@ class LocalRunner(BaseRunner):
         self._job_work_dirs[handle] = work_dir
 
         # Start job execution in background, passing handle for result storage
-        task = asyncio.create_task(self._run_job_task(handle, job_id, work_dir, threads))
+        task = asyncio.create_task(self._run_job_task(handle, job_id, work_dir, threads, input_file))
         self._active_jobs[handle] = task
 
         return handle
 
-    async def _run_job_task(self, handle: JobHandle, job_id: int, work_dir: Path, threads: Optional[int]):
+    async def _run_job_task(
+        self,
+        handle: JobHandle,
+        job_id: int,
+        work_dir: Path,
+        threads: Optional[int],
+        input_file: Optional[Path] = None
+    ):
         """Background task that runs a job to completion.
 
         Args:
@@ -560,6 +586,7 @@ class LocalRunner(BaseRunner):
             job_id: Database ID of the job
             work_dir: Working directory for the job
             threads: Number of OpenMP threads
+            input_file: Optional explicit path to input file
         """
         # Acquire slot to enforce max_concurrent_jobs limit
         async with self.acquire_slot():
@@ -567,7 +594,7 @@ class LocalRunner(BaseRunner):
                 result: Optional[JobResult] = None
                 # Consume output and capture the final yielded JobResult
                 # run_job yields strings during execution, then yields JobResult at the end
-                async for item in self.run_job(job_id, work_dir, threads):
+                async for item in self.run_job(job_id, work_dir, threads, input_file):
                     if isinstance(item, JobResult):
                         # Capture the result directly - no race condition
                         result = item
@@ -575,9 +602,22 @@ class LocalRunner(BaseRunner):
 
                 if result:
                     self._job_results[handle] = result
+            except asyncio.CancelledError:
+                # Task was cancelled - ensure subprocess is terminated
+                await self._terminate_job_process(job_id)
+                # Also create a cancelled result
+                self._job_results[handle] = JobResult(
+                    success=False,
+                    final_energy=None,
+                    convergence_status="CANCELLED",
+                    errors=["Job was cancelled"],
+                )
+                raise  # Re-raise to properly handle cancellation
             except Exception as e:
                 # Store exception for later retrieval - don't swallow it
                 self._job_errors[handle] = e
+                # Ensure subprocess is terminated on error
+                await self._terminate_job_process(job_id)
                 # Also create a failed result
                 self._job_results[handle] = JobResult(
                     success=False,
@@ -585,6 +625,22 @@ class LocalRunner(BaseRunner):
                     convergence_status="FAILED",
                     errors=[str(e)],
                 )
+
+    async def _terminate_job_process(self, job_id: int) -> None:
+        """Terminate a job's subprocess if it's still running."""
+        process = self._active_processes.get(job_id)
+        if process is not None and process.returncode is None:
+            try:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+            except Exception:
+                pass  # Ignore errors during cleanup
+            finally:
+                self._active_processes.pop(job_id, None)
 
     async def get_status(self, job_handle: JobHandle) -> JobStatus:
         """
@@ -613,6 +669,9 @@ class LocalRunner(BaseRunner):
             return JobStatus.UNKNOWN
 
         if task.done():
+            # Prune completed task from _active_jobs to prevent memory leak
+            self._active_jobs.pop(job_handle, None)
+
             # Check for successful completion using per-job results
             try:
                 task.result()
@@ -829,10 +888,13 @@ class LocalRunner(BaseRunner):
         job_id = self._job_handles.get(job_handle)
         pid = self.get_process_pid(job_id) if job_id else None
 
+        # Get actual work directory from tracking (fall back to cwd if not found)
+        work_dir = self._job_work_dirs.get(job_handle, Path.cwd())
+
         return JobInfo(
             job_handle=job_handle,
             status=status,
-            work_dir=Path.cwd(),  # Would need to track actual work_dir
+            work_dir=work_dir,
             pid=pid,
         )
 

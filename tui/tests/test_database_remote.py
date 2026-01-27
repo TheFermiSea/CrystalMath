@@ -57,8 +57,9 @@ class TestSchemaMigration:
     """Tests for database schema migrations."""
 
     def test_new_database_creates_v2_schema(self, temp_db):
-        """Test that new databases are created with current schema (v5)."""
-        assert temp_db.get_schema_version() == 5
+        """Test that new databases are created with current schema."""
+        from src.core.database import Database
+        assert temp_db.get_schema_version() == Database.SCHEMA_VERSION
 
         # Verify all tables exist
         cursor = temp_db.conn.execute(
@@ -70,11 +71,11 @@ class TestSchemaMigration:
         assert expected_tables.issubset(tables)
 
     def test_v1_database_migrates_to_v2(self, temp_db_v1):
-        """Test that v1 databases are automatically migrated to latest (v5)."""
+        """Test that v1 databases are automatically migrated to latest."""
         # Open v1 database - should trigger migration
         db = Database(temp_db_v1)
 
-        assert db.get_schema_version() == 5
+        assert db.get_schema_version() == Database.SCHEMA_VERSION
 
         # Verify Phase 2 columns exist in jobs table
         cursor = db.conn.execute("PRAGMA table_info(jobs)")

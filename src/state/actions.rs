@@ -42,6 +42,8 @@ pub enum Action {
     JobDiffRequest,
     /// Request job list refresh.
     JobsRefresh,
+    /// Request sync with remote clusters (squeue/sacct).
+    JobsSync,
 
     // ===== Results Tab =====
     /// Scroll results view up by one line.

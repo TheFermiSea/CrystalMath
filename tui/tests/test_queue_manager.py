@@ -79,23 +79,24 @@ class TestQueueManagerInitialization:
         """Test that queue tables are created."""
         qm = QueueManager(temp_db)
 
-        # Check queue_state table
-        cursor = temp_db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='queue_state'"
-        )
-        assert cursor.fetchone() is not None
+        with temp_db.connection() as conn:
+            # Check queue_state table
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='queue_state'"
+            )
+            assert cursor.fetchone() is not None
 
-        # Check cluster_state table
-        cursor = temp_db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='cluster_state'"
-        )
-        assert cursor.fetchone() is not None
+            # Check cluster_state table
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='cluster_state'"
+            )
+            assert cursor.fetchone() is not None
 
-        # Check scheduler_metrics table
-        cursor = temp_db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='scheduler_metrics'"
-        )
-        assert cursor.fetchone() is not None
+            # Check scheduler_metrics table
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='scheduler_metrics'"
+            )
+            assert cursor.fetchone() is not None
 
     @pytest.mark.asyncio
     async def test_start_stop(self, queue_manager):
@@ -453,11 +454,12 @@ class TestRetryLogic:
         # Dequeue and fail multiple times
         for i in range(3):
             # Manually set retry count in database
-            queue_manager.db.conn.execute(
-                "UPDATE queue_state SET retry_count = ? WHERE job_id = ?",
-                (i, job_id)
-            )
-            queue_manager.db.conn.commit()
+            with queue_manager.db.connection() as conn:
+                conn.execute(
+                    "UPDATE queue_state SET retry_count = ? WHERE job_id = ?",
+                    (i, job_id)
+                )
+                conn.commit()
 
             temp_db.update_status(job_id, "FAILED")
             await queue_manager.handle_job_completion(job_id, success=False)
@@ -604,14 +606,15 @@ class TestPersistence:
         await qm.enqueue(job_id, priority=Priority.HIGH)
 
         # Check database
-        cursor = temp_db.conn.execute(
-            "SELECT * FROM queue_state WHERE job_id = ?",
-            (job_id,)
-        )
-        row = cursor.fetchone()
+        with temp_db.connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM queue_state WHERE job_id = ?",
+                (job_id,)
+            )
+            row = cursor.fetchone()
 
-        assert row is not None
-        assert row[1] == Priority.HIGH.value  # priority column
+            assert row is not None
+            assert row[1] == Priority.HIGH.value  # priority column
 
     @pytest.mark.asyncio
     async def test_queue_state_restored_on_restart(self, temp_db):
@@ -642,14 +645,15 @@ class TestPersistence:
         await qm.pause_queue(5)
 
         # Check database
-        cursor = temp_db.conn.execute(
-            "SELECT * FROM cluster_state WHERE cluster_id = ?",
-            (5,)
-        )
-        row = cursor.fetchone()
+        with temp_db.connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM cluster_state WHERE cluster_id = ?",
+                (5,)
+            )
+            row = cursor.fetchone()
 
-        assert row is not None
-        assert bool(row[2])  # paused column
+            assert row is not None
+            assert bool(row[2])  # paused column
 
     @pytest.mark.asyncio
     async def test_metrics_persisted(self, running_queue_manager, temp_db):
@@ -666,14 +670,15 @@ class TestPersistence:
         await asyncio.sleep(0.1)
 
         # Check database
-        cursor = temp_db.conn.execute(
-            "SELECT * FROM scheduler_metrics WHERE id = 1"
-        )
-        row = cursor.fetchone()
+        with temp_db.connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM scheduler_metrics WHERE id = 1"
+            )
+            row = cursor.fetchone()
 
-        assert row is not None
-        assert row[1] >= 1  # total_jobs_scheduled
-        assert row[2] >= 1  # total_jobs_completed
+            assert row is not None
+            assert row[1] >= 1  # total_jobs_scheduled
+            assert row[2] >= 1  # total_jobs_completed
 
 
 class TestQueueStatus:
@@ -755,11 +760,12 @@ class TestBackgroundScheduler:
         await asyncio.sleep(0.2)
 
         # State should be in database
-        cursor = temp_db.conn.execute(
-            "SELECT * FROM queue_state WHERE job_id = ?",
-            (job_id,)
-        )
-        assert cursor.fetchone() is not None
+        with temp_db.connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM queue_state WHERE job_id = ?",
+                (job_id,)
+            )
+            assert cursor.fetchone() is not None
 
         await qm.stop()
 
@@ -927,18 +933,20 @@ class TestJobCancellation:
         await queue_manager.enqueue(job_id)
 
         # Verify job is in queue_state table
-        cursor = temp_db.conn.execute(
-            "SELECT job_id FROM queue_state WHERE job_id = ?",
-            (job_id,)
-        )
-        assert cursor.fetchone() is not None
+        with temp_db.connection() as conn:
+            cursor = conn.execute(
+                "SELECT job_id FROM queue_state WHERE job_id = ?",
+                (job_id,)
+            )
+            assert cursor.fetchone() is not None
 
         # Cancel the job
         await queue_manager.cancel_job(job_id)
 
         # Verify job is removed from queue_state table
-        cursor = temp_db.conn.execute(
-            "SELECT job_id FROM queue_state WHERE job_id = ?",
-            (job_id,)
-        )
-        assert cursor.fetchone() is None
+        with temp_db.connection() as conn:
+            cursor = conn.execute(
+                "SELECT job_id FROM queue_state WHERE job_id = ?",
+                (job_id,)
+            )
+            assert cursor.fetchone() is None

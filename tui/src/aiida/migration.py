@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -149,7 +148,7 @@ class DatabaseMigrator:
         finally:
             conn.close()
 
-    def _migrate_single_job(self, job_data: dict) -> "Node | None":
+    def _migrate_single_job(self, job_data: dict) -> Node | None:
         """
         Migrate a single job to AiiDA.
 
@@ -181,17 +180,19 @@ class DatabaseMigrator:
             input_file.store()
 
         # Create metadata node
-        metadata = orm.Dict(dict={
-            "migrated_from": "sqlite",
-            "original_id": job_id,
-            "name": job_name,
-            "status": job_data.get("status", "unknown"),
-            "runner_type": job_data.get("runner_type", "local"),
-            "cluster_id": job_data.get("cluster_id"),
-            "work_dir": job_data.get("work_dir"),
-            "created_at": job_data.get("created_at"),
-            "updated_at": job_data.get("updated_at"),
-        })
+        metadata = orm.Dict(
+            dict={
+                "migrated_from": "sqlite",
+                "original_id": job_id,
+                "name": job_name,
+                "status": job_data.get("status", "unknown"),
+                "runner_type": job_data.get("runner_type", "local"),
+                "cluster_id": job_data.get("cluster_id"),
+                "work_dir": job_data.get("work_dir"),
+                "created_at": job_data.get("created_at"),
+                "updated_at": job_data.get("updated_at"),
+            }
+        )
         metadata.label = job_name
         metadata.description = f"Migrated from SQLite job ID {job_id}"
 
@@ -337,7 +338,7 @@ class DatabaseMigrator:
         finally:
             conn.close()
 
-    def _migrate_single_workflow(self, workflow_data: dict) -> "Node | None":
+    def _migrate_single_workflow(self, workflow_data: dict) -> Node | None:
         """Migrate a workflow definition to AiiDA."""
         workflow_name = workflow_data["name"]
 
@@ -355,16 +356,18 @@ class DatabaseMigrator:
         except json.JSONDecodeError:
             dag = {}
 
-        workflow_node = orm.Dict(dict={
-            "migrated_from": "sqlite",
-            "original_id": workflow_data["id"],
-            "name": workflow_name,
-            "dag": dag,
-            "status": workflow_data.get("status", "unknown"),
-            "created_at": workflow_data.get("created_at"),
-        })
+        workflow_node = orm.Dict(
+            dict={
+                "migrated_from": "sqlite",
+                "original_id": workflow_data["id"],
+                "name": workflow_name,
+                "dag": dag,
+                "status": workflow_data.get("status", "unknown"),
+                "created_at": workflow_data.get("created_at"),
+            }
+        )
         workflow_node.label = f"workflow_{workflow_name}"
-        workflow_node.description = f"Migrated workflow from SQLite"
+        workflow_node.description = "Migrated workflow from SQLite"
         workflow_node.store()
 
         print(f"OK (PK: {workflow_node.pk})")
@@ -429,9 +432,7 @@ def main():
     """Command-line interface for migration."""
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Migrate CRYSTAL-TUI SQLite database to AiiDA"
-    )
+    parser = argparse.ArgumentParser(description="Migrate CRYSTAL-TUI SQLite database to AiiDA")
     parser.add_argument(
         "--sqlite-db",
         type=str,

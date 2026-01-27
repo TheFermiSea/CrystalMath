@@ -56,23 +56,33 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             .collect()
     };
 
-    // Build title with follow mode indicator
+    // Build title with job name and follow mode indicator
     let visible_start = clamped_scroll + 1;
-    let follow_indicator = if app.log_follow_mode {
-        " [FOLLOW] "
-    } else {
-        ""
-    };
+    let follow_indicator = if app.log_follow_mode { " [FOLLOW]" } else { "" };
 
-    let title = if app.log_job_pk.is_some() {
-        format!(
-            " Log ({}/{}){}",
-            visible_start,
-            total_lines.max(1),
-            follow_indicator
-        )
-    } else {
-        " Log ".to_string()
+    let title = match (&app.log_job_name, &app.log_job_pk) {
+        (Some(name), Some(pk)) => {
+            // Show job name and ID for clarity
+            format!(
+                " Log: {} (pk:{}) [{}/{}]{}",
+                name,
+                pk,
+                visible_start,
+                total_lines.max(1),
+                follow_indicator
+            )
+        }
+        (None, Some(pk)) => {
+            // Fallback to just pk
+            format!(
+                " Log (pk:{}) [{}/{}]{}",
+                pk,
+                visible_start,
+                total_lines.max(1),
+                follow_indicator
+            )
+        }
+        _ => " Log ".to_string(),
     };
 
     // Style the title - cyan normally, green when following

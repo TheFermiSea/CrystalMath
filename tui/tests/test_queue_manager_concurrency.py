@@ -28,7 +28,7 @@ def temp_db(tmp_path):
     db_path = tmp_path / "test_concurrency.db"
     db = Database(db_path)
     yield db
-    db.conn.close()
+    db.close()
 
 
 @pytest_asyncio.fixture

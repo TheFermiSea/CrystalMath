@@ -22,10 +22,13 @@ Example:
 
 from __future__ import annotations
 
+import logging
 import os
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Union
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.aiida.query_adapter import AiiDAQueryAdapter
@@ -102,8 +105,8 @@ def get_backend_mode() -> BackendMode:
                         return BackendMode.AIIDA
                     elif backend == "legacy":
                         return BackendMode.LEGACY
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to read backend config: %s", e)
 
     # Auto-detect
     return BackendMode.AUTO
@@ -120,9 +123,11 @@ def is_aiida_available() -> bool:
         load_profile("crystal-tui")
         return True
     except ImportError:
+        logger.debug("AiiDA not installed")
         return False
-    except Exception:
+    except Exception as e:
         # AiiDA installed but not configured
+        logger.debug("AiiDA installed but not configured: %s", e)
         return False
 
 

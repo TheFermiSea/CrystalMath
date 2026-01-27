@@ -150,6 +150,9 @@ class SLURMRunner(RemoteBaseRunner):
         # Track job states
         self._job_states: Dict[int, SLURMJobState] = {}
 
+        # Track slot monitor tasks: job_handle -> asyncio.Task
+        self._slot_monitors: Dict[str, asyncio.Task] = {}
+
         # Initialize template generator for SLURM scripts
         self._template_generator = SLURMTemplateGenerator(dft_code=dft_code)
 
@@ -192,8 +195,12 @@ class SLURMRunner(RemoteBaseRunner):
             SLURMSubmissionError: If job submission fails
             SLURMValidationError: If input validation fails
         """
-        # Acquire slot to enforce max_concurrent_jobs limit
-        async with self.acquire_slot():
+        # Acquire slot - blocks until a slot is available
+        # Slot is held until job completes (via background monitor task)
+        await self._semaphore.acquire()
+        slot_acquired = True
+
+        try:
             # Validate input file exists
             if not input_file.exists():
                 raise SLURMSubmissionError(f"Input file not found: {input_file}")
@@ -271,6 +278,15 @@ class SLURMRunner(RemoteBaseRunner):
                     job_handle = JobHandle(f"slurm:{self.cluster_id}:{slurm_job_id}:{remote_work_dir}")
 
                     logger.info(f"Submitted SLURM job {slurm_job_id} for job_id={job_id}")
+
+                    # Spawn background task to monitor job and release slot when done
+                    monitor_task = asyncio.create_task(
+                        self._monitor_and_release_slot(job_handle),
+                        name=f"slot_monitor_{job_handle}"
+                    )
+                    self._slot_monitors[job_handle] = monitor_task
+                    slot_acquired = False  # Monitor will release it
+
                     return job_handle
 
             except SLURMSubmissionError:
@@ -278,6 +294,79 @@ class SLURMRunner(RemoteBaseRunner):
             except Exception as e:
                 logger.error(f"SLURM job submission failed: {e}")
                 raise SLURMSubmissionError(f"Job submission failed: {e}") from e
+
+        finally:
+            # Release slot immediately if submission failed (monitor not spawned)
+            if slot_acquired:
+                self._semaphore.release()
+
+    async def _monitor_and_release_slot(self, job_handle: JobHandle) -> None:
+        """
+        Background task that monitors job and releases semaphore slot when done.
+
+        This ensures max_concurrent_jobs limits actual running jobs, not just
+        submission rate.
+
+        Args:
+            job_handle: Job handle to monitor
+        """
+        MAX_CONSECUTIVE_ERRORS = 10  # Prevent infinite loops during network outages
+        consecutive_errors = 0
+
+        try:
+            # Poll until job reaches terminal state
+            while True:
+                try:
+                    status = await self.get_status(job_handle)
+                    consecutive_errors = 0  # Reset on success
+                    if status in (JobStatus.COMPLETED, JobStatus.FAILED,
+                                  JobStatus.CANCELLED, JobStatus.UNKNOWN):
+                        logger.debug(f"SLURM job {job_handle} reached terminal state: {status}")
+                        break
+                except asyncio.CancelledError:
+                    # Task was cancelled (e.g., during cleanup) - propagate for cleanup
+                    logger.debug(f"Monitor task cancelled for {job_handle}")
+                    raise
+                except Exception as e:
+                    consecutive_errors += 1
+                    logger.warning(
+                        f"Error checking SLURM job status for {job_handle}: {e} "
+                        f"(attempt {consecutive_errors}/{MAX_CONSECUTIVE_ERRORS})"
+                    )
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                        logger.error(
+                            f"Max consecutive errors reached for {job_handle}, "
+                            f"assuming job failed"
+                        )
+                        break
+                await asyncio.sleep(self.poll_interval)
+        except asyncio.CancelledError:
+            # Ensure cleanup happens even on cancellation
+            logger.debug(f"Cleaning up cancelled monitor for {job_handle}")
+        finally:
+            self._semaphore.release()
+            self._slot_monitors.pop(job_handle, None)
+            logger.debug(f"Released slot for SLURM job {job_handle}")
+
+    async def cleanup_all(self) -> None:
+        """
+        Clean up all resources and cancel all slot monitors.
+
+        Call this when shutting down the runner to ensure proper cleanup.
+        """
+        # Cancel all slot monitor tasks
+        for job_handle, task in list(self._slot_monitors.items()):
+            if not task.done():
+                task.cancel()
+
+        # Wait for all monitor tasks to finish
+        if self._slot_monitors:
+            await asyncio.gather(*self._slot_monitors.values(), return_exceptions=True)
+
+        self._slot_monitors.clear()
+        self._slurm_job_ids.clear()
+        self._job_states.clear()
+        logger.info("SLURMRunner cleanup complete")
 
     def _get_remote_input_name(self, input_file: Path) -> str:
         """Get the appropriate remote input file name for the DFT code."""

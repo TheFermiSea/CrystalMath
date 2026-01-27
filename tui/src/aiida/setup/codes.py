@@ -51,12 +51,12 @@ def get_crystal23_path() -> Path | None:
 
 
 def setup_crystal_code(
-    computer: "Computer",
+    computer: Computer,
     executable: str = "crystalOMP",
     label: str | None = None,
     prepend_text: str = "",
     append_text: str = "",
-) -> "Code":
+) -> Code:
     """
     Setup CRYSTAL23 Code on a computer.
 
@@ -96,8 +96,7 @@ def setup_crystal_code(
     exe_path = get_crystal23_path()
     if exe_path is None:
         raise RuntimeError(
-            "CRYSTAL23 installation not found. "
-            "Set CRY23_ROOT or CRY23_EXEDIR environment variable."
+            "CRYSTAL23 installation not found. Set CRY23_ROOT or CRY23_EXEDIR environment variable."
         )
 
     executable_path = exe_path / executable
@@ -125,10 +124,10 @@ def setup_crystal_code(
 
 
 def setup_properties_code(
-    computer: "Computer",
+    computer: Computer,
     label: str = "properties",
     prepend_text: str = "",
-) -> "Code":
+) -> Code:
     """
     Setup CRYSTAL23 properties Code on a computer.
 
@@ -180,7 +179,7 @@ def setup_localhost_codes(
     crystal_omp: bool = True,
     pcrystal_omp: bool = False,
     properties: bool = True,
-) -> dict[str, "Code"]:
+) -> dict[str, Code]:
     """
     Setup all CRYSTAL23 codes on localhost.
 
@@ -250,10 +249,12 @@ def list_codes() -> list[dict]:
 
     for label, description in qb.all():
         if "crystal" in label.lower() or "crystal" in (description or "").lower():
-            codes.append({
-                "label": label,
-                "description": description,
-            })
+            codes.append(
+                {
+                    "label": label,
+                    "description": description,
+                }
+            )
 
     return codes
 

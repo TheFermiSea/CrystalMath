@@ -242,16 +242,18 @@ skip_if_macos() {
 # Based on gemini's recommendations for bash unit testing
 
 # Store mock call data in associative arrays
-# Note: Using declare -A instead of declare -gA for bash 3.2 compatibility
-declare -A MOCK_CALLS
-declare -A MOCK_STDOUT
-declare -A MOCK_EXIT_CODE
+# Use -gA for global scope (bash 4.2+) to ensure availability in test subshells
+declare -gA MOCK_CALLS=()
+declare -gA MOCK_STDOUT=()
+declare -gA MOCK_EXIT_CODE=()
 
 # Resets all mock data. Call this in your setup() functions.
+# Also re-declares arrays to ensure they exist in current context with set -u
 mock_reset() {
-    MOCK_CALLS=()
-    MOCK_STDOUT=()
-    MOCK_EXIT_CODE=()
+    # Re-declare as global associative arrays for strict mode compatibility
+    declare -gA MOCK_CALLS=()
+    declare -gA MOCK_STDOUT=()
+    declare -gA MOCK_EXIT_CODE=()
 }
 
 # Creates a mock for a command.

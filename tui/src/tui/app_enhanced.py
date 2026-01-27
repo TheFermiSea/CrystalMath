@@ -15,7 +15,11 @@ from textual.message import Message
 from textual.binding import Binding
 
 from ..core.backend import get_database, BackendMode
-from ..core.core_adapter import CrystalCoreClient
+from ..core.core_adapter import (
+    CrystalCoreClient,
+    job_record_to_status,
+    job_status_to_job,
+)
 from ..core.environment import CrystalConfig, get_crystal_config
 from ..core.queue_manager import QueueManager, Priority
 from ..runners import LocalRunner, LocalRunnerError, InputFileError
@@ -24,6 +28,7 @@ from .screens import NewJobScreen, SLURMQueueScreen
 from .screens.new_job import JobCreated
 from .widgets import InputPreview, ResultsSummary, JobListWidget, JobStatsWidget
 from ..core.database import Database as CoreDatabase, Cluster, Job
+from crystalmath.models import JobState as CoreJobState, JobStatus as CoreJobStatus
 from ..core.connection_manager import ConnectionManager
 
 
@@ -247,10 +252,10 @@ class CrystalTUI(App):
 
         # Update runtime for all running jobs
         for job in jobs:
-            if job.status == "RUNNING" and job.id:
-                job_list.update_job_runtime(job.id)
+            if job.state == CoreJobState.RUNNING:
+                job_list.update_job_runtime(job.pk)
 
-    def _get_jobs_for_ui(self):
+    def _get_jobs_for_ui(self) -> list[CoreJobStatus] | None:
         """Fetch jobs via core adapter, falling back to legacy database."""
         if self._core_client is not None:
             try:
@@ -259,7 +264,7 @@ class CrystalTUI(App):
                 pass
 
         if self.db is not None:
-            return self.db.get_all_jobs()
+            return [job_record_to_status(job) for job in self.db.get_all_jobs()]
 
         return None
 
@@ -267,9 +272,9 @@ class CrystalTUI(App):
         """Try to get a Job dataclass from the core adapter before falling back to the database."""
         if self._core_client is not None:
             try:
-                for job in self._core_client.list_jobs():
-                    if job.id == job_id:
-                        return job
+                for status in self._core_client.list_jobs():
+                    if status.pk == job_id:
+                        return job_status_to_job(status)
             except Exception:
                 pass
 
@@ -583,12 +588,16 @@ class CrystalTUI(App):
             self.db.update_status(message.job_id, message.status, message.pid)
 
         job_list = self.query_one("#job_list", JobListWidget)
-        job_list.update_job_status(message.job_id, message.status, message.pid)
+        try:
+            state = CoreJobState(message.status)
+        except ValueError:
+            state = CoreJobState.CREATED
+        job_list.update_job_status(message.job_id, state, message.pid)
 
         # Update stats
         jobs = self._get_jobs_for_ui()
         if jobs is None and self.db:
-            jobs = self.db.get_all_jobs()
+            jobs = [job_record_to_status(job) for job in self.db.get_all_jobs()]
         if jobs:
             job_stats = self.query_one("#job_stats", JobStatsWidget)
             job_stats.update_stats(jobs)

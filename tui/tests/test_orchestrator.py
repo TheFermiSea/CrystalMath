@@ -1961,8 +1961,11 @@ class TestOutputParsers:
         assert results["bandgap"] == 1.5
 
     @pytest.mark.asyncio
-    async def test_extract_node_results_missing_parser(self, orchestrator, temp_db, tmp_path, capsys):
+    async def test_extract_node_results_missing_parser(self, orchestrator, temp_db, tmp_path, caplog):
         """Test _extract_node_results handles missing parser gracefully."""
+        import logging
+        caplog.set_level(logging.WARNING)
+
         work_dir = tmp_path / "job_work"
         work_dir.mkdir()
 
@@ -1985,16 +1988,19 @@ class TestOutputParsers:
         # Should not raise, just log warning
         results = await orchestrator._extract_node_results(node, job)
 
-        # Check warning was printed
-        captured = capsys.readouterr()
-        assert "Parser 'nonexistent_parser' not found" in captured.out
+        # Check warning was logged
+        assert any("Parser 'nonexistent_parser' not found" in record.message
+                   for record in caplog.records)
 
         # Results should be empty but not None
         assert results == {}
 
     @pytest.mark.asyncio
-    async def test_extract_node_results_parser_exception(self, orchestrator, temp_db, tmp_path, capsys):
+    async def test_extract_node_results_parser_exception(self, orchestrator, temp_db, tmp_path, caplog):
         """Test _extract_node_results handles parser exceptions gracefully."""
+        import logging
+        caplog.set_level(logging.WARNING)
+
         # Register a parser that raises an exception
         async def broken_parser(work_dir: Path):
             raise ValueError("Simulated parser error")
@@ -2022,9 +2028,9 @@ class TestOutputParsers:
         # Should not raise, just log warning
         results = await orchestrator._extract_node_results(node, job)
 
-        # Check warning was printed
-        captured = capsys.readouterr()
-        assert "Parser 'broken' failed" in captured.out
+        # Check warning was logged
+        assert any("Parser 'broken' failed" in record.message
+                   for record in caplog.records)
 
         assert results == {}
 

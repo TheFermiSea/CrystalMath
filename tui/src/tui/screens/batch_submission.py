@@ -4,7 +4,7 @@ Batch job submission screen for creating multiple CRYSTAL calculation jobs.
 
 import os
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 from dataclasses import dataclass
 
 from textual.app import ComposeResult
@@ -14,7 +14,9 @@ from textual.widgets import Input, Button, Static, Label, Select, DataTable
 from textual.message import Message
 from textual.binding import Binding
 
+from ...core.core_adapter import CrystalCoreClient, job_record_to_status
 from ...core.database import Database
+from crystalmath.models import DftCode, JobSubmission, RunnerType, SchedulerOptions, JobStatus
 
 
 @dataclass
@@ -165,12 +167,14 @@ class BatchSubmissionScreen(ModalScreen):
         self,
         database: Database,
         calculations_dir: Path,
+        core_client: CrystalCoreClient | None = None,
         name: Optional[str] = None,
         id: Optional[str] = None
     ):
         super().__init__(name=name, id=id)
         self.database = database
         self.calculations_dir = calculations_dir
+        self.core_client = core_client
         self.job_configs: List[BatchJobConfig] = []
         self.submitting = False
 
@@ -364,7 +368,23 @@ class BatchSubmissionScreen(ModalScreen):
                 self._show_progress(progress_msg)
                 self._update_job_status(i, "SUBMITTING")
 
-                # Create job directory
+                if self.core_client:
+                    input_content = self._read_input_content(config)
+                    if input_content is None:
+                        self._update_job_status(i, "ERROR: Missing input")
+                        continue
+
+                    try:
+                        submission = self._build_submission_from_config(config, input_content)
+                        job_id = self.core_client.submit_job(submission)
+                        job_ids.append(job_id)
+                        job_names.append(config.name)
+                        self._update_job_status(i, "PENDING")
+                        continue
+                    except Exception as exc:
+                        self._update_job_status(i, f"ERROR: {exc}")
+                        continue
+
                 existing_jobs = self.database.get_all_jobs()
                 next_id = max([job.id for job in existing_jobs], default=0) + 1 + i
                 work_dir_name = f"{next_id:04d}_{config.name}"
@@ -376,19 +396,20 @@ class BatchSubmissionScreen(ModalScreen):
                     self._update_job_status(i, "ERROR: Dir exists")
                     continue
 
-                # Copy input file
-                input_content = ""
-                if config.input_file.exists():
-                    input_content = config.input_file.read_text()
-                    dest_input = work_dir / "input.d12"
-                    dest_input.write_text(input_content)
-                else:
-                    # Create placeholder input for demo
-                    input_content = "# Placeholder input\nEND\nEND\n"
-                    dest_input = work_dir / "input.d12"
-                    dest_input.write_text(input_content)
+                input_content = self._read_input_content(config, allow_placeholder=True)
+                if input_content is None:
+                    self._update_job_status(i, "ERROR: Missing input")
+                    try:
+                        import shutil
 
-                # Create metadata
+                        shutil.rmtree(work_dir)
+                    except Exception:
+                        pass
+                    continue
+
+                dest_input = work_dir / "input.d12"
+                dest_input.write_text(input_content)
+
                 import json
                 metadata = {
                     "mpi_ranks": config.mpi_ranks,
@@ -401,7 +422,6 @@ class BatchSubmissionScreen(ModalScreen):
                 metadata_file = work_dir / "job_metadata.json"
                 metadata_file.write_text(json.dumps(metadata, indent=2))
 
-                # Create job in database
                 job_id = self.database.create_job(
                     name=config.name,
                     work_dir=str(work_dir),
@@ -440,6 +460,7 @@ class BatchSubmissionScreen(ModalScreen):
             errors.append("Duplicate job names found in batch")
 
         # Check each job
+        existing_names = self._existing_job_names()
         for i, config in enumerate(self.job_configs):
             # Validate name
             if not config.name or not config.name.strip():
@@ -449,8 +470,7 @@ class BatchSubmissionScreen(ModalScreen):
                 errors.append(f"Job {i+1}: Invalid characters in name '{config.name}'")
 
             # Check if name conflicts with existing jobs
-            existing_jobs = self.database.get_all_jobs()
-            if any(job.name == config.name for job in existing_jobs):
+            if config.name in existing_names:
                 errors.append(f"Job {i+1}: Name '{config.name}' already exists")
 
             # Validate resources
@@ -461,6 +481,67 @@ class BatchSubmissionScreen(ModalScreen):
                 errors.append(f"Job {i+1}: Threads must be >= 1")
 
         return errors
+
+    def _existing_job_names(self) -> Set[str]:
+        """Return existing job names using the latest job statuses."""
+        return {status.name for status in self._list_all_job_statuses()}
+
+    def _list_all_job_statuses(self) -> list[JobStatus]:
+        """Helper: fetch statuses via core client or fallback to legacy DB."""
+        if self.core_client:
+            try:
+                return self.core_client.list_jobs()
+            except Exception:
+                pass
+
+        if self.database:
+            return [job_record_to_status(job) for job in self.database.get_all_jobs()]
+
+        return []
+
+    def _read_input_content(self, config: BatchJobConfig, allow_placeholder: bool = False) -> Optional[str]:
+        """Read input content for a job config, returning None if missing."""
+        if config.input_file.exists():
+            return config.input_file.read_text()
+        if allow_placeholder:
+            return "# Placeholder input\nEND\nEND\n"
+        return None
+
+    def _build_submission_from_config(
+        self,
+        config: BatchJobConfig,
+        input_content: str
+    ) -> JobSubmission:
+        """Construct a JobSubmission object from a batch config."""
+        runner_type = self._map_runner_type(config.cluster)
+        scheduler_options = None
+        if runner_type == RunnerType.SLURM:
+            scheduler_options = SchedulerOptions(
+                walltime=config.time_limit,
+                memory_gb="32",
+                cpus_per_task=config.threads,
+                nodes=1,
+            )
+
+        return JobSubmission(
+            name=config.name,
+            dft_code=DftCode.CRYSTAL,
+            runner_type=runner_type,
+            parameters={},
+            input_content=input_content,
+            auxiliary_files=None,
+            scheduler_options=scheduler_options,
+            mpi_ranks=config.mpi_ranks if config.mpi_ranks > 0 else 1,
+            parallel_mode="parallel" if config.mpi_ranks > 1 else "serial",
+        )
+
+    def _map_runner_type(self, cluster: str) -> RunnerType:
+        """Map the batch cluster selection to RunnerType."""
+        if cluster == "hpc":
+            return RunnerType.SLURM
+        if cluster == "ssh":
+            return RunnerType.SSH
+        return RunnerType.LOCAL
 
     def _refresh_jobs_table(self) -> None:
         """Refresh the jobs table with current job configs."""

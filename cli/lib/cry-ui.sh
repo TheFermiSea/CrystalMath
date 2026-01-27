@@ -29,6 +29,36 @@ readonly USER_MAN="${CRY_USER_MAN:-$HOME/.local/share/man/man1}"
 # Gum availability flag (set by ui_init)
 HAS_GUM=false
 
+# Gum auto-install opt-in (set CRY_GUM_AUTOINSTALL=1 to enable)
+# Default: disabled for safety
+readonly GUM_AUTOINSTALL="${CRY_GUM_AUTOINSTALL:-0}"
+
+#===============================================================================
+# Private Functions - Platform Detection
+#===============================================================================
+
+_ui_detect_platform() {
+    # Detect OS and architecture for gum binary download
+    # Returns: platform string (e.g., "Linux_x86_64", "Darwin_arm64")
+    #          or empty string if unsupported
+    local os arch
+
+    case "$(uname -s)" in
+        Linux)  os="Linux" ;;
+        Darwin) os="Darwin" ;;
+        *)      echo ""; return 1 ;;
+    esac
+
+    case "$(uname -m)" in
+        x86_64|amd64) arch="x86_64" ;;
+        arm64|aarch64) arch="arm64" ;;
+        i386|i686) arch="i386" ;;
+        *)          echo ""; return 1 ;;
+    esac
+
+    echo "${os}_${arch}"
+}
+
 # UI symbols
 readonly UI_SYMBOL_CHECK="✓"
 readonly UI_SYMBOL_CROSS="✗"
@@ -41,43 +71,63 @@ readonly UI_SYMBOL_SPINNER=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇
 #===============================================================================
 
 ui_init() {
-    # Initialize UI module - bootstrap gum if missing
+    # Initialize UI module - bootstrap gum if missing (with opt-in consent)
     # Returns: 0 on success
+    #
+    # To enable auto-install: export CRY_GUM_AUTOINSTALL=1
+    # Without opt-in, gum must be pre-installed (brew install gum, go install, etc.)
 
-    # Check if gum is already available
+    # Check if gum is already available in user bin
     if [[ -f "$USER_BIN/gum" ]]; then
         export PATH="$USER_BIN:$PATH"
         HAS_GUM=true
         return 0
     fi
 
+    # Check if gum is available in PATH
     if command -v gum &> /dev/null; then
         HAS_GUM=true
         return 0
     fi
 
-    # Auto-bootstrap gum if network is available
+    # Gum not found - check if auto-install is enabled
+    if [[ "$GUM_AUTOINSTALL" != "1" ]]; then
+        # Auto-install disabled (default) - just proceed without gum
+        # User can install manually: brew install gum (macOS) or go install github.com/charmbracelet/gum@latest
+        return 0
+    fi
+
+    # Auto-install enabled - check platform compatibility
+    local platform
+    platform=$(_ui_detect_platform)
+    if [[ -z "$platform" ]]; then
+        echo ">> Unsupported platform for gum auto-install. UI features disabled." >&2
+        echo ">> Install manually: brew install gum (macOS) or from https://github.com/charmbracelet/gum" >&2
+        return 0
+    fi
+
+    # Check network availability
     if ! ping -q -c 1 -W 1 github.com &> /dev/null; then
         echo ">> No network connection. UI features disabled." >&2
         return 0
     fi
 
     echo ">> Bootstrapping: 'gum' UI tool not found."
-    echo ">> Installing to global user space ($USER_BIN)..."
+    echo ">> Installing to user space ($USER_BIN)..."
     mkdir -p "$USER_BIN" "$USER_MAN"
 
     local TMP_INSTALL_DIR
     TMP_INSTALL_DIR=$(mktemp -d)
 
     if command -v go &> /dev/null; then
-        # Use go install if available
+        # Use go install if available (works on all platforms)
         go install github.com/charmbracelet/gum@latest
         export PATH=$PATH:$(go env GOPATH)/bin
         HAS_GUM=true
     else
-        # Download prebuilt binary
+        # Download prebuilt binary for detected platform
         local GUM_VER="0.14.5"
-        local URL="https://github.com/charmbracelet/gum/releases/download/v${GUM_VER}/gum_${GUM_VER}_Linux_x86_64.tar.gz"
+        local URL="https://github.com/charmbracelet/gum/releases/download/v${GUM_VER}/gum_${GUM_VER}_${platform}.tar.gz"
 
         if curl -L -o "$TMP_INSTALL_DIR/gum.tar.gz" "$URL" --silent; then
             tar -xzf "$TMP_INSTALL_DIR/gum.tar.gz" -C "$TMP_INSTALL_DIR"
@@ -96,7 +146,7 @@ ui_init() {
                 echo ">> Error: Failed to install gum. UI disabled." >&2
             fi
         else
-            echo ">> Error: Failed to download gum. UI disabled." >&2
+            echo ">> Error: Failed to download gum for $platform. UI disabled." >&2
         fi
     fi
 

@@ -11,7 +11,6 @@ mod models;
 mod state;
 mod ui;
 
-use std::fs;
 use std::io::{self, Write};
 use std::panic;
 use std::path::{Path, PathBuf};
@@ -28,6 +27,7 @@ use ratatui::prelude::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use app::App;
+use models::ClusterType;
 
 /// Global flag to track if terminal is in raw mode (for panic cleanup)
 static TERMINAL_RAW: AtomicBool = AtomicBool::new(false);
@@ -128,9 +128,7 @@ fn configure_python_env() {
         }
     }
 
-    tracing::warn!(
-        "Python stdlib not configured; set PYTHONHOME or VIRTUAL_ENV"
-    );
+    tracing::warn!("Python stdlib not configured; set PYTHONHOME or VIRTUAL_ENV");
 }
 
 /// Python environment info queried from the interpreter.
@@ -191,7 +189,11 @@ fn find_python_candidates() -> Vec<PathBuf> {
     if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
         let venv_python = PathBuf::from(&venv)
             .join(if cfg!(windows) { "Scripts" } else { "bin" })
-            .join(if cfg!(windows) { "python.exe" } else { "python" });
+            .join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            });
         if venv_python.is_file() {
             candidates.push(venv_python);
         }
@@ -202,7 +204,11 @@ fn find_python_candidates() -> Vec<PathBuf> {
         let venv_python = project_root
             .join(".venv")
             .join(if cfg!(windows) { "Scripts" } else { "bin" })
-            .join(if cfg!(windows) { "python.exe" } else { "python" });
+            .join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            });
         if venv_python.is_file() {
             candidates.push(venv_python);
         }
@@ -213,7 +219,11 @@ fn find_python_candidates() -> Vec<PathBuf> {
         let venv_python = cwd
             .join(".venv")
             .join(if cfg!(windows) { "Scripts" } else { "bin" })
-            .join(if cfg!(windows) { "python.exe" } else { "python" });
+            .join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            });
         if venv_python.is_file() {
             candidates.push(venv_python);
         }
@@ -303,8 +313,9 @@ fn main() -> Result<()> {
 
 /// Main application loop.
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
-    // Initial job fetch (non-fatal - errors shown in UI)
+    // Initial data fetch (non-fatal - errors shown in UI)
     app.try_refresh_jobs();
+    app.try_refresh_clusters(); // Needed for SLURM queue access
 
     loop {
         // Poll Python bridge responses (non-blocking)
@@ -367,6 +378,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                                 app.try_refresh_jobs();
                             }
 
+                            // Sync remote jobs (Shift+R) - updates status from squeue/sacct
+                            (KeyCode::Char('R'), KeyModifiers::SHIFT) => {
+                                app.request_sync_remote_jobs();
+                            }
+
                             // Open Materials Project import modal (Ctrl+I from Editor)
                             (KeyCode::Char('i'), KeyModifiers::CONTROL) => {
                                 if app.current_tab == app::AppTab::Editor {
@@ -393,13 +409,33 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             // Open SLURM Queue modal (s from Jobs tab)
                             (KeyCode::Char('s'), KeyModifiers::NONE) => {
                                 if app.current_tab == app::AppTab::Jobs {
-                                    // Open SLURM queue for first SLURM cluster (or show error)
-                                    if let Some(cluster) = app.cluster_manager.clusters.iter().find(|c| c.cluster_type == "slurm") {
-                                        if let Some(id) = cluster.id {
-                                            app.open_slurm_queue_modal(id);
-                                        }
-                                    } else {
+                                    // Collect all SLURM clusters
+                                    let slurm_clusters: Vec<_> = app
+                                        .cluster_manager
+                                        .clusters
+                                        .iter()
+                                        .filter(|c| c.cluster_type == ClusterType::Slurm)
+                                        .filter_map(|c| c.id)
+                                        .collect();
+
+                                    if slurm_clusters.is_empty() {
                                         app.set_error("No SLURM clusters configured. Use 'c' to add a cluster.");
+                                    } else if slurm_clusters.len() == 1 {
+                                        // Only one SLURM cluster - use it directly
+                                        app.open_slurm_queue_modal(slurm_clusters[0]);
+                                    } else {
+                                        // Multiple SLURM clusters - prefer last-used if valid
+                                        let cluster_id =
+                                            if let Some(last_id) = app.last_slurm_cluster_id {
+                                                if slurm_clusters.contains(&last_id) {
+                                                    last_id // Last-used cluster still exists
+                                                } else {
+                                                    slurm_clusters[0] // Last-used no longer valid, use first
+                                                }
+                                            } else {
+                                                slurm_clusters[0] // No last-used, use first
+                                            };
+                                        app.open_slurm_queue_modal(cluster_id);
                                     }
                                 }
                             }
@@ -519,6 +555,7 @@ fn handle_tab_input(app: &mut App, key: event::KeyEvent) {
                 }
                 // U - Toggle SLURM queue view (matches Python TUI)
                 KeyCode::Char('u') | KeyCode::Char('U') => {
+                    tracing::info!("Key 'U' pressed on Jobs tab - calling toggle_slurm_view()");
                     app.toggle_slurm_view();
                 }
                 KeyCode::Home => app.select_first_job(),
@@ -624,32 +661,105 @@ fn handle_new_job_modal_input(app: &mut App, key: event::KeyEvent) {
                     app.new_job.cycle_runner_type();
                     app.mark_dirty();
                 }
-                NewJobField::Name => {
-                    // Allow space in name? For now, no.
+                NewJobField::ParallelMode => {
+                    app.new_job.is_parallel = !app.new_job.is_parallel;
+                    app.mark_dirty();
                 }
-                NewJobField::Cluster => {
-                    // Space could cycle clusters if we had them
+                NewJobField::AuxGui => {
+                    app.new_job.aux_gui_enabled = !app.new_job.aux_gui_enabled;
+                    app.mark_dirty();
                 }
+                NewJobField::AuxF9 => {
+                    app.new_job.aux_f9_enabled = !app.new_job.aux_f9_enabled;
+                    app.mark_dirty();
+                }
+                NewJobField::AuxHessopt => {
+                    app.new_job.aux_hessopt_enabled = !app.new_job.aux_hessopt_enabled;
+                    app.mark_dirty();
+                }
+                _ => {}
             }
         }
 
         KeyCode::Backspace => {
-            if app.new_job.focused_field == NewJobField::Name {
-                app.new_job.job_name.pop();
-                app.new_job.clear_error();
-                app.mark_dirty();
+            match app.new_job.focused_field {
+                NewJobField::Name => {
+                    app.new_job.job_name.pop();
+                }
+                NewJobField::MpiRanks => {
+                    app.new_job.mpi_ranks.pop();
+                }
+                NewJobField::Walltime => {
+                    app.new_job.walltime.pop();
+                }
+                NewJobField::Memory => {
+                    app.new_job.memory_gb.pop();
+                }
+                NewJobField::Cpus => {
+                    app.new_job.cpus_per_task.pop();
+                }
+                NewJobField::Nodes => {
+                    app.new_job.nodes.pop();
+                }
+                NewJobField::Partition => {
+                    app.new_job.partition.pop();
+                }
+                NewJobField::AuxGui => {
+                    app.new_job.aux_gui_path.pop();
+                }
+                NewJobField::AuxF9 => {
+                    app.new_job.aux_f9_path.pop();
+                }
+                NewJobField::AuxHessopt => {
+                    app.new_job.aux_hessopt_path.pop();
+                }
+                _ => {}
             }
+            app.new_job.clear_error();
+            app.mark_dirty();
         }
 
         KeyCode::Char(c) => {
-            if app.new_job.focused_field == NewJobField::Name {
-                // Only allow valid characters
-                if c.is_alphanumeric() || c == '-' || c == '_' {
-                    app.new_job.job_name.push(c);
-                    app.new_job.clear_error();
-                    app.mark_dirty();
+            match app.new_job.focused_field {
+                NewJobField::Name => {
+                    // Only allow valid characters
+                    if c.is_alphanumeric() || c == '-' || c == '_' {
+                        app.new_job.job_name.push(c);
+                    }
                 }
+                NewJobField::MpiRanks => {
+                    if c.is_ascii_digit() {
+                        app.new_job.mpi_ranks.push(c);
+                    }
+                }
+                NewJobField::Walltime => {
+                    app.new_job.walltime.push(c);
+                }
+                NewJobField::Memory => {
+                    app.new_job.memory_gb.push(c);
+                }
+                NewJobField::Cpus => {
+                    app.new_job.cpus_per_task.push(c);
+                }
+                NewJobField::Nodes => {
+                    app.new_job.nodes.push(c);
+                }
+                NewJobField::Partition => {
+                    app.new_job.partition.push(c);
+                }
+                NewJobField::AuxGui if app.new_job.aux_gui_enabled => {
+                    app.new_job.aux_gui_path.push(c);
+                }
+                NewJobField::AuxF9 if app.new_job.aux_f9_enabled => {
+                    app.new_job.aux_f9_path.push(c);
+                }
+                NewJobField::AuxHessopt if app.new_job.aux_hessopt_enabled => {
+                    app.new_job.aux_hessopt_path.push(c);
+                }
+                _ => {}
             }
+            app.new_job.clear_error();
+            app.mark_dirty();
         }
 
         // Arrow keys for field navigation
@@ -784,11 +894,8 @@ fn handle_cluster_manager_modal_input(app: &mut App, key: event::KeyEvent) {
                 // Cycle cluster type
                 KeyCode::Char(' ') => {
                     if app.cluster_manager.focused_field == ClusterFormField::ClusterType {
-                        app.cluster_manager.form_cluster_type = if app.cluster_manager.form_cluster_type == "ssh" {
-                            "slurm".to_string()
-                        } else {
-                            "ssh".to_string()
-                        };
+                        app.cluster_manager.form_cluster_type =
+                            app.cluster_manager.form_cluster_type.cycle();
                         app.mark_dirty();
                     } else {
                         // Space in text fields adds a space (except for port/max_concurrent)
@@ -918,9 +1025,24 @@ fn handle_slurm_queue_modal_input(app: &mut App, key: event::KeyEvent) {
             app.refresh_slurm_queue();
         }
 
+        // Adopt selected job
+        KeyCode::Char('a') => {
+            if app
+                .slurm_queue_state
+                .selected_entry(&app.slurm_queue)
+                .is_some()
+            {
+                app.adopt_selected_slurm_job();
+            }
+        }
+
         // Cancel selected job
         KeyCode::Char('c') => {
-            if app.slurm_queue_state.selected_entry(&app.slurm_queue).is_some() {
+            if app
+                .slurm_queue_state
+                .selected_entry(&app.slurm_queue)
+                .is_some()
+            {
                 app.cancel_selected_slurm_job_from_modal();
             }
         }

@@ -168,39 +168,9 @@ fn render_results_table(frame: &mut Frame, state: &MaterialsSearchState, area: R
         .results
         .iter()
         .map(|record| {
-            // Band gap display
-            let band_gap_str = record
-                .properties
-                .band_gap
-                .map(|bg| format!("{:.2}", bg))
-                .unwrap_or_else(|| "-".to_string());
-
-            // Space group from metadata (if available)
-            let space_group = record
-                .metadata
-                .get("space_group")
-                .and_then(|sg| {
-                    sg.get("symbol")
-                        .or(Some(sg))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                })
-                .unwrap_or_else(|| "-".to_string());
-
-            // Stability based on energy_above_hull
-            let stability = record
-                .properties
-                .energy_above_hull
-                .map(|e| {
-                    if e < 0.025 {
-                        "Stable".to_string()
-                    } else {
-                        format!("+{:.3} eV", e)
-                    }
-                })
-                .unwrap_or_else(|| "-".to_string());
-
-            let stability_style = if stability == "Stable" {
+            // Use MaterialResult methods for consistent display
+            let stability = record.stability_display();
+            let stability_style = if record.is_stable() {
                 Style::default().fg(Color::Green)
             } else if stability != "-" {
                 Style::default().fg(Color::Yellow)
@@ -210,15 +180,9 @@ fn render_results_table(frame: &mut Frame, state: &MaterialsSearchState, area: R
 
             Row::new(vec![
                 Cell::from(record.material_id.clone()),
-                Cell::from(
-                    record
-                        .formula
-                        .clone()
-                        .or_else(|| record.formula_pretty.clone())
-                        .unwrap_or_else(|| "-".to_string()),
-                ),
-                Cell::from(space_group),
-                Cell::from(band_gap_str),
+                Cell::from(record.display_formula().to_string()),
+                Cell::from(record.space_group()),
+                Cell::from(record.band_gap_display()),
                 Cell::from(stability).style(stability_style),
             ])
         })

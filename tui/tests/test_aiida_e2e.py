@@ -14,14 +14,13 @@ in regular CI where AiiDA infrastructure may not be available.
 import json
 import os
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
 
 # Skip all tests in this module unless AIIDA_E2E=1 environment variable is set
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("AIIDA_E2E", "").lower() in ("1", "true", "yes"),
+    os.environ.get("AIIDA_E2E", "").lower() not in ("1", "true", "yes"),
     reason="E2E tests require AIIDA_E2E=1 environment variable and running AiiDA infrastructure",
 )
 
@@ -38,7 +37,9 @@ def docker_services():
     )
 
     if not result.stdout.strip():
-        pytest.skip("Docker Compose services not running. Run ./scripts/docker_setup_aiida.sh first")
+        pytest.skip(
+            "Docker Compose services not running. Run ./scripts/docker_setup_aiida.sh first"
+        )
 
     yield
 
@@ -207,8 +208,9 @@ class TestMigration:
 
     def test_migration_dry_run(self, aiida_profile, tmp_path):
         """Test migration in dry-run mode."""
-        from src.aiida.migration import DatabaseMigrator
         import sqlite3
+
+        from src.aiida.migration import DatabaseMigrator
 
         # Create temporary SQLite database
         db_path = tmp_path / "test.db"
@@ -244,8 +246,9 @@ class TestMigration:
 
     def test_migration_actual(self, aiida_profile, tmp_path):
         """Test actual migration (creates real nodes)."""
-        from src.aiida.migration import DatabaseMigrator
         import sqlite3
+
+        from src.aiida.migration import DatabaseMigrator
 
         # Create temporary SQLite database
         db_path = tmp_path / "test_actual.db"
@@ -306,8 +309,9 @@ EEEEEEEE TERMINATION  DATE 01 01 2024 TIME 12:00:00.0
 
     def test_parse_manual(self, aiida_profile, sample_output):
         """Test manual parsing without CRYSTALpytools."""
-        from src.aiida.calcjobs.parser import Crystal23Parser
         from unittest.mock import MagicMock
+
+        from src.aiida.calcjobs.parser import Crystal23Parser
 
         # Create mock parser
         parser = Crystal23Parser(MagicMock())
@@ -372,6 +376,7 @@ class TestDockerInfrastructure:
 
         # Validate YAML
         import yaml
+
         with open(compose_file) as f:
             config = yaml.safe_load(f)
 

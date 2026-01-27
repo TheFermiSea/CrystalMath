@@ -263,12 +263,18 @@ class ConnectionManager:
             del _FALLBACK_PASSWORDS[key]
             logger.info(f"Deleted password for cluster {cluster_id} from memory")
 
+    # Retry configuration for transient connection failures
+    MAX_CONNECT_RETRIES = 3
+    INITIAL_RETRY_DELAY = 1.0  # seconds
+    MAX_RETRY_DELAY = 10.0  # seconds
+
     async def connect(self, cluster_id: int) -> asyncssh.SSHClientConnection:
         """
         Create a new SSH connection to a cluster with host key verification.
 
         Establishes SSH connection with strict host key verification enabled by default.
         Host keys are verified against ~/.ssh/known_hosts (or custom known_hosts file).
+        Automatically retries on transient failures with exponential backoff.
 
         Args:
             cluster_id: Cluster identifier
@@ -284,8 +290,8 @@ class ConnectionManager:
                 1. Verify the host is correct
                 2. Add the host key: ssh-keyscan -H <host> >> ~/.ssh/known_hosts
                 3. Or connect manually and confirm the key
-            asyncssh.Error: If connection fails for other reasons
-            asyncio.TimeoutError: If connection times out
+            asyncssh.Error: If connection fails for other reasons after retries
+            asyncio.TimeoutError: If connection times out after retries
         """
         config = self._configs.get(cluster_id)
         if not config:
@@ -324,30 +330,60 @@ class ConnectionManager:
         if password:
             connect_kwargs["password"] = password
 
-        # Create connection with timeout
-        try:
-            connection = await asyncio.wait_for(
-                asyncssh.connect(**connect_kwargs), timeout=config.timeout
-            )
-            logger.info(
-                f"Successfully connected to cluster {cluster_id} "
-                f"(host key verified: {config.strict_host_key_checking})"
-            )
-            return connection
-        except asyncio.TimeoutError:
-            logger.error(f"Connection timeout for cluster {cluster_id}")
-            raise
-        except asyncssh.HostKeyNotVerifiable as e:
-            error_msg = (
-                f"Host key verification failed for cluster {cluster_id} ({config.host}). "
-                f"The host is either unknown or has a changed key (potential MITM attack). "
-                f"To add the host key, run: ssh-keyscan -H {config.host} >> ~/.ssh/known_hosts"
-            )
-            logger.error(error_msg)
-            raise asyncssh.HostKeyNotVerifiable(error_msg) from e
-        except asyncssh.Error as e:
-            logger.error(f"Connection failed for cluster {cluster_id}: {e}")
-            raise
+        # Create connection with timeout and retry logic
+        last_error: Optional[Exception] = None
+        retry_delay = self.INITIAL_RETRY_DELAY
+
+        for attempt in range(self.MAX_CONNECT_RETRIES):
+            try:
+                connection = await asyncio.wait_for(
+                    asyncssh.connect(**connect_kwargs), timeout=config.timeout
+                )
+                logger.info(
+                    f"Successfully connected to cluster {cluster_id} "
+                    f"(host key verified: {config.strict_host_key_checking})"
+                )
+                return connection
+
+            except asyncssh.HostKeyNotVerifiable as e:
+                # Don't retry host key verification failures - this is a security issue
+                error_msg = (
+                    f"Host key verification failed for cluster {cluster_id} ({config.host}). "
+                    f"The host is either unknown or has a changed key (potential MITM attack). "
+                    f"To add the host key, run: ssh-keyscan -H {config.host} >> ~/.ssh/known_hosts"
+                )
+                logger.error(error_msg)
+                raise asyncssh.HostKeyNotVerifiable(error_msg) from e
+
+            except asyncssh.PermissionDenied as e:
+                # Don't retry authentication failures
+                logger.error(f"Authentication failed for cluster {cluster_id}: {e}")
+                raise
+
+            except (asyncio.TimeoutError, asyncssh.Error, OSError) as e:
+                # Retry on transient errors (timeout, network issues)
+                last_error = e
+                remaining_attempts = self.MAX_CONNECT_RETRIES - attempt - 1
+
+                if remaining_attempts > 0:
+                    logger.warning(
+                        f"Connection attempt {attempt + 1}/{self.MAX_CONNECT_RETRIES} "
+                        f"failed for cluster {cluster_id}: {e}. "
+                        f"Retrying in {retry_delay:.1f}s..."
+                    )
+                    await asyncio.sleep(retry_delay)
+                    # Exponential backoff with cap
+                    retry_delay = min(retry_delay * 2, self.MAX_RETRY_DELAY)
+                else:
+                    logger.error(
+                        f"All {self.MAX_CONNECT_RETRIES} connection attempts "
+                        f"failed for cluster {cluster_id}"
+                    )
+
+        # All retries exhausted
+        if last_error is not None:
+            raise last_error
+        raise asyncssh.Error(f"Connection failed for cluster {cluster_id} after retries")
 
     @staticmethod
     def _get_known_hosts_file(config: ConnectionConfig) -> Union[str, Tuple[()], None]:
@@ -462,7 +498,14 @@ class ConnectionManager:
     # Private methods
 
     async def _acquire_connection(self, cluster_id: int) -> PooledConnection:
-        """Acquire a connection from the pool, creating one if needed."""
+        """
+        Acquire a connection from the pool, creating one if needed.
+
+        This method uses fine-grained locking to prevent contention:
+        - Lock held only for state checks and updates (microseconds)
+        - SSH connection created outside lock (can take seconds)
+        """
+        # Step 1: Quick check under lock for available connection
         async with self._lock:
             # Initialize pool if needed
             if cluster_id not in self._pools:
@@ -473,30 +516,52 @@ class ConnectionManager:
             # Try to find an available connection
             for pooled_conn in pool:
                 if not pooled_conn.in_use and not pooled_conn.is_stale(self.MAX_CONNECTION_AGE):
-                    # Health check before reuse
-                    if await self._health_check(pooled_conn):
-                        pooled_conn.mark_used()
-                        logger.debug(f"Reusing connection from pool for cluster {cluster_id}")
-                        return pooled_conn
-                    else:
-                        # Remove unhealthy connection
-                        await self._remove_connection(pooled_conn)
+                    # Mark as in_use immediately to prevent double-acquisition
+                    pooled_conn.mark_used()
+                    # Store reference for potential rollback
+                    candidate = pooled_conn
+                    break
+            else:
+                candidate = None
 
-            # Create new connection if pool not full
-            if len(pool) < self.pool_size:
+            # Check if we can create a new connection
+            can_create_new = candidate is None and len(pool) < self.pool_size
+
+        # Step 2: Health check outside lock (can take time)
+        if candidate is not None:
+            if await self._health_check(candidate):
+                logger.debug(f"Reusing connection from pool for cluster {cluster_id}")
+                return candidate
+            else:
+                # Unhealthy - mark available and remove
+                async with self._lock:
+                    candidate.mark_available()
+                    await self._remove_connection(candidate)
+                # Retry acquisition
+                return await self._acquire_connection(cluster_id)
+
+        # Step 3: Create new connection outside lock (can take seconds)
+        if can_create_new:
+            try:
                 connection = await self.connect(cluster_id)
+            except Exception:
+                # Connection failed - let it propagate
+                raise
+
+            # Add to pool under lock
+            async with self._lock:
+                pool = self._pools.get(cluster_id, [])
                 pooled_conn = PooledConnection(connection=connection, cluster_id=cluster_id)
                 pooled_conn.mark_used()
                 pool.append(pooled_conn)
+                self._pools[cluster_id] = pool
                 logger.debug(f"Created new pooled connection for cluster {cluster_id}")
                 return pooled_conn
 
-            # Wait for a connection to become available
-            logger.warning(
-                f"Pool full for cluster {cluster_id}, waiting for available connection"
-            )
-
-        # Wait and retry (outside lock to allow releases)
+        # Pool is full - wait and retry
+        logger.warning(
+            f"Pool full for cluster {cluster_id}, waiting for available connection"
+        )
         await asyncio.sleep(0.5)
         return await self._acquire_connection(cluster_id)
 

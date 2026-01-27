@@ -6,7 +6,8 @@ workflow engine, replacing the custom SQLite + orchestrator backend.
 
 Submodules:
     calcjobs: CRYSTAL23 CalcJob implementations
-    workchains: Workflow logic (base, geometry optimization, etc.)
+    workchains: Workflow logic (base, geometry optimization, self-healing)
+    converters: Structure format converters (pymatgen, POSCAR, .d12)
     setup: Computer and Code configuration utilities
     query_adapter: QueryBuilder adapter for database compatibility
     migration: SQLite to AiiDA migration utilities

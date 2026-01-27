@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use ratatui::widgets::TableState;
 use tui_textarea::TextArea;
 
-use crate::models::{D12GenerationConfig, DftCode, JobStatus, MaterialResult};
+use crate::models::{D12GenerationConfig, DftCode, JobStatus, MaterialResult, RunnerType};
 
 pub mod actions;
 
@@ -154,6 +154,19 @@ pub enum NewJobField {
     DftCode,
     RunnerType,
     Cluster,
+    // Parallelism
+    ParallelMode,
+    MpiRanks,
+    // Scheduler (SLURM)
+    Walltime,
+    Memory,
+    Cpus,
+    Nodes,
+    Partition,
+    // Aux Files (CRYSTAL)
+    AuxGui,
+    AuxF9,
+    AuxHessopt,
 }
 
 impl NewJobField {
@@ -163,17 +176,37 @@ impl NewJobField {
             Self::Name => Self::DftCode,
             Self::DftCode => Self::RunnerType,
             Self::RunnerType => Self::Cluster,
-            Self::Cluster => Self::Name,
+            Self::Cluster => Self::ParallelMode,
+            Self::ParallelMode => Self::MpiRanks,
+            Self::MpiRanks => Self::Walltime,
+            Self::Walltime => Self::Memory,
+            Self::Memory => Self::Cpus,
+            Self::Cpus => Self::Nodes,
+            Self::Nodes => Self::Partition,
+            Self::Partition => Self::AuxGui,
+            Self::AuxGui => Self::AuxF9,
+            Self::AuxF9 => Self::AuxHessopt,
+            Self::AuxHessopt => Self::Name,
         }
     }
 
     /// Move to the previous field.
     pub fn prev(self) -> Self {
         match self {
-            Self::Name => Self::Cluster,
+            Self::Name => Self::AuxHessopt,
             Self::DftCode => Self::Name,
             Self::RunnerType => Self::DftCode,
             Self::Cluster => Self::RunnerType,
+            Self::ParallelMode => Self::Cluster,
+            Self::MpiRanks => Self::ParallelMode,
+            Self::Walltime => Self::MpiRanks,
+            Self::Memory => Self::Walltime,
+            Self::Cpus => Self::Memory,
+            Self::Nodes => Self::Cpus,
+            Self::Partition => Self::Nodes,
+            Self::AuxGui => Self::Partition,
+            Self::AuxF9 => Self::AuxGui,
+            Self::AuxHessopt => Self::AuxF9,
         }
     }
 }
@@ -193,14 +226,13 @@ pub struct NewJobState {
     /// Selected DFT code.
     pub dft_code: DftCode,
 
-    /// Selected runner type ("local", "ssh", "slurm").
-    pub runner_type: String,
+    /// Selected runner type for job execution.
+    pub runner_type: RunnerType,
 
     /// Selected cluster ID (for remote runners).
     pub cluster_id: Option<i32>,
 
     /// Available cluster IDs (fetched from backend).
-    /// TODO: Wire to cluster selection UI in lo7.2
     #[allow(dead_code)]
     pub available_clusters: Vec<i32>,
 
@@ -209,6 +241,38 @@ pub struct NewJobState {
 
     /// Whether a submission is in progress.
     pub submitting: bool,
+
+    // ===== Extended Configuration =====
+    /// Parallel mode (false=serial, true=parallel).
+    pub is_parallel: bool,
+
+    /// MPI ranks input (for parallel mode).
+    pub mpi_ranks: String,
+
+    /// Scheduler: Walltime (HH:MM:SS).
+    pub walltime: String,
+
+    /// Scheduler: Memory (GB).
+    pub memory_gb: String,
+
+    /// Scheduler: CPUs per task.
+    pub cpus_per_task: String,
+
+    /// Scheduler: Nodes.
+    pub nodes: String,
+
+    /// Scheduler: Partition.
+    pub partition: String,
+
+    // Aux Files inputs (path strings)
+    pub aux_gui_path: String,
+    pub aux_f9_path: String,
+    pub aux_hessopt_path: String,
+
+    // Aux Files enabled states
+    pub aux_gui_enabled: bool,
+    pub aux_f9_enabled: bool,
+    pub aux_hessopt_enabled: bool,
 }
 
 impl Default for NewJobState {
@@ -218,11 +282,27 @@ impl Default for NewJobState {
             focused_field: NewJobField::Name,
             job_name: String::new(),
             dft_code: DftCode::Crystal,
-            runner_type: "local".to_string(),
+            runner_type: RunnerType::Local,
             cluster_id: None,
             available_clusters: Vec::new(),
             error: None,
             submitting: false,
+
+            // Defaults
+            is_parallel: false,
+            mpi_ranks: "4".to_string(),
+            walltime: "24:00:00".to_string(),
+            memory_gb: "32".to_string(),
+            cpus_per_task: "4".to_string(),
+            nodes: "1".to_string(),
+            partition: "".to_string(),
+
+            aux_gui_path: "".to_string(),
+            aux_f9_path: "".to_string(),
+            aux_hessopt_path: "".to_string(),
+            aux_gui_enabled: false,
+            aux_f9_enabled: false,
+            aux_hessopt_enabled: false,
         }
     }
 }
@@ -234,10 +314,24 @@ impl NewJobState {
         self.focused_field = NewJobField::Name;
         self.job_name.clear();
         self.dft_code = DftCode::Crystal;
-        self.runner_type = "local".to_string();
+        self.runner_type = RunnerType::Local;
         self.cluster_id = None;
         self.error = None;
         self.submitting = false;
+        // Reset extended fields
+        self.is_parallel = false;
+        self.mpi_ranks = "4".to_string();
+        self.walltime = "24:00:00".to_string();
+        self.memory_gb = "32".to_string();
+        self.cpus_per_task = "4".to_string();
+        self.nodes = "1".to_string();
+        self.partition.clear();
+        self.aux_gui_enabled = false;
+        self.aux_f9_enabled = false;
+        self.aux_hessopt_enabled = false;
+        self.aux_gui_path.clear();
+        self.aux_f9_path.clear();
+        self.aux_hessopt_path.clear();
     }
 
     /// Close the new job modal.
@@ -254,7 +348,7 @@ impl NewJobState {
     pub fn can_submit(&self) -> bool {
         !self.job_name.is_empty()
             && !self.submitting
-            && (self.runner_type == "local" || self.cluster_id.is_some())
+            && (self.runner_type == RunnerType::Local || self.cluster_id.is_some())
     }
 
     /// Cycle to the next DFT code.
@@ -269,14 +363,14 @@ impl NewJobState {
 
     /// Cycle to the next runner type.
     pub fn cycle_runner_type(&mut self) {
-        self.runner_type = match self.runner_type.as_str() {
-            "local" => "ssh".to_string(),
-            "ssh" => "slurm".to_string(),
-            "slurm" => "local".to_string(),
-            _ => "local".to_string(),
+        self.runner_type = match self.runner_type {
+            RunnerType::Local => RunnerType::Ssh,
+            RunnerType::Ssh => RunnerType::Slurm,
+            RunnerType::Slurm => RunnerType::Local,
+            RunnerType::Aiida | RunnerType::Unknown => RunnerType::Local,
         };
         // Clear cluster if switching to local
-        if self.runner_type == "local" {
+        if self.runner_type == RunnerType::Local {
             self.cluster_id = None;
         }
     }

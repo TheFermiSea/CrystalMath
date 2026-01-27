@@ -9,7 +9,9 @@ parameter resolution, and error handling.
 import asyncio
 import atexit
 import json
+import logging
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -19,6 +21,34 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable, Set
 from jinja2 import Template, TemplateSyntaxError
 from jinja2.sandbox import SandboxedEnvironment
+
+logger = logging.getLogger(__name__)
+
+
+# Security: Pattern for sanitizing IDs used in filesystem paths
+# Allows alphanumeric, dashes, and underscores only
+_SAFE_ID_PATTERN = re.compile(r'[^a-zA-Z0-9_-]')
+
+
+def _sanitize_path_component(value: str) -> str:
+    """
+    Sanitize a string for safe use as a filesystem path component.
+
+    Removes or replaces characters that could be used for path traversal
+    or command injection (/, .., etc.).
+
+    Args:
+        value: The string to sanitize
+
+    Returns:
+        A safe string containing only alphanumeric chars, dashes, and underscores
+    """
+    # Replace any unsafe characters with underscores
+    sanitized = _SAFE_ID_PATTERN.sub('_', str(value))
+    # Collapse multiple underscores
+    sanitized = re.sub(r'_+', '_', sanitized)
+    # Strip leading/trailing underscores
+    return sanitized.strip('_') or 'unknown'
 
 from .database import Database, Job
 from .dependency_utils import assert_acyclic, CircularDependencyError as DependencyUtilsCircularError
@@ -33,6 +63,14 @@ class NodeStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class NodeType(Enum):
+    """Type of workflow node."""
+    JOB = "job"  # Single DFT calculation job (default)
+    BATCH = "batch"  # Expands to N parallel jobs (foreach, parameter_sweep)
+    SCRIPT = "script"  # Run a shell script or command
+    DATA_TRANSFER = "data_transfer"  # Transfer files between steps
 
 
 class WorkflowStatus(Enum):
@@ -60,6 +98,15 @@ class WorkflowNode:
 
     Each node corresponds to a CRYSTAL calculation job with its own
     input parameters, dependencies, and execution state.
+
+    For batch nodes (node_type=BATCH), the node expands to multiple parallel
+    jobs based on foreach or parameter_sweep configuration.
+
+    For script nodes (node_type=SCRIPT), the command is executed directly
+    without DFT code invocation.
+
+    For data_transfer nodes (node_type=DATA_TRANSFER), files are copied
+    between directories with optional renaming.
     """
     node_id: str
     job_name: str
@@ -74,6 +121,30 @@ class WorkflowNode:
     failure_policy: FailurePolicy = FailurePolicy.ABORT
     output_parsers: List[str] = field(default_factory=list)  # Names of result extractors
     results: Optional[Dict[str, Any]] = None  # Extracted results from job output
+
+    # Node type configuration
+    node_type: NodeType = NodeType.JOB
+
+    # Batch node configuration (node_type=BATCH)
+    foreach: Optional[str] = None  # Glob pattern to expand (e.g., "POSCAR-*")
+    parameter_sweep: Optional[List[Dict[str, Any]]] = None  # List of parameter variations
+    max_parallel: int = 0  # Max concurrent batch jobs (0 = unlimited)
+    batch_jobs: List[int] = field(default_factory=list)  # Job IDs of expanded batch jobs
+    batch_results: List[Dict[str, Any]] = field(default_factory=list)  # Results from batch jobs
+
+    # Script node configuration (node_type=SCRIPT)
+    command: Optional[str] = None  # Shell command to execute
+    script: Optional[str] = None  # Path to script file
+
+    # Data transfer configuration (node_type=DATA_TRANSFER)
+    source_files: List[str] = field(default_factory=list)  # Files to copy
+    file_renames: Dict[str, str] = field(default_factory=dict)  # Rename mapping
+
+    # Conditional execution
+    condition: Optional[str] = None  # Jinja2 expression for conditional execution
+
+    # DFT code (for multi-code workflows)
+    code: Optional[str] = None  # DFT code name (e.g., "vasp", "qe", "yambo")
 
 
 @dataclass
@@ -294,6 +365,22 @@ class WorkflowOrchestrator:
         self._output_parsers: Dict[str, Callable[[Path], Dict[str, Any]]] = {}
         self._register_builtin_parsers()
 
+    # -------------------------------------------------------------------------
+    # Async database wrappers to prevent blocking the event loop
+    # -------------------------------------------------------------------------
+
+    async def _db_get_job(self, job_id: int) -> Optional[Job]:
+        """Get job from database without blocking the event loop."""
+        return await asyncio.to_thread(self.database.get_job, job_id)
+
+    async def _db_create_job(self, name: str, work_dir: str, input_content: str) -> int:
+        """Create job in database without blocking the event loop."""
+        return await asyncio.to_thread(self.database.create_job, name, work_dir, input_content)
+
+    async def _db_update_status(self, job_id: int, status: str) -> None:
+        """Update job status in database without blocking the event loop."""
+        await asyncio.to_thread(self.database.update_status, job_id, status)
+
     def register_parser(self, name: str, parser_func: Callable[[Path], Dict[str, Any]]) -> None:
         """
         Register a custom output parser.
@@ -353,6 +440,11 @@ class WorkflowOrchestrator:
 
         Returns:
             Path to output file if found, None otherwise
+
+        Note:
+            For glob patterns with multiple matches, uses deterministic sorting:
+            alphabetical by name (to ensure reproducible behavior), then by
+            modification time as tie-breaker.
         """
         # Priority order of output file patterns
         patterns = [
@@ -365,11 +457,24 @@ class WorkflowOrchestrator:
 
         for pattern in patterns:
             if "*" in pattern:
-                # Glob pattern
+                # Glob pattern - use deterministic sorting
                 matches = list(work_dir.glob(pattern))
                 if matches:
-                    # Return the most recently modified .out file
-                    return max(matches, key=lambda p: p.stat().st_mtime)
+                    # Sort by name first (deterministic), then by mtime (tie-breaker)
+                    # This ensures reproducible behavior even with multiple .out files
+                    sorted_matches = sorted(
+                        matches,
+                        key=lambda p: (p.name, -p.stat().st_mtime)
+                    )
+                    # Prefer files that look like main output (not slurm logs, etc.)
+                    for match in sorted_matches:
+                        name = match.name.lower()
+                        # Skip SLURM job output files (these are scheduler logs)
+                        if name.startswith("slurm-") or name.startswith("job."):
+                            continue
+                        return match
+                    # Fall back to first match if no preferred files found
+                    return sorted_matches[0]
             else:
                 # Exact filename
                 candidate = work_dir / pattern
@@ -385,6 +490,8 @@ class WorkflowOrchestrator:
         Searches for the final energy line in the output file.
         Typical format: "== SCF ENDED - CONVERGENCE ON ENERGY      E(AU) = -XXX.XXXXXXXX"
 
+        Uses memory-efficient tail reading to avoid loading multi-GB files entirely.
+
         Args:
             work_dir: Job work directory containing output file
 
@@ -396,7 +503,15 @@ class WorkflowOrchestrator:
             return {}
 
         try:
+            # Memory-efficient: read only last 100KB where final energy appears
+            # DFT outputs can be multi-GB, but SCF results are near the end
+            tail_bytes = 100 * 1024  # 100 KB should be enough for final output
+            file_size = output_file.stat().st_size
+
             with open(output_file, "r") as f:
+                if file_size > tail_bytes:
+                    f.seek(file_size - tail_bytes)
+                    f.readline()  # Skip partial line after seek
                 lines = f.readlines()
 
             # Search backwards for final energy (last occurrence)
@@ -411,7 +526,7 @@ class WorkflowOrchestrator:
             return {}
         except Exception as e:
             # Log error but don't fail the workflow
-            print(f"Warning: Failed to parse energy from {output_file}: {e}")
+            logger.warning(f"Failed to parse energy from {output_file}: {e}")
             return {}
 
     async def _parse_bandgap(self, work_dir: Path) -> Dict[str, Any]:
@@ -420,6 +535,8 @@ class WorkflowOrchestrator:
 
         Searches for band structure analysis lines in the output.
         Typical format: "ENERGY BAND GAP:     X.XXX eV"
+
+        Uses memory-efficient tail reading to avoid loading multi-GB files entirely.
 
         Args:
             work_dir: Job work directory containing output file
@@ -432,12 +549,20 @@ class WorkflowOrchestrator:
             return {}
 
         try:
+            # Memory-efficient: read only last 200KB where band gap info appears
+            # Band gap analysis is typically near the end of the output
+            tail_bytes = 200 * 1024  # 200 KB for band structure section
+            file_size = output_file.stat().st_size
+
             with open(output_file, "r") as f:
-                content = f.read()
+                if file_size > tail_bytes:
+                    f.seek(file_size - tail_bytes)
+                    f.readline()  # Skip partial line after seek
+                lines = f.readlines()
 
             # Search for band gap line
             # Check for direct/indirect first (more specific pattern)
-            for line in content.split("\n"):
+            for line in lines:
                 if "DIRECT ENERGY BAND GAP" in line or "INDIRECT ENERGY BAND GAP" in line:
                     parts = line.split(":")
                     if len(parts) > 1:
@@ -454,7 +579,7 @@ class WorkflowOrchestrator:
 
             return {}
         except Exception as e:
-            print(f"Warning: Failed to parse band gap from {output_file}: {e}")
+            logger.warning(f"Failed to parse band gap from {output_file}: {e}")
             return {}
 
     async def _parse_lattice(self, work_dir: Path) -> Dict[str, Any]:
@@ -467,6 +592,8 @@ class WorkflowOrchestrator:
         "PRIMITIVE CELL"
         "A      B      C   ALPHA  BETA  GAMMA"
 
+        Uses memory-efficient tail reading to avoid loading multi-GB files entirely.
+
         Args:
             work_dir: Job work directory containing output file
 
@@ -478,7 +605,15 @@ class WorkflowOrchestrator:
             return {}
 
         try:
+            # Memory-efficient: read only last 500KB where final geometry appears
+            # Final optimized geometry is at the end of the output
+            tail_bytes = 500 * 1024  # 500 KB for final geometry section
+            file_size = output_file.stat().st_size
+
             with open(output_file, "r") as f:
+                if file_size > tail_bytes:
+                    f.seek(file_size - tail_bytes)
+                    f.readline()  # Skip partial line after seek
                 lines = f.readlines()
 
             results = {}
@@ -508,7 +643,7 @@ class WorkflowOrchestrator:
 
             return results
         except Exception as e:
-            print(f"Warning: Failed to parse lattice parameters from {output_file}: {e}")
+            logger.warning(f"Failed to parse lattice parameters from {output_file}: {e}")
             return {}
 
     @staticmethod
@@ -555,11 +690,28 @@ class WorkflowOrchestrator:
 
         Raises:
             OSError: If directory creation fails
+            ValueError: If path validation fails (path traversal attempt)
         """
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         pid = os.getpid()
-        dir_name = f"workflow_{workflow_id}_node_{node_id}_{timestamp}_{pid}"
+
+        # Security: Sanitize IDs to prevent path traversal attacks
+        # This prevents "../" or other dangerous path components
+        safe_workflow_id = _sanitize_path_component(str(workflow_id))
+        safe_node_id = _sanitize_path_component(node_id)
+
+        dir_name = f"workflow_{safe_workflow_id}_node_{safe_node_id}_{timestamp}_{pid}"
         work_dir = self._scratch_base / dir_name
+
+        # Security: Validate that the resolved path is within scratch_base
+        # This is defense-in-depth against path traversal
+        resolved_work_dir = work_dir.resolve()
+        resolved_scratch_base = self._scratch_base.resolve()
+        if not str(resolved_work_dir).startswith(str(resolved_scratch_base) + os.sep):
+            raise ValueError(
+                f"Security violation: work directory '{work_dir}' escapes scratch base. "
+                f"Possible path traversal attempt with workflow_id={workflow_id}, node_id={node_id}"
+            )
 
         # Create directory
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -821,8 +973,8 @@ class WorkflowOrchestrator:
         state = self._workflow_states[workflow_id]
         node = self._node_lookup[workflow_id][node_id]
 
-        # Get job from database
-        job = self.database.get_job(job_id)
+        # Get job from database (async to prevent event loop blocking)
+        job = await self._db_get_job(job_id)
         if not job:
             return
 
@@ -906,11 +1058,11 @@ class WorkflowOrchestrator:
         """
         Submit a single node for execution.
 
-        This method:
-        1. Resolves parameter templates
-        2. Creates input file from template
-        3. Creates database job entry
-        4. Submits to queue manager
+        This method dispatches to type-specific handlers based on node_type:
+        - JOB: Submit a single DFT calculation
+        - BATCH: Expand and submit multiple parallel jobs
+        - SCRIPT: Execute a shell command
+        - DATA_TRANSFER: Copy files between directories
 
         Args:
             workflow_id: Workflow containing node
@@ -919,6 +1071,30 @@ class WorkflowOrchestrator:
         workflow = self._workflows[workflow_id]
         state = self._workflow_states[workflow_id]
 
+        # Check conditional execution
+        if node.condition:
+            try:
+                if not await self._evaluate_condition(workflow_id, node):
+                    # Condition not met - skip this node
+                    node.status = NodeStatus.SKIPPED
+                    logger.info(f"Skipping node {node.node_id}: condition not met")
+                    await self._check_workflow_completion(workflow_id)
+                    return
+            except Exception as e:
+                logger.warning(f"Error evaluating condition for {node.node_id}: {e}")
+
+        # Dispatch based on node type
+        if node.node_type == NodeType.BATCH:
+            await self._submit_batch_node(workflow_id, node)
+            return
+        elif node.node_type == NodeType.SCRIPT:
+            await self._submit_script_node(workflow_id, node)
+            return
+        elif node.node_type == NodeType.DATA_TRANSFER:
+            await self._submit_data_transfer_node(workflow_id, node)
+            return
+
+        # Default: JOB type
         try:
             # Resolve parameters
             resolved_params = await self._resolve_parameters(workflow_id, node)
@@ -930,8 +1106,8 @@ class WorkflowOrchestrator:
             # Create work directory using environment-based scratch location
             work_dir = self._create_work_directory(workflow_id, node.node_id)
 
-            # Create database job
-            job_id = self.database.create_job(
+            # Create database job (async to prevent event loop blocking)
+            job_id = await self._db_create_job(
                 name=node.job_name,
                 work_dir=str(work_dir),
                 input_content=input_content
@@ -944,7 +1120,7 @@ class WorkflowOrchestrator:
             state.running_nodes.add(node.node_id)
 
             # Get job from database to access cluster_id and runner_type
-            job = self.database.get_job(job_id)
+            job = await self._db_get_job(job_id)
             if not job:
                 raise OrchestratorError(f"Failed to retrieve job {job_id} from database")
 
@@ -979,7 +1155,7 @@ class WorkflowOrchestrator:
             self._node_callbacks[job_id] = (workflow_id, node.node_id)
 
             # Update database status (queue manager will manage from here)
-            self.database.update_status(job_id, "QUEUED")
+            await self._db_update_status(job_id, "QUEUED")
 
             # Emit event
             self._emit_event(NodeStarted(
@@ -1133,7 +1309,7 @@ class WorkflowOrchestrator:
 
                 if parser is None:
                     # Log warning but continue with other parsers
-                    print(f"Warning: Parser '{parser_name}' not found in registry, skipping")
+                    logger.warning(f"Parser '{parser_name}' not found in registry, skipping")
                     continue
 
                 try:
@@ -1143,7 +1319,7 @@ class WorkflowOrchestrator:
                         results.update(parsed)
                 except Exception as e:
                     # Log error but don't fail the workflow
-                    print(f"Warning: Parser '{parser_name}' failed for job {job.id}: {e}")
+                    logger.warning(f"Parser '{parser_name}' failed for job {job.id}: {e}")
                     continue
 
         return results
@@ -1327,6 +1503,14 @@ class WorkflowOrchestrator:
                     reason=f"{len(state.failed_nodes)} nodes failed"
                 ))
 
+            # Clean up in-memory state to prevent memory leaks
+            # Schedule cleanup after a short delay to allow event handlers to complete
+            asyncio.get_event_loop().call_later(
+                5.0,  # 5 second delay
+                self._cleanup_completed_workflow,
+                workflow_id
+            )
+
     async def _monitor_workflows(self) -> None:
         """
         Background task that monitors active workflows.
@@ -1354,7 +1538,7 @@ class WorkflowOrchestrator:
 
             except Exception as e:
                 # Log error but continue monitoring
-                print(f"Error in workflow monitor: {e}")
+                logger.error(f"Error in workflow monitor: {e}")
                 await asyncio.sleep(5.0)
 
     async def _process_workflow_updates(self, workflow_id: int) -> None:
@@ -1374,7 +1558,7 @@ class WorkflowOrchestrator:
             node = self._node_lookup[workflow_id][node_id]
 
             if node.job_id:
-                job = self.database.get_job(node.job_id)
+                job = await self._db_get_job(node.job_id)
 
                 if job and job.status in ("COMPLETED", "FAILED"):
                     # Process completion
@@ -1392,7 +1576,546 @@ class WorkflowOrchestrator:
                 self.event_callback(event)
             except Exception as e:
                 # Log error but don't let it break orchestration
-                print(f"Error in event callback: {e}")
+                logger.error(f"Error in event callback: {e}")
+
+    # -------------------------------------------------------------------------
+    # Batch, Script, and Data Transfer Node Handlers
+    # -------------------------------------------------------------------------
+
+    async def _evaluate_condition(self, workflow_id: int, node: WorkflowNode) -> bool:
+        """
+        Evaluate a node's conditional expression.
+
+        The condition is a Jinja2 expression that has access to:
+        - Global workflow parameters
+        - Results from completed dependency nodes
+
+        Args:
+            workflow_id: Workflow containing the node
+            node: Node with condition to evaluate
+
+        Returns:
+            True if condition is met, False otherwise
+        """
+        if not node.condition:
+            return True
+
+        workflow = self._workflows[workflow_id]
+
+        # Build context with all available data
+        context = dict(workflow.global_parameters)
+
+        # Add dependency results
+        for dep_id in node.dependencies:
+            dep_node = self._node_lookup[workflow_id].get(dep_id)
+            if dep_node and dep_node.results:
+                context[dep_id] = dep_node.results
+
+        # Evaluate condition
+        try:
+            template = self._jinja_env.from_string("{{ " + node.condition + " }}")
+            result = template.render(context)
+            # Convert string result to boolean
+            return result.lower() in ("true", "1", "yes")
+        except Exception as e:
+            logger.warning(f"Condition evaluation failed for {node.node_id}: {e}")
+            return True  # Default to executing on error
+
+    async def _submit_batch_node(self, workflow_id: int, node: WorkflowNode) -> None:
+        """
+        Expand and submit a batch node as multiple parallel jobs.
+
+        Batch nodes can expand based on:
+        - foreach: Glob pattern matching files (e.g., "POSCAR-*")
+        - parameter_sweep: List of parameter dictionaries
+
+        Args:
+            workflow_id: Workflow containing the node
+            node: Batch node to expand
+        """
+        workflow = self._workflows[workflow_id]
+        state = self._workflow_states[workflow_id]
+
+        try:
+            # Determine expansion source
+            items_to_process: List[Dict[str, Any]] = []
+
+            if node.foreach:
+                # Expand glob pattern from dependency work directory
+                items_to_process = await self._expand_foreach(workflow_id, node)
+
+            elif node.parameter_sweep:
+                # Use parameter sweep list directly
+                items_to_process = node.parameter_sweep
+
+            if not items_to_process:
+                logger.warning(f"Batch node {node.node_id} has nothing to expand")
+                node.status = NodeStatus.COMPLETED
+                node.results = {"batch_count": 0}
+                state.completed_nodes.add(node.node_id)
+                await self._check_workflow_completion(workflow_id)
+                return
+
+            logger.info(f"Expanding batch node {node.node_id} to {len(items_to_process)} jobs")
+
+            # Track this as a batch node in progress
+            node.status = NodeStatus.RUNNING
+            state.running_nodes.add(node.node_id)
+            node.batch_jobs = []
+            node.batch_results = []
+
+            # Submit each batch item
+            for idx, item_params in enumerate(items_to_process):
+                # Merge base parameters with item-specific params
+                merged_params = dict(node.parameters)
+                merged_params.update(item_params)
+                merged_params["_batch_index"] = idx
+                merged_params["_batch_total"] = len(items_to_process)
+
+                # Create sub-job
+                sub_node = WorkflowNode(
+                    node_id=f"{node.node_id}_batch_{idx}",
+                    job_name=f"{node.job_name}_{idx}",
+                    template=node.template,
+                    parameters=merged_params,
+                    dependencies=[],  # Already satisfied
+                    node_type=NodeType.JOB,
+                    failure_policy=node.failure_policy,
+                    output_parsers=node.output_parsers,
+                    code=node.code,
+                )
+
+                # Resolve and submit
+                resolved_params = await self._resolve_parameters(workflow_id, sub_node)
+                sub_node.resolved_parameters = resolved_params
+
+                # Render input template
+                input_content = self._render_template(node.template, resolved_params)
+
+                # Create work directory
+                work_dir = self._create_work_directory(workflow_id, sub_node.node_id)
+
+                # Create database job (async to prevent event loop blocking)
+                job_id = await self._db_create_job(
+                    name=sub_node.job_name,
+                    work_dir=str(work_dir),
+                    input_content=input_content
+                )
+
+                node.batch_jobs.append(job_id)
+                sub_node.job_id = job_id
+
+                # Register temporary node for tracking
+                self._node_lookup[workflow_id][sub_node.node_id] = sub_node
+
+                # Get job for cluster info
+                job = await self._db_get_job(job_id)
+                if not job:
+                    continue
+
+                # Create batch completion callback
+                async def batch_job_callback(
+                    completed_job_id: int,
+                    status: str,
+                    parent_node: WorkflowNode = node,
+                    batch_idx: int = idx
+                ) -> None:
+                    await self._process_batch_job_completion(
+                        workflow_id, parent_node, completed_job_id, status, batch_idx
+                    )
+
+                # Submit to queue
+                await self.queue_manager.enqueue(
+                    job_id=job_id,
+                    priority=2,
+                    dependencies=None,
+                    runner_type=job.runner_type or "local",
+                    cluster_id=job.cluster_id,
+                    user_id=None
+                )
+                self.queue_manager.register_callback(job_id, batch_job_callback)
+                await self._db_update_status(job_id, "QUEUED")
+
+            # Emit batch start event
+            self._emit_event(NodeStarted(
+                workflow_id=workflow_id,
+                node_id=node.node_id,
+                job_id=node.batch_jobs[0] if node.batch_jobs else 0
+            ))
+
+        except Exception as e:
+            await self._handle_node_failure(workflow_id, node.node_id, 0, str(e))
+
+    async def _expand_foreach(
+        self,
+        workflow_id: int,
+        node: WorkflowNode
+    ) -> List[Dict[str, Any]]:
+        """
+        Expand a foreach glob pattern into parameter dictionaries.
+
+        Searches in the work directories of dependency nodes.
+
+        Args:
+            workflow_id: Workflow containing the node
+            node: Node with foreach pattern
+
+        Returns:
+            List of parameter dictionaries with _file key
+        """
+        if not node.foreach:
+            return []
+
+        items = []
+        pattern = node.foreach
+
+        # Search dependency work directories for matching files
+        for dep_id in node.dependencies:
+            dep_node = self._node_lookup[workflow_id].get(dep_id)
+            if not dep_node or not dep_node.job_id:
+                continue
+
+            dep_job = await self._db_get_job(dep_node.job_id)
+            if not dep_job:
+                continue
+
+            dep_work_dir = Path(dep_job.work_dir)
+            matches = list(dep_work_dir.glob(pattern))
+
+            for match in sorted(matches):
+                items.append({
+                    "_file": str(match),
+                    "_filename": match.name,
+                    "_stem": match.stem,
+                    "_source_dir": str(dep_work_dir),
+                })
+
+        return items
+
+    async def _process_batch_job_completion(
+        self,
+        workflow_id: int,
+        node: WorkflowNode,
+        job_id: int,
+        status: str,
+        batch_idx: int
+    ) -> None:
+        """
+        Process completion of a single batch sub-job.
+
+        Checks if all batch jobs are complete and updates parent node status.
+
+        Args:
+            workflow_id: Workflow containing the node
+            node: Parent batch node
+            job_id: Completed sub-job ID
+            status: Job status ("COMPLETED" or "FAILED")
+            batch_idx: Index of the batch item
+        """
+        state = self._workflow_states[workflow_id]
+
+        # Get job results (async to prevent event loop blocking)
+        job = await self._db_get_job(job_id)
+        if job and status == "COMPLETED":
+            result = {
+                "batch_idx": batch_idx,
+                "job_id": job_id,
+                "final_energy": job.final_energy,
+                "key_results": job.key_results,
+            }
+            node.batch_results.append(result)
+
+        # Check if all batch jobs are complete
+        completed_count = 0
+        failed_count = 0
+
+        for batch_job_id in node.batch_jobs:
+            batch_job = await self._db_get_job(batch_job_id)
+            if batch_job:
+                if batch_job.status == "COMPLETED":
+                    completed_count += 1
+                elif batch_job.status == "FAILED":
+                    failed_count += 1
+
+        total = len(node.batch_jobs)
+        logger.debug(
+            f"Batch {node.node_id}: {completed_count}/{total} completed, "
+            f"{failed_count} failed"
+        )
+
+        # Check if batch is complete
+        if completed_count + failed_count == total:
+            # All jobs finished
+            if failed_count > 0 and node.failure_policy == FailurePolicy.ABORT:
+                # Batch failed
+                node.status = NodeStatus.FAILED
+                state.failed_nodes.add(node.node_id)
+                state.running_nodes.discard(node.node_id)
+                await self._handle_node_failure(
+                    workflow_id,
+                    node.node_id,
+                    0,
+                    f"{failed_count}/{total} batch jobs failed"
+                )
+            else:
+                # Batch completed (possibly with some failures)
+                node.status = NodeStatus.COMPLETED
+                node.results = {
+                    "batch_count": total,
+                    "completed": completed_count,
+                    "failed": failed_count,
+                    "items": node.batch_results,
+                }
+                state.completed_nodes.add(node.node_id)
+                state.running_nodes.discard(node.node_id)
+
+                self._emit_event(NodeCompleted(
+                    workflow_id=workflow_id,
+                    node_id=node.node_id,
+                    job_id=0,
+                    results=node.results
+                ))
+
+                # Submit dependent nodes
+                await self._submit_ready_nodes(workflow_id)
+                await self._check_workflow_completion(workflow_id)
+
+    async def _submit_script_node(self, workflow_id: int, node: WorkflowNode) -> None:
+        """
+        Execute a script or shell command node.
+
+        Script nodes run a command without DFT code invocation.
+        Useful for pre/post-processing, format conversion, etc.
+
+        Args:
+            workflow_id: Workflow containing the node
+            node: Script node to execute
+        """
+        workflow = self._workflows[workflow_id]
+        state = self._workflow_states[workflow_id]
+
+        try:
+            # Resolve parameters
+            resolved_params = await self._resolve_parameters(workflow_id, node)
+            node.resolved_parameters = resolved_params
+
+            # Get command
+            command = node.command
+            if not command and node.script:
+                # Read script file and use as command
+                command = f"bash {node.script}"
+
+            if not command:
+                raise OrchestratorError(f"Script node {node.node_id} has no command")
+
+            # Render command template
+            command = self._jinja_env.from_string(command).render(resolved_params)
+
+            # Determine working directory (use last dependency's work_dir)
+            work_dir = None
+            for dep_id in reversed(node.dependencies):
+                dep_node = self._node_lookup[workflow_id].get(dep_id)
+                if dep_node and dep_node.job_id:
+                    dep_job = await self._db_get_job(dep_node.job_id)
+                    if dep_job:
+                        work_dir = Path(dep_job.work_dir)
+                        break
+
+            if not work_dir:
+                work_dir = self._create_work_directory(workflow_id, node.node_id)
+
+            node.status = NodeStatus.RUNNING
+            state.running_nodes.add(node.node_id)
+
+            # Execute command using async subprocess to avoid blocking event loop
+            import asyncio
+            try:
+                process = await asyncio.create_subprocess_shell(
+                    command,
+                    cwd=str(work_dir),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        process.communicate(),
+                        timeout=3600  # 1 hour timeout
+                    )
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                    raise asyncio.TimeoutError("Script execution timed out")
+
+                returncode = process.returncode
+                stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
+                stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
+            except asyncio.TimeoutError:
+                await self._handle_node_failure(
+                    workflow_id, node.node_id, 0, "Script timed out"
+                )
+                return
+
+            if returncode == 0:
+                node.status = NodeStatus.COMPLETED
+                node.results = {
+                    "returncode": 0,
+                    "stdout": stdout_text[:10000],  # Truncate
+                    "stderr": stderr_text[:10000],
+                }
+                state.completed_nodes.add(node.node_id)
+                state.running_nodes.discard(node.node_id)
+
+                self._emit_event(NodeCompleted(
+                    workflow_id=workflow_id,
+                    node_id=node.node_id,
+                    job_id=0,
+                    results=node.results
+                ))
+
+                await self._submit_ready_nodes(workflow_id)
+                await self._check_workflow_completion(workflow_id)
+            else:
+                await self._handle_node_failure(
+                    workflow_id,
+                    node.node_id,
+                    0,
+                    f"Script failed: {stderr_text[:500]}"
+                )
+
+        except asyncio.TimeoutError:
+            await self._handle_node_failure(
+                workflow_id, node.node_id, 0, "Script timed out"
+            )
+        except Exception as e:
+            await self._handle_node_failure(workflow_id, node.node_id, 0, str(e))
+
+    async def _submit_data_transfer_node(
+        self,
+        workflow_id: int,
+        node: WorkflowNode
+    ) -> None:
+        """
+        Execute a data transfer node.
+
+        Copies files between workflow step directories, optionally renaming them.
+
+        Args:
+            workflow_id: Workflow containing the node
+            node: Data transfer node to execute
+        """
+        workflow = self._workflows[workflow_id]
+        state = self._workflow_states[workflow_id]
+
+        try:
+            node.status = NodeStatus.RUNNING
+            state.running_nodes.add(node.node_id)
+
+            # Get source directory from last dependency
+            source_dir = None
+            for dep_id in reversed(node.dependencies):
+                dep_node = self._node_lookup[workflow_id].get(dep_id)
+                if dep_node and dep_node.job_id:
+                    dep_job = await self._db_get_job(dep_node.job_id)
+                    if dep_job:
+                        source_dir = Path(dep_job.work_dir)
+                        break
+
+            if not source_dir:
+                raise OrchestratorError(
+                    f"Data transfer node {node.node_id} has no source directory"
+                )
+
+            # Create destination directory
+            dest_dir = self._create_work_directory(workflow_id, node.node_id)
+
+            # Copy files using asyncio.to_thread to avoid blocking event loop
+            import asyncio
+            copied_files = []
+            for pattern in node.source_files:
+                matches = list(source_dir.glob(pattern))
+                for src_file in matches:
+                    if src_file.is_file():
+                        # Apply rename if specified
+                        dest_name = node.file_renames.get(src_file.name, src_file.name)
+                        dest_file = dest_dir / dest_name
+
+                        await asyncio.to_thread(shutil.copy2, src_file, dest_file)
+                        copied_files.append({
+                            "source": str(src_file),
+                            "dest": str(dest_file),
+                            "renamed": src_file.name != dest_name,
+                        })
+
+            # Mark as completed
+            node.status = NodeStatus.COMPLETED
+            node.results = {
+                "source_dir": str(source_dir),
+                "dest_dir": str(dest_dir),
+                "files_copied": len(copied_files),
+                "files": copied_files,
+            }
+            state.completed_nodes.add(node.node_id)
+            state.running_nodes.discard(node.node_id)
+
+            # Create a dummy job entry for work_dir tracking (async)
+            job_id = await self._db_create_job(
+                name=node.job_name,
+                work_dir=str(dest_dir),
+                input_content=""
+            )
+            node.job_id = job_id
+            await self._db_update_status(job_id, "COMPLETED")
+
+            self._emit_event(NodeCompleted(
+                workflow_id=workflow_id,
+                node_id=node.node_id,
+                job_id=job_id,
+                results=node.results
+            ))
+
+            await self._submit_ready_nodes(workflow_id)
+            await self._check_workflow_completion(workflow_id)
+
+        except Exception as e:
+            await self._handle_node_failure(workflow_id, node.node_id, 0, str(e))
+
+    def _cleanup_completed_workflow(self, workflow_id: int) -> None:
+        """
+        Clean up in-memory state for a completed workflow.
+
+        This prevents memory leaks by removing workflow data structures
+        after the workflow reaches a terminal state.
+
+        Args:
+            workflow_id: ID of the completed workflow
+        """
+        # Remove from in-memory tracking
+        self._workflows.pop(workflow_id, None)
+        self._workflow_states.pop(workflow_id, None)
+        self._node_lookup.pop(workflow_id, None)
+
+        # Clean up callback tracking for this workflow's jobs
+        callbacks_to_remove = [
+            job_id for job_id, (wf_id, _) in self._node_callbacks.items()
+            if wf_id == workflow_id
+        ]
+        for job_id in callbacks_to_remove:
+            self._node_callbacks.pop(job_id, None)
+
+        # Clean up work directories for this workflow
+        dirs_to_remove = [
+            work_dir for work_dir, wf_id in self._work_dirs.items()
+            if wf_id == workflow_id
+        ]
+        for work_dir in dirs_to_remove:
+            try:
+                if work_dir.exists():
+                    shutil.rmtree(work_dir, ignore_errors=True)
+                self._work_dirs.pop(work_dir, None)
+            except Exception:
+                pass
+
+        logger.info(f"Cleaned up completed workflow {workflow_id}")
 
     async def stop(self) -> None:
         """Stop the orchestrator and background monitoring."""

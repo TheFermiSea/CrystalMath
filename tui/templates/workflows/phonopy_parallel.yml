@@ -1,0 +1,365 @@
+name: "Parallel Phonopy (Finite Displacements)"
+version: "1.0"
+description: "Phonon calculation via parallel force calculations on displaced structures (~6x faster than DFPT)"
+author: "Crystal-TUI Team"
+tags: ["workflow", "phonopy", "phonon", "parallel", "vasp", "qe"]
+
+parameters:
+  # Input structure
+  structure_file:
+    type: "file"
+    description: "Input structure (POSCAR or CIF)"
+    required: true
+
+  # Supercell dimensions
+  supercell_dim:
+    type: "string"
+    default: "2 2 2"
+    description: "Supercell dimensions (e.g., '2 2 2')"
+    required: true
+
+  # DFT code for forces
+  dft_code:
+    type: "select"
+    options:
+      - label: "VASP"
+        value: "vasp"
+      - label: "Quantum ESPRESSO"
+        value: "qe"
+      - label: "CRYSTAL"
+        value: "crystal"
+    default: "vasp"
+    description: "DFT code for force calculations"
+    required: true
+
+  # Displacement settings
+  displacement_distance:
+    type: "float"
+    default: 0.01
+    min: 0.001
+    max: 0.1
+    description: "Displacement distance (Angstrom)"
+
+  use_plusminus:
+    type: "boolean"
+    default: true
+    description: "Use +/- displacements for symmetry"
+
+  # Parallelization
+  max_parallel:
+    type: "integer"
+    default: 24
+    min: 1
+    max: 100
+    description: "Maximum parallel force calculations"
+
+  # VASP settings (if dft_code == vasp)
+  encut:
+    type: "float"
+    default: 520.0
+    description: "Plane-wave cutoff (eV)"
+
+  ediff:
+    type: "float"
+    default: 1.0e-8
+    description: "SCF convergence (eV)"
+
+  kpoints_grid:
+    type: "string"
+    default: "8 8 8"
+    description: "K-point grid"
+
+  # QE settings (if dft_code == qe)
+  ecutwfc:
+    type: "float"
+    default: 60.0
+    description: "Wavefunction cutoff (Ry)"
+
+  # Band structure settings
+  band_path:
+    type: "string"
+    default: "AUTO"
+    description: "Band path (AUTO or explicit like 'G X M G')"
+
+  band_points:
+    type: "integer"
+    default: 101
+    description: "Points per band segment"
+
+  # DOS/mesh settings
+  mesh:
+    type: "string"
+    default: "20 20 20"
+    description: "Phonon DOS k-mesh"
+
+  # Thermal properties
+  tmin:
+    type: "float"
+    default: 0.0
+    description: "Minimum temperature (K)"
+
+  tmax:
+    type: "float"
+    default: 1000.0
+    description: "Maximum temperature (K)"
+
+  tstep:
+    type: "float"
+    default: 10.0
+    description: "Temperature step (K)"
+
+workflow:
+  nodes:
+    # Step 1: Generate displaced structures
+    - id: generate_displacements
+      type: script
+      command: |
+        phonopy -d --dim '{{ supercell_dim }}' -c {{ structure_file }}
+        {% if use_plusminus %}
+        phonopy --pm -d --dim '{{ supercell_dim }}' -c {{ structure_file }}
+        {% endif %}
+
+        # Count and report
+        NDISP=$(ls POSCAR-* 2>/dev/null | wc -l)
+        echo "Generated $NDISP displaced structures"
+
+    # Step 2: Prepare displacement directories
+    - id: prepare_directories
+      type: script
+      command: |
+        for poscar in POSCAR-*; do
+          num="${poscar#POSCAR-}"
+          dir="disp-$num"
+          mkdir -p "$dir"
+          cp "$poscar" "$dir/POSCAR"
+
+          {% if dft_code == 'vasp' %}
+          # Copy VASP input files
+          cp POTCAR "$dir/" 2>/dev/null || true
+
+          # Create minimal SCF INCAR for forces
+          cat > "$dir/INCAR" << 'EOF'
+        SYSTEM = Phonopy displacement
+        PREC = Accurate
+        ENCUT = {{ encut }}
+        EDIFF = {{ ediff }}
+        IBRION = -1
+        NSW = 0
+        ISMEAR = 0
+        SIGMA = 0.05
+        LREAL = .FALSE.
+        LWAVE = .FALSE.
+        LCHARG = .FALSE.
+        NCORE = 8
+        EOF
+
+          cat > "$dir/KPOINTS" << 'EOF'
+        Automatic mesh
+        0
+        Gamma
+          {{ kpoints_grid }}
+          0  0  0
+        EOF
+          {% elif dft_code == 'qe' %}
+          # Create QE input from template
+          echo "QE input generation - use structure converter"
+          {% endif %}
+        done
+
+        echo "Prepared $(ls -d disp-* | wc -l) displacement directories"
+      dependencies:
+        - generate_displacements
+
+    # Step 3: Run parallel force calculations (BATCH node)
+    - id: parallel_forces
+      type: batch
+      code: "{{ dft_code }}"
+      foreach: "disp-*"
+      max_parallel: "{{ max_parallel }}"
+      template: "{{ dft_code }}/scf"
+      parameters:
+        # Parameters passed to each SCF calculation
+        {% if dft_code == 'vasp' %}
+        encut: "{{ encut }}"
+        ediff: "{{ ediff }}"
+        ismear: "0"
+        sigma: "0.05"
+        ibrion: "-1"
+        nsw: "0"
+        lwave: false
+        lcharg: false
+        kpoints_grid: "{{ kpoints_grid }}"
+        {% elif dft_code == 'qe' %}
+        ecutwfc: "{{ ecutwfc }}"
+        ecutrho: "{{ ecutwfc * 8 }}"
+        tprnfor: true
+        {% endif %}
+      dependencies:
+        - prepare_directories
+
+    # Step 4: Collect forces
+    - id: collect_forces
+      type: script
+      command: |
+        {% if dft_code == 'vasp' %}
+        phonopy -f disp-*/vasprun.xml
+        {% elif dft_code == 'qe' %}
+        phonopy -f --qe disp-*/*.out
+        {% elif dft_code == 'crystal' %}
+        phonopy -f --crystal disp-*/*.out
+        {% endif %}
+
+        if [ -f FORCE_SETS ]; then
+          echo "FORCE_SETS created successfully"
+          head -20 FORCE_SETS
+        else
+          echo "ERROR: FORCE_SETS not created"
+          exit 1
+        fi
+      dependencies:
+        - parallel_forces
+
+    # Step 5: Compute force constants
+    - id: force_constants
+      type: script
+      command: |
+        phonopy --fc FORCE_SETS
+
+        if [ -f FORCE_CONSTANTS ]; then
+          echo "FORCE_CONSTANTS created"
+          ls -la FORCE_CONSTANTS
+        else
+          echo "ERROR: FORCE_CONSTANTS not created"
+          exit 1
+        fi
+      dependencies:
+        - collect_forces
+
+    # Step 6: Create band.conf
+    - id: create_band_conf
+      type: script
+      command: |
+        cat > band.conf << 'EOF'
+        # Phonon band structure
+        DIM = {{ supercell_dim }}
+        PRIMITIVE_AXES = AUTO
+        BAND = {{ band_path }}
+        BAND_POINTS = {{ band_points }}
+        BAND_CONNECTION = .TRUE.
+        EOF
+        echo "Created band.conf"
+      dependencies:
+        - force_constants
+
+    # Step 7: Create mesh.conf
+    - id: create_mesh_conf
+      type: script
+      command: |
+        cat > mesh.conf << 'EOF'
+        # Phonon DOS and thermal properties
+        DIM = {{ supercell_dim }}
+        PRIMITIVE_AXES = AUTO
+        MP = {{ mesh }}
+        GAMMA_CENTER = .TRUE.
+        TPROP = .TRUE.
+        TMIN = {{ tmin }}
+        TMAX = {{ tmax }}
+        TSTEP = {{ tstep }}
+        EOF
+        echo "Created mesh.conf"
+      dependencies:
+        - force_constants
+
+    # Step 8: Compute band structure
+    - id: band_structure
+      type: script
+      command: |
+        phonopy -c {{ structure_file }} -p band.conf --gnuplot
+
+        if [ -f band.yaml ]; then
+          echo "Band structure computed"
+
+          # Check for imaginary frequencies
+          if grep -q "imaginary" band.yaml; then
+            echo "WARNING: Imaginary frequencies detected - structure may be unstable"
+          fi
+        else
+          echo "ERROR: band.yaml not created"
+          exit 1
+        fi
+      dependencies:
+        - create_band_conf
+
+    # Step 9: Compute DOS and thermal properties
+    - id: dos_thermal
+      type: script
+      command: |
+        phonopy -c {{ structure_file }} -t mesh.conf
+
+        echo "=== Output Files ==="
+        ls -la *.yaml 2>/dev/null || true
+
+        if [ -f thermal_properties.yaml ]; then
+          echo ""
+          echo "=== Thermal Properties Sample ==="
+          head -50 thermal_properties.yaml
+        fi
+      dependencies:
+        - create_mesh_conf
+
+  edges:
+    - from: generate_displacements
+      to: prepare_directories
+    - from: prepare_directories
+      to: parallel_forces
+    - from: parallel_forces
+      to: collect_forces
+    - from: collect_forces
+      to: force_constants
+    - from: force_constants
+      to: create_band_conf
+    - from: force_constants
+      to: create_mesh_conf
+    - from: create_band_conf
+      to: band_structure
+    - from: create_mesh_conf
+      to: dos_thermal
+
+  outputs:
+    - name: "force_sets"
+      source: "collect_forces"
+      file: "FORCE_SETS"
+    - name: "force_constants"
+      source: "force_constants"
+      file: "FORCE_CONSTANTS"
+    - name: "band_structure"
+      source: "band_structure"
+      file: "band.yaml"
+    - name: "dos"
+      source: "dos_thermal"
+      file: "mesh.yaml"
+    - name: "thermal_properties"
+      source: "dos_thermal"
+      file: "thermal_properties.yaml"
+
+notes: |
+  Parallel Phonopy Workflow
+
+  This workflow uses finite displacements instead of DFPT for phonon calculations.
+  Force calculations on displaced structures run in parallel for ~6x speedup.
+
+  Speedup example (NbOCl2-like system, 2x2x2 supercell):
+  - DFPT (serial): ~17 hours
+  - Finite displacements (24 parallel): ~2-3 hours
+
+  Prerequisites:
+  - phonopy installed (pip install phonopy)
+  - DFT code (VASP, QE, or CRYSTAL)
+  - For VASP: POTCAR in working directory
+
+  Output files:
+  - FORCE_SETS: Forces from DFT calculations
+  - FORCE_CONSTANTS: Second-order force constants
+  - band.yaml: Phonon band structure
+  - mesh.yaml: Phonon DOS
+  - thermal_properties.yaml: Free energy, entropy, heat capacity vs T
