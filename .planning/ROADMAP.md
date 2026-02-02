@@ -23,18 +23,26 @@ Transform CrystalMath from a dual-TUI (Python primary, Rust secondary) codebase 
 
 **Why first:** Eliminates GIL deadlock risk before any feature work. All subsequent phases depend on this communication layer.
 
+**Status:** In progress
+**Plans:** 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Python JSON-RPC server with system.ping endpoint
+- [ ] 01-02-PLAN.md — Rust IPC client module with timeout handling
+- [ ] 01-03-PLAN.md — Auto-start logic and integration tests
+
 ### Deliverables
 
-- [ ] Python JSON-RPC server skeleton (`python/crystalmath/server.py`)
+- [ ] Python JSON-RPC server skeleton (`python/crystalmath/server/`)
 - [ ] Rust IPC client module (`src/ipc.rs`)
 - [ ] Auto-start logic (TUI spawns server if not running)
 - [ ] Health check endpoint (`system.ping`)
-- [ ] Integration tests (Rust client ↔ Python server)
+- [ ] Integration tests (Rust client <-> Python server)
 
 ### Technical Notes
 
-- Use `jsonrpc` crate on Rust side
-- Use `aiohttp` or `python-jsonrpc-server` on Python side
+- Use asyncio stdlib on Python side (no external deps)
+- Use existing tokio on Rust side (no new deps)
 - Socket location: `$XDG_RUNTIME_DIR/crystalmath.sock` or `/tmp/crystalmath-{uid}.sock`
 - 30-second timeout for requests
 - Server auto-exits after 5 minutes of inactivity (optional)
@@ -129,7 +137,7 @@ None (foundational phase)
 - [ ] `jobs.submit` RPC handler (invoke quacc recipe)
 - [ ] Cluster selection UI (choose from configured executors)
 - [ ] Job status polling (query workflow engine)
-- [ ] Progress display (PENDING → RUNNING → COMPLETE)
+- [ ] Progress display (PENDING -> RUNNING -> COMPLETE)
 - [ ] Error display (capture workflow engine errors)
 
 ### Technical Notes
@@ -229,15 +237,15 @@ None (foundational phase)
 
 ```
 Phase 1 (IPC)
-    ↓
+    |
 Phase 2 (quacc Read)
-    ↓
+    |
 Phase 3 (Structure/Input)
-    ↓
+    |
 Phase 4 (Submission)
-    ↓
+    |
 Phase 5 (Results)
-    ↓
+    |
 Phase 6 (Migration)
 ```
 
