@@ -6,6 +6,7 @@
 
 mod app;
 mod bridge;
+mod ipc;
 mod lsp;
 mod models;
 mod state;
