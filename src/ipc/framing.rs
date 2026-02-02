@@ -150,49 +150,62 @@ pub async fn write_message(writer: &mut OwnedWriteHalf, body: &str) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use tokio::net::UnixStream;
+    use tokio::time::timeout;
+
+    /// Test timeout to prevent hanging tests.
+    const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
     /// Create a connected pair of Unix sockets for testing.
+    /// Returns (server_read, server_write, client_read, client_write)
+    /// The server_read reads what client_write writes, and vice versa.
     async fn socket_pair() -> (OwnedReadHalf, OwnedWriteHalf, OwnedReadHalf, OwnedWriteHalf) {
-        let (client, server) = UnixStream::pair().expect("Failed to create socket pair");
-        let (client_read, client_write) = client.into_split();
-        let (server_read, server_write) = server.into_split();
-        (client_read, client_write, server_read, server_write)
+        let (stream_a, stream_b) = UnixStream::pair().expect("Failed to create socket pair");
+        let (a_read, a_write) = stream_a.into_split();
+        let (b_read, b_write) = stream_b.into_split();
+        // a_read reads from b_write, b_read reads from a_write
+        (a_read, a_write, b_read, b_write)
     }
 
     #[tokio::test]
     async fn test_write_read_roundtrip() {
-        let (client_read, mut client_write, _server_read, _server_write) = socket_pair().await;
+        let (server_read, _server_write, _client_read, mut client_write) = socket_pair().await;
 
         let message = r#"{"jsonrpc":"2.0","method":"test","id":1}"#;
 
-        // Write message from client
+        // Write message from client side
         write_message(&mut client_write, message)
             .await
             .expect("Write failed");
 
         // Read message on server side
-        let mut reader = BufReader::new(client_read);
-        let received = read_message(&mut reader).await.expect("Read failed");
+        let mut reader = BufReader::new(server_read);
+        let received = timeout(TEST_TIMEOUT, read_message(&mut reader))
+            .await
+            .expect("Test timed out")
+            .expect("Read failed");
 
         assert_eq!(received, message);
     }
 
     #[tokio::test]
     async fn test_read_missing_content_length() {
-        let (client_read, mut client_write, _server_read, _server_write) = socket_pair().await;
+        let (server_read, _server_write, _client_read, mut client_write) = socket_pair().await;
 
-        // Write raw data without Content-Length header
+        // Write raw data without Content-Length header (just an empty line)
         client_write
-            .write_all(b"\r\n{}\r\n")
+            .write_all(b"\r\n")
             .await
             .expect("Write failed");
 
-        // Need to close the write end so reader sees the headers are complete
+        // Close write end so reader sees EOF after the empty line
         drop(client_write);
 
-        let mut reader = BufReader::new(client_read);
-        let result = read_message(&mut reader).await;
+        let mut reader = BufReader::new(server_read);
+        let result = timeout(TEST_TIMEOUT, read_message(&mut reader))
+            .await
+            .expect("Test timed out");
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
@@ -205,9 +218,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_handles_crlf_and_lf() {
-        let (client_read, mut client_write, _server_read, _server_write) = socket_pair().await;
+        let (server_read, _server_write, _client_read, mut client_write) = socket_pair().await;
 
-        // Write with mixed line endings (CRLF in header, body follows)
+        // Write with CRLF line endings (standard format)
         let body = r#"{"test":true}"#;
         let raw = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
         client_write
@@ -215,15 +228,18 @@ mod tests {
             .await
             .expect("Write failed");
 
-        let mut reader = BufReader::new(client_read);
-        let received = read_message(&mut reader).await.expect("Read failed");
+        let mut reader = BufReader::new(server_read);
+        let received = timeout(TEST_TIMEOUT, read_message(&mut reader))
+            .await
+            .expect("Test timed out")
+            .expect("Read failed");
 
         assert_eq!(received, body);
     }
 
     #[tokio::test]
     async fn test_read_case_insensitive_header() {
-        let (client_read, mut client_write, _server_read, _server_write) = socket_pair().await;
+        let (server_read, _server_write, _client_read, mut client_write) = socket_pair().await;
 
         // Write with lowercase header name
         let body = r#"{"test":true}"#;
@@ -233,15 +249,18 @@ mod tests {
             .await
             .expect("Write failed");
 
-        let mut reader = BufReader::new(client_read);
-        let received = read_message(&mut reader).await.expect("Read failed");
+        let mut reader = BufReader::new(server_read);
+        let received = timeout(TEST_TIMEOUT, read_message(&mut reader))
+            .await
+            .expect("Test timed out")
+            .expect("Read failed");
 
         assert_eq!(received, body);
     }
 
     #[tokio::test]
     async fn test_read_rejects_oversized_message() {
-        let (client_read, mut client_write, _server_read, _server_write) = socket_pair().await;
+        let (server_read, _server_write, _client_read, mut client_write) = socket_pair().await;
 
         // Claim a huge Content-Length (larger than MAX_MESSAGE_SIZE)
         let raw = format!("Content-Length: {}\r\n\r\n", MAX_MESSAGE_SIZE + 1);
@@ -250,14 +269,37 @@ mod tests {
             .await
             .expect("Write failed");
 
-        let mut reader = BufReader::new(client_read);
-        let result = read_message(&mut reader).await;
+        let mut reader = BufReader::new(server_read);
+        let result = timeout(TEST_TIMEOUT, read_message(&mut reader))
+            .await
+            .expect("Test timed out");
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("exceeds maximum"),
             "Expected size error, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_connection_closed_returns_error() {
+        let (server_read, _server_write, _client_read, client_write) = socket_pair().await;
+
+        // Close write end immediately without sending anything
+        drop(client_write);
+
+        let mut reader = BufReader::new(server_read);
+        let result = timeout(TEST_TIMEOUT, read_message(&mut reader))
+            .await
+            .expect("Test timed out");
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("closed") || err_msg.contains("Missing"),
+            "Expected connection closed or missing header error, got: {}",
             err_msg
         );
     }
