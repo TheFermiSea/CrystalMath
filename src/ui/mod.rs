@@ -10,6 +10,7 @@ mod jobs;
 mod log;
 mod materials;
 mod new_job;
+pub mod recipes;
 mod results;
 mod slurm_queue;
 mod vasp_input;
@@ -18,6 +19,7 @@ mod workflows;
 pub use cluster_manager::{
     ClusterFormField, ClusterManagerMode, ClusterManagerState, ConnectionTestResult,
 };
+pub use recipes::RecipeBrowserState;
 pub use slurm_queue::SlurmQueueState;
 pub use vasp_input::{VaspFileTab, VaspInputState};
 pub use workflows::WorkflowState;
