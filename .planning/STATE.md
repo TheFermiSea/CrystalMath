@@ -1,19 +1,19 @@
 # CrystalMath Project State
 
-**Last updated:** 2026-02-02T22:45:02Z
+**Last updated:** 2026-02-02T22:52:54Z
 **Status:** Active development
 
 ## Current Position
 
 **Phase:** 2 of 6 (quacc Integration)
-**Plan:** 1 of 4 complete
+**Plan:** 2 of 4 complete
 **Status:** In progress
-**Last activity:** 2026-02-02 - Completed 02-01-PLAN.md
+**Last activity:** 2026-02-02 - Completed 02-02-PLAN.md
 
 **Progress:**
 ```
 Phase 1 [##########] 100% (3/3 plans) COMPLETE
-Phase 2 [##--------] 25% (1/4 plans)
+Phase 2 [#####-----] 50% (2/4 plans)
 Phase 3 [----------] 0%
 Phase 4 [----------] 0%
 Phase 5 [----------] 0%
@@ -38,20 +38,22 @@ Phase 6 [----------] 0%
 | 02-01 | JSON file storage in ~/.crystalmath/ | Simple persistence without database deps |
 | 02-01 | Two-level ImportError handling | Graceful degradation for partial quacc installs |
 | 02-01 | DEBUG level logging for skipped modules | Avoids noise while preserving debuggability |
+| 02-02 | Rename handlers.py to _handlers.py | Resolves Python naming conflict with handlers/ package |
+| 02-02 | Re-export registry in handlers/__init__.py | Maintains backwards compatibility for imports |
+| 02-02 | Lazy imports inside handlers | Graceful degradation and faster startup |
 
 ## Blockers / Concerns
 
-None currently. Phase 2 Plan 1 complete:
-- discover_vasp_recipes() working with graceful ImportError handling
-- get_engine_status() returns correct structure
-- ClusterConfigStore and JobStore persist to ~/.crystalmath/
-- 28 unit tests passing
+None currently. Phase 2 Plan 2 complete:
+- recipes.list, clusters.list, jobs.list handlers registered
+- All handlers tested (17 new tests)
+- Rust TUI can now query quacc data via IPC
 
 ## Session Continuity
 
-**Last session:** 2026-02-02T22:45:02Z
-**Stopped at:** Completed 02-01-PLAN.md
-**Resume with:** 02-02-PLAN.md (RPC handlers)
+**Last session:** 2026-02-02T22:52:54Z
+**Stopped at:** Completed 02-02-PLAN.md
+**Resume with:** 02-03-PLAN.md (jobs.submit handler)
 
 ## Completed Summaries
 
@@ -62,12 +64,13 @@ Phase 1 (IPC Foundation):
 
 Phase 2 (quacc Integration):
 - [02-01-SUMMARY.md](.planning/phases/02-quacc-integration/02-01-SUMMARY.md) - Python quacc module
+- [02-02-SUMMARY.md](.planning/phases/02-quacc-integration/02-02-SUMMARY.md) - RPC handlers for quacc
 
 ## Key Files for Context
 
 Created in Phase 1:
 - `python/crystalmath/server/__init__.py` - JsonRpcServer, main()
-- `python/crystalmath/server/handlers.py` - HANDLER_REGISTRY, system.ping
+- `python/crystalmath/server/_handlers.py` - HANDLER_REGISTRY, system.ping (renamed from handlers.py)
 - `python/pyproject.toml` - crystalmath-server entry point
 - `src/lib.rs` - Library root exposing ipc, bridge, models
 - `src/ipc.rs` - Module root with pub exports
@@ -83,8 +86,15 @@ Created in Phase 2 Plan 1:
 - `python/crystalmath/quacc/store.py` - JobStatus, JobMetadata, JobStore
 - `python/tests/test_quacc.py` - 28 unit tests
 
+Created in Phase 2 Plan 2:
+- `python/crystalmath/server/handlers/__init__.py` - Auto-imports, re-exports registry
+- `python/crystalmath/server/handlers/recipes.py` - recipes.list handler
+- `python/crystalmath/server/handlers/clusters.py` - clusters.list handler
+- `python/crystalmath/server/handlers/jobs.py` - jobs.list handler
+- `python/tests/test_handlers_quacc.py` - 17 handler tests
+
 ## Next Steps
 
-1. Execute 02-02-PLAN.md: RPC handlers for quacc methods
-2. Register handlers in HANDLER_REGISTRY
-3. Connect quacc module to IPC server
+1. Execute 02-03-PLAN.md: jobs.submit handler
+2. Execute 02-04-PLAN.md: End-to-end integration tests
+3. Complete Phase 2 quacc integration
