@@ -12,7 +12,7 @@ use tui_textarea::TextArea;
 
 use crate::bridge::{BridgeHandle, BridgeRequestKind, BridgeResponse, BridgeService};
 use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
-use crate::models::{JobDetails, JobStatus, SlurmQueueEntry};
+use crate::models::{ApiResponse, JobDetails, JobStatus, SlurmQueueEntry};
 use crate::ui::{ClusterManagerState, RecipeBrowserState, SlurmQueueState};
 
 // Re-export state types for backward compatibility with existing imports from crate::app
@@ -1193,19 +1193,29 @@ impl<'a> App<'a> {
                             Ok(rpc_response) => {
                                 match rpc_response.into_result() {
                                     Ok(value) => {
-                                        // Deserialize the JSON value into Vec<ClusterConfig>
-                                        match serde_json::from_value::<Vec<crate::models::ClusterConfig>>(value) {
-                                            Ok(clusters) => {
-                                                let count = clusters.len();
-                                                self.cluster_manager.clusters = clusters;
-                                                if count > 0 && self.cluster_manager.selected_index.is_none() {
-                                                    self.cluster_manager.selected_index = Some(0);
+                                        // Deserialize the JSON value into ApiResponse<Vec<ClusterConfig>>
+                                        // Python API returns {"ok": true, "data": [...]} wrapper
+                                        match serde_json::from_value::<ApiResponse<Vec<crate::models::ClusterConfig>>>(value) {
+                                            Ok(api_response) => match api_response.into_result() {
+                                                Ok(clusters) => {
+                                                    let count = clusters.len();
+                                                    self.cluster_manager.clusters = clusters;
+                                                    if count > 0 && self.cluster_manager.selected_index.is_none() {
+                                                        self.cluster_manager.selected_index = Some(0);
+                                                    }
+                                                    self.cluster_manager.set_status(
+                                                        &format!("Loaded {} clusters", count),
+                                                        false,
+                                                    );
+                                                    debug!("Loaded {} clusters via JSON-RPC", count);
                                                 }
-                                                self.cluster_manager.set_status(
-                                                    &format!("Loaded {} clusters", count),
-                                                    false,
-                                                );
-                                                debug!("Loaded {} clusters via JSON-RPC", count);
+                                                Err(e) => {
+                                                    self.cluster_manager.set_status(
+                                                        &format!("API error: {}", e),
+                                                        true,
+                                                    );
+                                                    error!("API error for clusters: {}", e);
+                                                }
                                             }
                                             Err(e) => {
                                                 self.cluster_manager.set_status(
