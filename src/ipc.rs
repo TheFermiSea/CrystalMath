@@ -37,5 +37,5 @@
 mod client;
 mod framing;
 
-pub use client::{default_socket_path, IpcClient, IpcError};
+pub use client::{default_socket_path, ensure_server_running, IpcClient, IpcError};
 pub use framing::{read_message, write_message};

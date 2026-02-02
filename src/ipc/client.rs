@@ -3,12 +3,19 @@
 //! This module provides `IpcClient`, an async client that connects to the
 //! Python crystalmath-server over Unix domain sockets and sends JSON-RPC 2.0
 //! requests with automatic timeout handling.
+//!
+//! # Auto-start
+//!
+//! The module includes `ensure_server_running()` to automatically start
+//! the Python server if it's not already running. This enables zero-config
+//! user experience for the TUI.
 
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use thiserror::Error;
 use tokio::io::BufReader;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
@@ -20,6 +27,12 @@ use crate::ipc::framing::{read_message, write_message};
 
 /// Default request timeout in seconds.
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+/// Maximum time to wait for server startup in seconds.
+const SERVER_STARTUP_TIMEOUT_SECS: u64 = 5;
+
+/// Polling interval when waiting for server socket.
+const SERVER_POLL_INTERVAL_MS: u64 = 100;
 
 /// IPC-specific error types.
 ///
@@ -102,6 +115,83 @@ pub fn default_socket_path() -> PathBuf {
 
     // Fallback to /tmp (less secure, but works everywhere)
     PathBuf::from("/tmp/crystalmath.sock")
+}
+
+/// Ensures the crystalmath-server is running, starting it if necessary.
+///
+/// This function implements the zero-config experience for the TUI:
+/// 1. If the server is already running (socket accepts connections), returns immediately
+/// 2. If a stale socket exists (connection refused), removes it and starts the server
+/// 3. If no socket exists, starts the server and waits for it to be ready
+///
+/// # Arguments
+///
+/// * `socket_path` - Path where the server socket should be created
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The server process cannot be spawned (e.g., `crystalmath-server` not in PATH)
+/// - The server fails to start within the timeout (5 seconds)
+/// - An unexpected I/O error occurs
+///
+/// # Example
+///
+/// ```ignore
+/// let socket_path = default_socket_path();
+/// ensure_server_running(&socket_path)?;
+/// let mut client = IpcClient::connect(&socket_path).await?;
+/// ```
+pub fn ensure_server_running(socket_path: &Path) -> Result<()> {
+    // Fast path: try connecting first (server already running)
+    match std::os::unix::net::UnixStream::connect(socket_path) {
+        Ok(_) => {
+            tracing::debug!("Server already running at {:?}", socket_path);
+            return Ok(());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Socket doesn't exist - server not running
+            tracing::debug!("Socket not found, will start server");
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+            // Stale socket - server crashed, clean it up
+            tracing::info!("Cleaning up stale socket at {:?}", socket_path);
+            let _ = std::fs::remove_file(socket_path);
+        }
+        Err(e) => {
+            return Err(anyhow!("Failed to check server status: {}", e));
+        }
+    }
+
+    // Server not running - spawn it
+    tracing::info!("Starting crystalmath-server...");
+    let _child = Command::new("crystalmath-server")
+        .arg("--socket")
+        .arg(socket_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped()) // Pipe stderr for debugging if needed
+        .spawn()
+        .context("Failed to start crystalmath-server. Is it installed? (uv pip install -e python/)")?;
+
+    // Wait for socket to appear (max 5 seconds)
+    let max_polls = (SERVER_STARTUP_TIMEOUT_SECS * 1000) / SERVER_POLL_INTERVAL_MS;
+    for i in 0..max_polls {
+        if socket_path.exists() {
+            // Socket exists - give server a moment to start accepting connections
+            std::thread::sleep(Duration::from_millis(SERVER_POLL_INTERVAL_MS));
+            tracing::info!(
+                "Server started after {}ms",
+                (i + 1) * SERVER_POLL_INTERVAL_MS
+            );
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(SERVER_POLL_INTERVAL_MS));
+    }
+
+    Err(anyhow!(
+        "Server failed to start within {} seconds. Check that crystalmath-server is installed.",
+        SERVER_STARTUP_TIMEOUT_SECS
+    ))
 }
 
 /// IPC client for communication with crystalmath-server.
@@ -211,12 +301,83 @@ impl IpcClient {
         Err(last_error.expect("max_attempts must be > 0"))
     }
 
+    /// Connect to the server, starting it if necessary.
+    ///
+    /// This is the recommended entry point for TUI startup. It:
+    /// 1. Ensures the server is running via `ensure_server_running()`
+    /// 2. Connects with retry to handle race conditions during startup
+    ///
+    /// # Arguments
+    ///
+    /// * `socket_path` - Path to the Unix domain socket
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The server cannot be started
+    /// - Connection fails after server is started
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let socket_path = default_socket_path();
+    /// let mut client = IpcClient::connect_or_start(&socket_path).await?;
+    /// let latency = client.ping().await?;
+    /// println!("Server is responsive, latency: {:?}", latency);
+    /// ```
+    pub async fn connect_or_start(socket_path: &Path) -> Result<Self, IpcError> {
+        ensure_server_running(socket_path).map_err(|e| {
+            IpcError::Protocol(format!("Failed to start server: {}", e))
+        })?;
+        Self::connect_with_retry(socket_path, 5).await
+    }
+
     /// Set the request timeout duration.
     ///
     /// Default is 30 seconds.
     #[allow(dead_code)]
     pub fn set_timeout(&mut self, timeout: Duration) {
         self.timeout = timeout;
+    }
+
+    /// Check if the server is responsive via system.ping.
+    ///
+    /// This is useful for:
+    /// - Health checks after connection
+    /// - Verifying the server is processing requests
+    /// - Measuring roundtrip latency
+    ///
+    /// # Returns
+    ///
+    /// Returns the roundtrip duration on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The server doesn't respond within timeout
+    /// - The response format is invalid
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let latency = client.ping().await?;
+    /// if latency > Duration::from_millis(100) {
+    ///     tracing::warn!("Server latency is high: {:?}", latency);
+    /// }
+    /// ```
+    pub async fn ping(&mut self) -> Result<Duration, IpcError> {
+        let start = std::time::Instant::now();
+        let result = self.call("system.ping", serde_json::json!({})).await?;
+
+        // Verify response structure
+        if result.get("pong").and_then(|v| v.as_bool()) != Some(true) {
+            return Err(IpcError::Protocol(format!(
+                "Invalid ping response: expected {{\"pong\": true}}, got {:?}",
+                result
+            )));
+        }
+
+        Ok(start.elapsed())
     }
 
     /// Send a JSON-RPC 2.0 request and wait for the response.
