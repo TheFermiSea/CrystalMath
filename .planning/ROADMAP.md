@@ -17,41 +17,42 @@ Transform CrystalMath from a dual-TUI (Python primary, Rust secondary) codebase 
 
 ---
 
-## Phase 1: IPC Foundation
+## Phase 1: IPC Foundation ✅
 
 **Goal:** Establish reliable communication between Rust TUI and Python backend, replacing PyO3 with JSON-RPC over Unix domain sockets.
 
 **Why first:** Eliminates GIL deadlock risk before any feature work. All subsequent phases depend on this communication layer.
 
-**Status:** In progress
-**Plans:** 3 plans
+**Status:** Complete
+**Completed:** 2026-02-02
+**Plans:** 3 plans (all complete)
 
 Plans:
-- [ ] 01-01-PLAN.md — Python JSON-RPC server with system.ping endpoint
-- [ ] 01-02-PLAN.md — Rust IPC client module with timeout handling
-- [ ] 01-03-PLAN.md — Auto-start logic and integration tests
+- [x] 01-01-PLAN.md — Python JSON-RPC server with system.ping endpoint
+- [x] 01-02-PLAN.md — Rust IPC client module with timeout handling
+- [x] 01-03-PLAN.md — Auto-start logic and integration tests
 
 ### Deliverables
 
-- [ ] Python JSON-RPC server skeleton (`python/crystalmath/server/`)
-- [ ] Rust IPC client module (`src/ipc.rs`)
-- [ ] Auto-start logic (TUI spawns server if not running)
-- [ ] Health check endpoint (`system.ping`)
-- [ ] Integration tests (Rust client <-> Python server)
+- [x] Python JSON-RPC server skeleton (`python/crystalmath/server/`)
+- [x] Rust IPC client module (`src/ipc.rs`, `src/ipc/client.rs`, `src/ipc/framing.rs`)
+- [x] Auto-start logic (TUI spawns server if not running)
+- [x] Health check endpoint (`system.ping`)
+- [x] Integration tests (Rust client <-> Python server)
 
 ### Technical Notes
 
 - Use asyncio stdlib on Python side (no external deps)
 - Use existing tokio on Rust side (no new deps)
-- Socket location: `$XDG_RUNTIME_DIR/crystalmath.sock` or `/tmp/crystalmath-{uid}.sock`
+- Socket location: `$XDG_RUNTIME_DIR/crystalmath.sock` or `~/Library/Caches/crystalmath.sock` (macOS)
 - 30-second timeout for requests
 - Server auto-exits after 5 minutes of inactivity (optional)
 
 ### Success Criteria
 
-- [ ] `cargo test ipc` passes
-- [ ] Server starts automatically when TUI launches
-- [ ] Ping/pong roundtrip < 10ms
+- [x] `cargo test ipc` passes (17 tests)
+- [x] Server starts automatically when TUI launches
+- [x] Ping/pong roundtrip < 10ms (achieved ~132μs)
 
 ### Dependencies
 
