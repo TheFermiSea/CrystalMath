@@ -13,7 +13,7 @@ use tui_textarea::TextArea;
 use crate::bridge::{BridgeHandle, BridgeRequestKind, BridgeResponse, BridgeService};
 use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
 use crate::models::{JobDetails, JobStatus, SlurmQueueEntry};
-use crate::ui::{ClusterManagerState, SlurmQueueState};
+use crate::ui::{ClusterManagerState, RecipeBrowserState, SlurmQueueState};
 
 // Re-export state types for backward compatibility with existing imports from crate::app
 pub use crate::state::{Action, AppTab, JobsState, MaterialsSearchState, NewJobField, NewJobState};
@@ -165,6 +165,10 @@ pub struct App<'a> {
     // ===== Workflow Launcher Modal =====
     /// State for the workflow launcher modal.
     pub workflow_state: crate::ui::WorkflowState,
+
+    // ===== Recipe Browser Modal =====
+    /// State for the quacc recipe browser modal.
+    pub recipe_browser: RecipeBrowserState,
 }
 
 impl<'a> App<'a> {
@@ -319,6 +323,7 @@ impl<'a> App<'a> {
             last_slurm_cluster_id: None,
             vasp_input_state: crate::ui::VaspInputState::default(),
             workflow_state: crate::ui::WorkflowState::default(),
+            recipe_browser: RecipeBrowserState::default(),
         })
     }
 
@@ -3042,6 +3047,7 @@ mod tests {
             last_slurm_cluster_id: None,
             vasp_input_state: crate::ui::VaspInputState::default(),
             workflow_state: crate::ui::WorkflowState::default(),
+            recipe_browser: RecipeBrowserState::default(),
         }
     }
 

@@ -79,4 +79,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.workflow_state.active {
         workflows::render(frame, &app.workflow_state);
     }
+
+    if app.recipe_browser.active {
+        recipes::render(frame, &mut app.recipe_browser);
+    }
 }
