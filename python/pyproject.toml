@@ -52,6 +52,9 @@ all = [
     "crystalmath[aiida,dev,llm]",
 ]
 
+[project.scripts]
+crystalmath-server = "crystalmath.server:main"
+
 [project.urls]
 Homepage = "https://github.com/briansquires/crystalmath"
 Documentation = "https://github.com/briansquires/crystalmath#readme"
