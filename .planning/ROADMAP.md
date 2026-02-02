@@ -66,6 +66,15 @@ None (foundational phase)
 
 **Why second:** Establishes quacc patterns before implementing write operations. Low-risk exploration of the quacc API.
 
+**Status:** Planned
+**Plans:** 4 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Python quacc module (discovery, engines, config, store)
+- [ ] 02-02-PLAN.md — RPC handlers (recipes.list, clusters.list, jobs.list)
+- [ ] 02-03-PLAN.md — Rust models and recipe browser TUI
+- [ ] 02-04-PLAN.md — Integration tests and human verification
+
 ### Deliverables
 
 - [ ] `recipes.list` RPC handler (enumerate available quacc VASP recipes)
