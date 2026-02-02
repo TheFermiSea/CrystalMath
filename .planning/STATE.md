@@ -1,19 +1,19 @@
 # CrystalMath Project State
 
-**Last updated:** 2026-02-02T22:06:21Z
+**Last updated:** 2026-02-02T22:45:02Z
 **Status:** Active development
 
 ## Current Position
 
-**Phase:** 1 of 6 (IPC Foundation)
-**Plan:** 3 of 3 complete
-**Status:** Phase complete
-**Last activity:** 2026-02-02 - Completed 01-03-PLAN.md
+**Phase:** 2 of 6 (quacc Integration)
+**Plan:** 1 of 4 complete
+**Status:** In progress
+**Last activity:** 2026-02-02 - Completed 02-01-PLAN.md
 
 **Progress:**
 ```
-Phase 1 [###-------] 100% (3/3 plans) COMPLETE
-Phase 2 [----------] 0%
+Phase 1 [##########] 100% (3/3 plans) COMPLETE
+Phase 2 [##--------] 25% (1/4 plans)
 Phase 3 [----------] 0%
 Phase 4 [----------] 0%
 Phase 5 [----------] 0%
@@ -34,26 +34,34 @@ Phase 6 [----------] 0%
 | 01-03 | 5s server startup timeout | Allows for Python interpreter startup |
 | 01-03 | lib.rs for test access | Standard pattern for integration tests |
 | 01-03 | Per-test unique socket paths | Prevents test interference |
+| 02-01 | Pydantic for cluster/job config validation | Type safety with clear error messages |
+| 02-01 | JSON file storage in ~/.crystalmath/ | Simple persistence without database deps |
+| 02-01 | Two-level ImportError handling | Graceful degradation for partial quacc installs |
+| 02-01 | DEBUG level logging for skipped modules | Avoids noise while preserving debuggability |
 
 ## Blockers / Concerns
 
-None currently. Phase 1 complete with all success criteria met:
-- Server auto-starts when TUI connects
-- Ping roundtrip < 10ms (avg ~95us achieved)
-- Integration tests pass (17 total IPC tests)
-- Stale socket cleanup works
+None currently. Phase 2 Plan 1 complete:
+- discover_vasp_recipes() working with graceful ImportError handling
+- get_engine_status() returns correct structure
+- ClusterConfigStore and JobStore persist to ~/.crystalmath/
+- 28 unit tests passing
 
 ## Session Continuity
 
-**Last session:** 2026-02-02T22:06:21Z
-**Stopped at:** Completed Phase 1 (IPC Foundation)
-**Resume with:** Phase 2 (Bridge Migration)
+**Last session:** 2026-02-02T22:45:02Z
+**Stopped at:** Completed 02-01-PLAN.md
+**Resume with:** 02-02-PLAN.md (RPC handlers)
 
 ## Completed Summaries
 
+Phase 1 (IPC Foundation):
 - [01-01-SUMMARY.md](.planning/phases/01-ipc-foundation/01-01-SUMMARY.md) - Python JSON-RPC server
 - [01-02-SUMMARY.md](.planning/phases/01-ipc-foundation/01-02-SUMMARY.md) - Rust IPC client module
 - [01-03-SUMMARY.md](.planning/phases/01-ipc-foundation/01-03-SUMMARY.md) - Auto-start and integration tests
+
+Phase 2 (quacc Integration):
+- [02-01-SUMMARY.md](.planning/phases/02-quacc-integration/02-01-SUMMARY.md) - Python quacc module
 
 ## Key Files for Context
 
@@ -67,8 +75,16 @@ Created in Phase 1:
 - `src/ipc/framing.rs` - Content-Length codec
 - `tests/ipc_integration.rs` - 7 integration tests
 
+Created in Phase 2 Plan 1:
+- `python/crystalmath/quacc/__init__.py` - Package exports
+- `python/crystalmath/quacc/discovery.py` - discover_vasp_recipes()
+- `python/crystalmath/quacc/engines.py` - get_engine_status()
+- `python/crystalmath/quacc/config.py` - ParslClusterConfig, ClusterConfigStore
+- `python/crystalmath/quacc/store.py` - JobStatus, JobMetadata, JobStore
+- `python/tests/test_quacc.py` - 28 unit tests
+
 ## Next Steps
 
-1. Begin Phase 2: Bridge migration
-2. Migrate fetch_jobs to IPC (pilot method)
-3. Gradually replace all PyO3 bridge calls with IPC
+1. Execute 02-02-PLAN.md: RPC handlers for quacc methods
+2. Register handlers in HANDLER_REGISTRY
+3. Connect quacc module to IPC server
