@@ -1,0 +1,13 @@
+{
+  "mode": "yolo",
+  "depth": "standard",
+  "parallelization": true,
+  "commit_docs": true,
+  "model_profile": "quality",
+  "workflow": {
+    "research": true,
+    "research_note": "Use PAL MCP server for deep research with gemini (ag-g3-pro) or codex (via clink)",
+    "plan_check": true,
+    "verifier": true
+  }
+}
