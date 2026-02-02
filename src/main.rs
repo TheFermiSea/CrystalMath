@@ -5,12 +5,12 @@
 //! and runs the main event loop.
 
 mod app;
-mod bridge;
-mod ipc;
 mod lsp;
-mod models;
 mod state;
 mod ui;
+
+// Re-use modules from lib.rs (exposed for integration tests)
+use crystalmath_tui::{bridge, ipc, models};
 
 use std::io::{self, Write};
 use std::panic;
