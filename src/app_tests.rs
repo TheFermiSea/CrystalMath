@@ -229,6 +229,19 @@ mod tests {
             Ok(())
         }
 
+        fn request_rpc(
+            &self,
+            rpc_request: crate::bridge::JsonRpcRequest,
+            request_id: usize,
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "Rpc(method={}, request_id={})",
+                rpc_request.method, request_id
+            ));
+            Ok(())
+        }
+
         fn poll_response(&self) -> Option<BridgeResponse> {
             let mut resps = self.responses.lock().unwrap();
             resps.pop_front()

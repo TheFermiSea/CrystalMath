@@ -216,6 +216,13 @@ pub trait BridgeService {
     /// Send a request to launch AiiDA geometry optimization (non-blocking).
     fn request_launch_aiida_geopt(&self, config_json: &str, request_id: usize) -> Result<()>;
 
+    /// Send a generic JSON-RPC request (thin IPC pattern).
+    ///
+    /// This method enables incremental migration from thick bridge variants
+    /// to thin JSON-RPC calls. Use for new operations without adding new
+    /// `BridgeRequest` variants.
+    fn request_rpc(&self, rpc_request: JsonRpcRequest, request_id: usize) -> Result<()>;
+
     /// Poll for a response (non-blocking).
     fn poll_response(&self) -> Option<BridgeResponse>;
 }
@@ -1285,6 +1292,13 @@ impl BridgeService for BridgeHandle {
     fn request_launch_aiida_geopt(&self, config_json: &str, request_id: usize) -> Result<()> {
         self.try_send_request(BridgeRequest::LaunchAiidaGeopt {
             config_json: config_json.to_string(),
+            request_id,
+        })
+    }
+
+    fn request_rpc(&self, rpc_request: JsonRpcRequest, request_id: usize) -> Result<()> {
+        self.try_send_request(BridgeRequest::Rpc {
+            rpc_request,
             request_id,
         })
     }

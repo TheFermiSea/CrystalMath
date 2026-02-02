@@ -169,6 +169,9 @@ pub struct App<'a> {
     // ===== Recipe Browser Modal =====
     /// State for the quacc recipe browser modal.
     pub recipe_browser: RecipeBrowserState,
+
+    /// Request ID for the current recipe fetch (to ignore stale responses).
+    pub recipe_request_id: usize,
 }
 
 impl<'a> App<'a> {
@@ -324,6 +327,7 @@ impl<'a> App<'a> {
             vasp_input_state: crate::ui::VaspInputState::default(),
             workflow_state: crate::ui::WorkflowState::default(),
             recipe_browser: RecipeBrowserState::default(),
+            recipe_request_id: 0,
         })
     }
 
@@ -1140,8 +1144,50 @@ impl<'a> App<'a> {
                 // As methods migrate from legacy variants to JSON-RPC, we route
                 // responses based on request_id matching known pending operations.
                 BridgeResponse::RpcResult { request_id, result } => {
+                    // Check if this is a recipe list response
+                    if request_id == self.recipe_request_id && self.recipe_browser.loading {
+                        self.recipe_browser.loading = false;
+                        match result {
+                            Ok(rpc_response) => {
+                                match rpc_response.into_result() {
+                                    Ok(value) => {
+                                        // Deserialize the JSON value into RecipesListResponse
+                                        match serde_json::from_value::<crate::models::RecipesListResponse>(value) {
+                                            Ok(response) => {
+                                                let count = response.recipes.len();
+                                                // Build WorkflowEngineStatus from response
+                                                let engine_status = crate::models::WorkflowEngineStatus {
+                                                    configured: None,
+                                                    installed: Vec::new(),
+                                                    quacc_installed: response.quacc_version.is_some(),
+                                                };
+                                                self.recipe_browser.set_data(
+                                                    response.recipes,
+                                                    engine_status,
+                                                    response.error,
+                                                );
+                                                debug!("Loaded {} recipes via JSON-RPC", count);
+                                            }
+                                            Err(e) => {
+                                                self.recipe_browser.error = Some(format!("Parse error: {}", e));
+                                                error!("Failed to deserialize recipes: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.recipe_browser.error = Some(format!("RPC error: {}", e));
+                                        warn!("JSON-RPC error for recipes: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.recipe_browser.error = Some(format!("Bridge error: {}", e));
+                                error!("Bridge dispatch failed for recipes: {}", e);
+                            }
+                        }
+                    }
                     // Check if this is a cluster fetch response
-                    if request_id == self.cluster_manager.request_id {
+                    else if request_id == self.cluster_manager.request_id {
                         self.cluster_manager.loading = false;
                         match result {
                             Ok(rpc_response) => {
@@ -2656,6 +2702,76 @@ impl<'a> App<'a> {
             }
         }
     }
+
+    // ===== Recipe Browser Modal =====
+
+    /// Open the recipe browser modal and request recipes.
+    pub fn open_recipe_browser(&mut self) {
+        self.recipe_browser.open();
+        self.request_load_recipes();
+        self.mark_dirty();
+    }
+
+    /// Close the recipe browser modal.
+    pub fn close_recipe_browser(&mut self) {
+        self.recipe_browser.close();
+        self.mark_dirty();
+    }
+
+    /// Check if the recipe browser modal is active.
+    pub fn is_recipe_browser_active(&self) -> bool {
+        self.recipe_browser.active
+    }
+
+    /// Request recipe list load via IPC (non-blocking).
+    ///
+    /// Sends recipes.list RPC call to fetch available quacc recipes.
+    /// Also sends clusters.list to get workflow engine status.
+    /// Results delivered via poll_bridge_responses().
+    pub fn request_load_recipes(&mut self) {
+        // Skip if not loading (open() sets loading = true)
+        if !self.recipe_browser.loading {
+            return;
+        }
+
+        // Increment request ID for this recipe fetch
+        self.recipe_request_id = self.next_request_id();
+
+        // Use the JSON-RPC bridge pattern
+        let rpc_request = crate::bridge::JsonRpcRequest::new(
+            "recipes.list",
+            serde_json::json!({}),
+            self.recipe_request_id as u64,
+        );
+
+        if let Err(e) = self.bridge.request_rpc(rpc_request, self.recipe_request_id) {
+            self.recipe_browser.loading = false;
+            self.recipe_browser.error = Some(format!("Failed to request recipes: {}", e));
+            error!("Failed to send recipes.list request: {}", e);
+        } else {
+            debug!("Sent recipes.list request (id={})", self.recipe_request_id);
+        }
+
+        self.mark_dirty();
+    }
+
+    /// Refresh recipes (force reload).
+    pub fn refresh_recipes(&mut self) {
+        self.recipe_browser.loading = true;
+        self.request_load_recipes();
+    }
+
+    /// Select previous recipe in the list.
+    pub fn select_prev_recipe(&mut self) {
+        self.recipe_browser.previous();
+        self.mark_dirty();
+    }
+
+    /// Select next recipe in the list.
+    pub fn select_next_recipe(&mut self) {
+        self.recipe_browser.next();
+        self.mark_dirty();
+    }
 }
 
 // =============================================================================
@@ -2943,6 +3059,19 @@ mod tests {
             Ok(())
         }
 
+        fn request_rpc(
+            &self,
+            rpc_request: crate::bridge::JsonRpcRequest,
+            request_id: usize,
+        ) -> Result<()> {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(format!(
+                "Rpc(method={}, request_id={})",
+                rpc_request.method, request_id
+            ));
+            Ok(())
+        }
+
         fn poll_response(&self) -> Option<BridgeResponse> {
             let mut resps = self.responses.lock().unwrap();
             resps.pop_front()
@@ -3048,6 +3177,7 @@ mod tests {
             vasp_input_state: crate::ui::VaspInputState::default(),
             workflow_state: crate::ui::WorkflowState::default(),
             recipe_browser: RecipeBrowserState::default(),
+            recipe_request_id: 0,
         }
     }
 
