@@ -1,19 +1,19 @@
 # CrystalMath Project State
 
-**Last updated:** 2026-02-02T22:52:54Z
+**Last updated:** 2026-02-02T23:02:28Z
 **Status:** Active development
 
 ## Current Position
 
 **Phase:** 2 of 6 (quacc Integration)
-**Plan:** 2 of 4 complete
+**Plan:** 3 of 4 complete
 **Status:** In progress
-**Last activity:** 2026-02-02 - Completed 02-02-PLAN.md
+**Last activity:** 2026-02-02 - Completed 02-03-PLAN.md
 
 **Progress:**
 ```
 Phase 1 [##########] 100% (3/3 plans) COMPLETE
-Phase 2 [#####-----] 50% (2/4 plans)
+Phase 2 [########--] 75% (3/4 plans)
 Phase 3 [----------] 0%
 Phase 4 [----------] 0%
 Phase 5 [----------] 0%
@@ -41,19 +41,23 @@ Phase 6 [----------] 0%
 | 02-02 | Rename handlers.py to _handlers.py | Resolves Python naming conflict with handlers/ package |
 | 02-02 | Re-export registry in handlers/__init__.py | Maintains backwards compatibility for imports |
 | 02-02 | Lazy imports inside handlers | Graceful degradation and faster startup |
+| 02-03 | Separate QuaccClusterConfig from ClusterConfig | Different domains (Parsl vs SSH/SLURM direct) |
+| 02-03 | Recipe browser as modal overlay | Follows workflow_state pattern for consistency |
+| 02-03 | Serde defaults for optional fields | Handle partial API responses gracefully |
 
 ## Blockers / Concerns
 
-None currently. Phase 2 Plan 2 complete:
-- recipes.list, clusters.list, jobs.list handlers registered
-- All handlers tested (17 new tests)
-- Rust TUI can now query quacc data via IPC
+None currently. Phase 2 Plan 3 complete:
+- Rust models for quacc API responses added (Recipe, Clusters, Jobs)
+- Recipe browser UI component created with list/details layout
+- App integration done, modal renders when active
+- 16 new tests (10 models + 6 UI)
 
 ## Session Continuity
 
-**Last session:** 2026-02-02T22:52:54Z
-**Stopped at:** Completed 02-02-PLAN.md
-**Resume with:** 02-03-PLAN.md (jobs.submit handler)
+**Last session:** 2026-02-02T23:02:28Z
+**Stopped at:** Completed 02-03-PLAN.md
+**Resume with:** 02-04-PLAN.md (End-to-end integration tests)
 
 ## Completed Summaries
 
@@ -65,6 +69,7 @@ Phase 1 (IPC Foundation):
 Phase 2 (quacc Integration):
 - [02-01-SUMMARY.md](.planning/phases/02-quacc-integration/02-01-SUMMARY.md) - Python quacc module
 - [02-02-SUMMARY.md](.planning/phases/02-quacc-integration/02-02-SUMMARY.md) - RPC handlers for quacc
+- [02-03-SUMMARY.md](.planning/phases/02-quacc-integration/02-03-SUMMARY.md) - Recipe browser UI
 
 ## Key Files for Context
 
@@ -93,8 +98,14 @@ Created in Phase 2 Plan 2:
 - `python/crystalmath/server/handlers/jobs.py` - jobs.list handler
 - `python/tests/test_handlers_quacc.py` - 17 handler tests
 
+Created in Phase 2 Plan 3:
+- `src/models.rs` - Recipe, RecipesListResponse, WorkflowEngineStatus, QuaccClusterConfig, QuaccJobMetadata models
+- `src/ui/recipes.rs` - RecipeBrowserState, render function, modal layout
+- `src/ui/mod.rs` - recipes module export, modal render integration
+- `src/app.rs` - recipe_browser field added to App
+
 ## Next Steps
 
-1. Execute 02-03-PLAN.md: jobs.submit handler
-2. Execute 02-04-PLAN.md: End-to-end integration tests
-3. Complete Phase 2 quacc integration
+1. Execute 02-04-PLAN.md: End-to-end integration tests
+2. Complete Phase 2 quacc integration
+3. Begin Phase 3
