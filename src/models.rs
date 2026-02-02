@@ -1017,6 +1017,159 @@ impl WorkflowStatus {
     }
 }
 
+// ==================== quacc Integration Models ====================
+
+/// A quacc recipe entry from recipe discovery.
+///
+/// Matches the dict returned by `discover_vasp_recipes()` in Python.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Recipe {
+    /// Function name (e.g., "relax_job")
+    pub name: String,
+    /// Module path (e.g., "quacc.recipes.vasp.core")
+    pub module: String,
+    /// Full qualified name (e.g., "quacc.recipes.vasp.core.relax_job")
+    pub fullname: String,
+    /// Docstring from the recipe function
+    #[serde(default)]
+    pub docstring: String,
+    /// Function signature (e.g., "(atoms, **kwargs)")
+    #[serde(default)]
+    pub signature: String,
+    /// Recipe type: "job" or "flow"
+    #[serde(rename = "type")]
+    pub recipe_type: String,
+}
+
+impl Recipe {
+    /// Get short display name (just the function name).
+    pub fn display_name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get category from module path (e.g., "core" from "quacc.recipes.vasp.core").
+    pub fn category(&self) -> &str {
+        self.module.rsplit('.').next().unwrap_or("unknown")
+    }
+
+    /// Check if this is a job (vs flow).
+    pub fn is_job(&self) -> bool {
+        self.recipe_type == "job"
+    }
+
+    /// Get first line of docstring for brief description.
+    pub fn brief_description(&self) -> &str {
+        self.docstring.lines().next().unwrap_or("").trim()
+    }
+}
+
+/// Response from recipes.list RPC call.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecipesListResponse {
+    pub recipes: Vec<Recipe>,
+    pub quacc_version: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Workflow engine status from engines.get_engine_status().
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WorkflowEngineStatus {
+    /// Currently configured engine (e.g., "parsl", "dask") or None
+    pub configured: Option<String>,
+    /// List of installed engine names
+    #[serde(default)]
+    pub installed: Vec<String>,
+    /// Whether quacc package is installed
+    #[serde(default)]
+    pub quacc_installed: bool,
+}
+
+impl WorkflowEngineStatus {
+    /// Get display string for configured engine.
+    pub fn configured_display(&self) -> &str {
+        self.configured.as_deref().unwrap_or("None")
+    }
+
+    /// Check if any workflow engine is available.
+    pub fn has_engine(&self) -> bool {
+        !self.installed.is_empty()
+    }
+}
+
+/// Cluster configuration from quacc config store.
+///
+/// Note: This is the Parsl-style cluster config, different from
+/// the existing ClusterConfig which is for SSH/SLURM direct connections.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct QuaccClusterConfig {
+    pub name: String,
+    pub partition: String,
+    #[serde(default)]
+    pub account: Option<String>,
+    #[serde(default = "default_quacc_nodes_per_block")]
+    pub nodes_per_block: i32,
+    #[serde(default = "default_quacc_cores_per_node")]
+    pub cores_per_node: i32,
+    #[serde(default)]
+    pub mem_per_node: Option<i32>,
+    #[serde(default = "default_quacc_walltime")]
+    pub walltime: String,
+    #[serde(default = "default_quacc_max_blocks")]
+    pub max_blocks: i32,
+    #[serde(default)]
+    pub worker_init: String,
+    #[serde(default)]
+    pub scheduler_options: String,
+}
+
+fn default_quacc_nodes_per_block() -> i32 {
+    1
+}
+fn default_quacc_cores_per_node() -> i32 {
+    32
+}
+fn default_quacc_walltime() -> String {
+    "01:00:00".to_string()
+}
+fn default_quacc_max_blocks() -> i32 {
+    10
+}
+
+/// Response from clusters.list RPC call.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ClustersListResponse {
+    pub clusters: Vec<QuaccClusterConfig>,
+    pub workflow_engine: WorkflowEngineStatus,
+}
+
+/// Job metadata from quacc job store.
+///
+/// Note: This is distinct from JobStatus which is for the existing
+/// TUI job tracking. This tracks quacc-submitted jobs.
+#[derive(Debug, Clone, Deserialize)]
+pub struct QuaccJobMetadata {
+    pub id: String,
+    pub recipe: String,
+    pub status: String, // "pending", "running", "completed", "failed"
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub cluster: Option<String>,
+    #[serde(default)]
+    pub work_dir: Option<String>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    #[serde(default)]
+    pub results_summary: Option<serde_json::Value>,
+}
+
+/// Response from jobs.list RPC call (quacc jobs).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct QuaccJobsListResponse {
+    pub jobs: Vec<QuaccJobMetadata>,
+    pub total: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1521,5 +1674,140 @@ mod tests {
         assert_eq!(ClusterStatus::Offline.color(), Color::Red);
         assert_eq!(ClusterStatus::Testing.color(), Color::Yellow);
         assert_eq!(ClusterStatus::Unknown.color(), Color::Gray);
+    }
+
+    // ==================== quacc Model Tests ====================
+
+    #[test]
+    fn test_recipe_deserialize() {
+        let json = r#"{
+            "name": "relax_job",
+            "module": "quacc.recipes.vasp.core",
+            "fullname": "quacc.recipes.vasp.core.relax_job",
+            "docstring": "Relax a structure.\n\nMore details here.",
+            "signature": "(atoms, **kwargs)",
+            "type": "job"
+        }"#;
+        let recipe: Recipe = serde_json::from_str(json).unwrap();
+        assert_eq!(recipe.name, "relax_job");
+        assert_eq!(recipe.category(), "core");
+        assert!(recipe.is_job());
+        assert_eq!(recipe.brief_description(), "Relax a structure.");
+    }
+
+    #[test]
+    fn test_recipe_display_name() {
+        let recipe = Recipe {
+            name: "static_job".to_string(),
+            module: "quacc.recipes.vasp.core".to_string(),
+            fullname: "quacc.recipes.vasp.core.static_job".to_string(),
+            docstring: String::new(),
+            signature: String::new(),
+            recipe_type: "job".to_string(),
+        };
+        assert_eq!(recipe.display_name(), "static_job");
+    }
+
+    #[test]
+    fn test_recipe_flow_type() {
+        let recipe = Recipe {
+            name: "relax_flow".to_string(),
+            module: "quacc.recipes.vasp.slabs".to_string(),
+            fullname: "quacc.recipes.vasp.slabs.relax_flow".to_string(),
+            docstring: String::new(),
+            signature: String::new(),
+            recipe_type: "flow".to_string(),
+        };
+        assert!(!recipe.is_job());
+        assert_eq!(recipe.category(), "slabs");
+    }
+
+    #[test]
+    fn test_recipes_list_response() {
+        let json = r#"{
+            "recipes": [],
+            "quacc_version": "0.11.0",
+            "error": null
+        }"#;
+        let response: RecipesListResponse = serde_json::from_str(json).unwrap();
+        assert!(response.recipes.is_empty());
+        assert_eq!(response.quacc_version, Some("0.11.0".to_string()));
+    }
+
+    #[test]
+    fn test_workflow_engine_status() {
+        let json = r#"{
+            "configured": "parsl",
+            "installed": ["parsl", "dask"],
+            "quacc_installed": true
+        }"#;
+        let status: WorkflowEngineStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(status.configured_display(), "parsl");
+        assert!(status.has_engine());
+    }
+
+    #[test]
+    fn test_workflow_engine_status_none_configured() {
+        let json = r#"{
+            "configured": null,
+            "installed": [],
+            "quacc_installed": false
+        }"#;
+        let status: WorkflowEngineStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(status.configured_display(), "None");
+        assert!(!status.has_engine());
+        assert!(!status.quacc_installed);
+    }
+
+    #[test]
+    fn test_clusters_list_response() {
+        let json = r#"{
+            "clusters": [{"name": "test", "partition": "gpu"}],
+            "workflow_engine": {"quacc_installed": false}
+        }"#;
+        let response: ClustersListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.clusters.len(), 1);
+        assert!(!response.workflow_engine.quacc_installed);
+    }
+
+    #[test]
+    fn test_quacc_cluster_config_defaults() {
+        let json = r#"{"name": "local", "partition": "batch"}"#;
+        let config: QuaccClusterConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.name, "local");
+        assert_eq!(config.partition, "batch");
+        assert_eq!(config.nodes_per_block, 1);
+        assert_eq!(config.cores_per_node, 32);
+        assert_eq!(config.walltime, "01:00:00");
+        assert_eq!(config.max_blocks, 10);
+    }
+
+    #[test]
+    fn test_quacc_job_metadata() {
+        let json = r#"{
+            "id": "job-123",
+            "recipe": "relax_job",
+            "status": "running",
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-01T00:05:00Z",
+            "cluster": "nersc",
+            "work_dir": "/scratch/job-123"
+        }"#;
+        let job: QuaccJobMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(job.id, "job-123");
+        assert_eq!(job.recipe, "relax_job");
+        assert_eq!(job.status, "running");
+        assert_eq!(job.cluster, Some("nersc".to_string()));
+    }
+
+    #[test]
+    fn test_quacc_jobs_list_response() {
+        let json = r#"{
+            "jobs": [],
+            "total": 0
+        }"#;
+        let response: QuaccJobsListResponse = serde_json::from_str(json).unwrap();
+        assert!(response.jobs.is_empty());
+        assert_eq!(response.total, 0);
     }
 }
