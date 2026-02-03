@@ -1339,6 +1339,7 @@ impl<'a> App<'a> {
                                 match rpc_response.into_result() {
                                     Ok(value) => {
                                         // Parse the availability response
+                                        // Python returns {"ok": true, "data": {...}} wrapper
                                         #[derive(serde::Deserialize)]
                                         struct WorkflowAvailabilityResponse {
                                             #[serde(default)]
@@ -1352,8 +1353,26 @@ impl<'a> App<'a> {
                                             error: Option<String>,
                                         }
 
+                                        // First unwrap the ApiResponse wrapper
+                                        let inner_value = match serde_json::from_value::<
+                                            ApiResponse<serde_json::Value>,
+                                        >(value.clone())
+                                        {
+                                            Ok(api_response) => match api_response.into_result() {
+                                                Ok(data) => data,
+                                                Err(e) => {
+                                                    self.workflow_state.set_status(
+                                                        format!("API error: {}", e),
+                                                        true,
+                                                    );
+                                                    continue;
+                                                }
+                                            },
+                                            Err(_) => value, // Not wrapped, use as-is
+                                        };
+
                                         match serde_json::from_value::<WorkflowAvailabilityResponse>(
-                                            value,
+                                            inner_value,
                                         ) {
                                             Ok(response) => {
                                                 self.workflow_state.set_availability(
@@ -1566,6 +1585,57 @@ impl<'a> App<'a> {
                                     .set_status(&format!("Bridge error: {}", e), true);
                                 self.materials.selected_for_import = None;
                                 error!("Bridge dispatch failed for VASP generation: {}", e);
+                            }
+                        }
+                    }
+                    // Check if this is a VASP validation response
+                    else if request_id == self.vasp_input_state.validation_request_id
+                        && self.vasp_input_state.active
+                    {
+                        self.vasp_input_state.status = None;
+                        match result {
+                            Ok(rpc_response) => {
+                                match rpc_response.into_result() {
+                                    Ok(value) => {
+                                        match serde_json::from_value::<
+                                            ApiResponse<crate::models::ValidationResult>,
+                                        >(value)
+                                        {
+                                            Ok(api_response) => match api_response.into_result() {
+                                                Ok(val_result) => {
+                                                    if val_result.valid {
+                                                        self.vasp_input_state.status =
+                                                            Some("Validation passed!".to_string());
+                                                    } else {
+                                                        self.vasp_input_state.set_error(
+                                                            "Validation failed. See details."
+                                                                .to_string(),
+                                                        );
+                                                    }
+                                                    self.vasp_input_state.validation =
+                                                        Some(val_result);
+                                                }
+                                                Err(e) => {
+                                                    self.vasp_input_state.set_error(e);
+                                                }
+                                            },
+                                            Err(e) => {
+                                                self.vasp_input_state.set_error(format!(
+                                                    "Failed to parse validation result: {}",
+                                                    e
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.vasp_input_state
+                                            .set_error(format!("RPC error: {}", e));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.vasp_input_state
+                                    .set_error(format!("Bridge error: {}", e));
                             }
                         }
                     }
@@ -3268,6 +3338,46 @@ impl<'a> App<'a> {
     pub fn close_vasp_input_modal(&mut self) {
         self.vasp_input_state.close();
         self.mark_dirty();
+    }
+
+    /// Request VASP input validation (async).
+    pub fn request_validate_vasp_inputs(&mut self) {
+        use crate::bridge::JsonRpcRequest;
+
+        // Get content from editors
+        let files = self.vasp_input_state.get_contents();
+        let inputs_json = match serde_json::to_string(&files) {
+            Ok(json) => json,
+            Err(e) => {
+                self.vasp_input_state
+                    .set_error(format!("Failed to serialize inputs: {}", e));
+                self.mark_dirty();
+                return;
+            }
+        };
+
+        // Set up validation request
+        self.vasp_input_state.validation_request_id = self.next_request_id();
+        self.vasp_input_state.status = Some("Validating...".to_string());
+        self.mark_dirty();
+
+        let params = serde_json::json!({
+            "inputs_json": inputs_json
+        });
+
+        let rpc_request = JsonRpcRequest::new(
+            "vasp.validate_inputs",
+            params,
+            self.vasp_input_state.validation_request_id as u64,
+        );
+
+        if let Err(e) = self
+            .bridge
+            .request_rpc(rpc_request, self.vasp_input_state.validation_request_id)
+        {
+            self.vasp_input_state
+                .set_error(format!("Validation request failed: {}", e));
+        }
     }
 
     /// Submit VASP job from the modal.
