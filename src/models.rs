@@ -1386,6 +1386,91 @@ pub struct QuaccJobSubmitResponse {
     pub error: Option<String>,
 }
 
+// ==================== Error Recovery Suggestion Models ====================
+
+/// Severity levels for VASP/DFT errors.
+///
+/// Matches Python's `VASPErrorSeverity` enum for error classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorSeverity {
+    /// Fatal error - job cannot continue
+    Fatal,
+    /// Recoverable error - can be fixed and restarted
+    Recoverable,
+    /// Warning - non-fatal but should be addressed
+    Warning,
+}
+
+impl ErrorSeverity {
+    /// Get human-readable display string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ErrorSeverity::Fatal => "Fatal",
+            ErrorSeverity::Recoverable => "Recoverable",
+            ErrorSeverity::Warning => "Warning",
+        }
+    }
+
+    /// Get the display color for this severity.
+    pub fn color(&self) -> Color {
+        match self {
+            ErrorSeverity::Fatal => Color::Red,
+            ErrorSeverity::Recoverable => Color::Yellow,
+            ErrorSeverity::Warning => Color::Cyan,
+        }
+    }
+}
+
+/// Error suggestion with recovery hints.
+///
+/// Contains detected error information and actionable recovery suggestions
+/// based on common VASP/DFT failure modes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorSuggestion {
+    /// Short error code (e.g., "ZBRENT", "EDDDAV")
+    pub code: String,
+    /// Severity level of the error
+    pub severity: ErrorSeverity,
+    /// Human-readable error description
+    pub message: String,
+    /// Line content from output file (if available)
+    #[serde(default)]
+    pub line_content: Option<String>,
+    /// Recovery suggestions (actionable steps)
+    #[serde(default)]
+    pub suggestions: Vec<String>,
+    /// Suggested INCAR parameter changes (tag -> value)
+    #[serde(default)]
+    pub incar_changes: std::collections::HashMap<String, String>,
+}
+
+impl ErrorSuggestion {
+    /// Create a new error suggestion.
+    pub fn new(code: &str, severity: ErrorSeverity, message: &str) -> Self {
+        Self {
+            code: code.to_string(),
+            severity,
+            message: message.to_string(),
+            line_content: None,
+            suggestions: Vec::new(),
+            incar_changes: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Add a recovery suggestion.
+    pub fn with_suggestion(mut self, suggestion: &str) -> Self {
+        self.suggestions.push(suggestion.to_string());
+        self
+    }
+
+    /// Add an INCAR change suggestion.
+    pub fn with_incar_change(mut self, tag: &str, value: &str) -> Self {
+        self.incar_changes.insert(tag.to_string(), value.to_string());
+        self
+    }
+}
+
 /// Response from jobs.status RPC.
 #[derive(Debug, Clone, Deserialize)]
 pub struct QuaccJobStatusResponse {

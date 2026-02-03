@@ -12,6 +12,7 @@ mod jobs;
 mod log;
 mod materials;
 mod new_job;
+mod output_viewer;
 pub mod recipes;
 mod results;
 mod slurm_queue;
@@ -395,6 +396,33 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                 }
 
             }
+
+    // Output file viewer modal
+    if app.output_viewer.active {
+        output_viewer::render(frame, &app.output_viewer);
+
+        if let Some(ref mut effect) = app.output_viewer.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let area = frame.area();
+            let modal_width = (area.width * 90 / 100).clamp(60, 140);
+            let modal_height = (area.height * 85 / 100).clamp(20, 50);
+            let modal_area = centered_rect_fixed(modal_width, modal_height, area);
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+
+            if !effect.running() {
+                if app.output_viewer.closing {
+                    app.output_viewer.active = false;
+                    app.output_viewer.closing = false;
+                    app.output_viewer.effect = None;
+                    app.mark_dirty();
+                } else {
+                    app.output_viewer.effect = None;
+                }
+            } else {
+                app.mark_dirty();
+            }
+        }
+    }
 
     // Help modal renders LAST (on top of all other modals)
     if app.help.active {

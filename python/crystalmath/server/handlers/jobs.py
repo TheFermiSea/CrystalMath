@@ -412,6 +412,133 @@ def _parse_structure(structure_data: str | dict) -> Any:
         raise ValueError(f"Unknown structure format: {type(structure_data)}")
 
 
+def _read_file_with_tail(file_path: str, tail_lines: int | None) -> dict[str, Any]:
+    """Read file content with optional tail limiting.
+
+    Uses memory-efficient streaming with deque when tail_lines is specified.
+
+    Args:
+        file_path: Path to the file to read
+        tail_lines: If specified, return only the last N lines
+
+    Returns:
+        Dict with content, truncated flag, and total_lines count
+    """
+    from collections import deque
+
+    total_lines = 0
+    truncated = False
+
+    if tail_lines is not None and tail_lines > 0:
+        # Use deque for memory-efficient tail reading
+        dq: deque[str] = deque(maxlen=tail_lines)
+        with open(file_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                total_lines += 1
+                dq.append(line)
+        lines = list(dq)
+        truncated = total_lines > tail_lines
+    else:
+        # Read entire file
+        with open(file_path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        total_lines = len(lines)
+
+    content = "".join(lines)
+    return {
+        "content": content,
+        "truncated": truncated,
+        "total_lines": total_lines,
+    }
+
+
+@register_handler("jobs.get_output_file")
+async def handle_jobs_get_output_file(
+    controller: CrystalController | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Get contents of a job output file (OUTCAR, vasprun.xml, etc.).
+
+    Params:
+        job_pk (int): Job primary key
+        file_type (str): Output file name ("OUTCAR", "vasprun.xml", "OSZICAR", etc.)
+        tail_lines (int, optional): Return only last N lines (default: all)
+
+    Returns:
+        {
+            "ok": true,
+            "data": {
+                "content": "file contents as string",
+                "truncated": false,
+                "total_lines": 1234
+            }
+        }
+    """
+    import asyncio
+    from pathlib import Path
+
+    job_pk = params.get("job_pk")
+    if job_pk is None:
+        return {"ok": False, "error": {"message": "job_pk parameter is required"}}
+
+    file_type = params.get("file_type", "OUTCAR")
+    tail_lines = params.get("tail_lines")
+
+    # Validate tail_lines parameter
+    if tail_lines is not None:
+        if not isinstance(tail_lines, int):
+            return {"ok": False, "error": {"message": "tail_lines must be an integer"}}
+        if tail_lines < 0:
+            return {"ok": False, "error": {"message": "tail_lines must be non-negative"}}
+
+    # Get job details to find work directory
+    if controller is None:
+        return {"ok": False, "error": {"message": "Controller not available"}}
+
+    try:
+        job_details = controller.get_job_details(job_pk)
+        if job_details is None:
+            return {"ok": False, "error": {"message": f"Job {job_pk} not found"}}
+    except Exception as e:
+        logger.exception("Failed to get job details for pk=%s", job_pk)
+        return {"ok": False, "error": {"message": f"Failed to get job details: {e}"}}
+
+    # Get work directory
+    work_dir = getattr(job_details, "work_dir", None)
+    if not work_dir:
+        return {"ok": False, "error": {"message": f"Job {job_pk} has no work directory"}}
+
+    # Construct file path
+    file_path = Path(work_dir) / file_type
+
+    # Security check: ensure file is within work_dir (prevent path traversal)
+    try:
+        file_path = file_path.resolve()
+        work_dir_resolved = Path(work_dir).resolve()
+        # Use is_relative_to() for secure path containment check
+        if not file_path.is_relative_to(work_dir_resolved):
+            return {"ok": False, "error": {"message": "Invalid file path"}}
+    except Exception as e:
+        return {"ok": False, "error": {"message": f"Path resolution error: {e}"}}
+
+    # Check file exists
+    if not file_path.exists():
+        return {"ok": False, "error": {"message": f"File not found: {file_type}"}}
+
+    if not file_path.is_file():
+        return {"ok": False, "error": {"message": f"Not a file: {file_type}"}}
+
+    # Read file content in a thread to avoid blocking the event loop
+    try:
+        result = await asyncio.to_thread(
+            _read_file_with_tail, str(file_path), tail_lines
+        )
+        return {"ok": True, "data": result}
+    except Exception as e:
+        logger.exception("Failed to read file %s", file_path)
+        return {"ok": False, "error": {"message": f"Failed to read file: {e}"}}
+
+
 def _summarize_result(result: dict) -> dict:
     """Extract key values from quacc result schema.
 

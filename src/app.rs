@@ -20,9 +20,9 @@ use tachyonfx::Effect;
 // Re-export state types for backward compatibility with existing imports from crate::app
 pub use crate::state::{
     Action, AppTab, BatchSubmissionState, HelpContext, HelpState, JobsState, MaterialsSearchState,
-    ModalType, NewJobField, NewJobState, TemplateBrowserState, WorkflowConfigState,
-    WorkflowDashboardFocus, WorkflowListState, WorkflowResultsState, WorkflowStatus,
-    WorkflowSummary,
+    ModalType, NewJobField, NewJobState, OutputFileType, OutputViewerState, TemplateBrowserState,
+    WorkflowConfigState, WorkflowDashboardFocus, WorkflowListState, WorkflowResultsState,
+    WorkflowStatus, WorkflowSummary,
 };
 
 #[derive(Debug, Clone)]
@@ -220,6 +220,13 @@ pub struct App<'a> {
     // ===== Help Modal =====
     /// State for the hierarchical help modal.
     pub help: HelpState,
+
+    // ===== Output File Viewer Modal =====
+    /// State for the output file viewer modal.
+    pub output_viewer: OutputViewerState,
+
+    /// Request ID for the current output file fetch.
+    pub output_viewer_request_id: usize,
 
     /// Request ID for the current recipe fetch (to ignore stale responses).
     pub recipe_request_id: usize,
@@ -421,6 +428,8 @@ impl<'a> App<'a> {
             template_browser: TemplateBrowserState::default(),
             batch_submission: BatchSubmissionState::default(),
             help: HelpState::default(),
+            output_viewer: OutputViewerState::default(),
+            output_viewer_request_id: 0,
             recipe_request_id: 0,
             workflow_request_id: 0,
             vasp_request_id: 0,
@@ -2092,6 +2101,66 @@ impl<'a> App<'a> {
                             }
                         }
                     }
+                    // Check if this is an output file viewer response
+                    else if request_id == self.output_viewer_request_id
+                        && self.output_viewer.loading
+                    {
+                        self.output_viewer.loading = false;
+                        match result {
+                            Ok(rpc_response) => {
+                                match rpc_response.into_result() {
+                                    Ok(value) => {
+                                        // Parse the output file response
+                                        // Expected format: {"ok": true, "data": {"content": "...lines...", "truncated": bool}}
+                                        // or direct lines array
+                                        let content_str = if let Some(data) = value.get("data") {
+                                            if let Some(content) = data.get("content").and_then(|c| c.as_str()) {
+                                                content.to_string()
+                                            } else if let Some(lines) = data.get("lines").and_then(|l| l.as_array()) {
+                                                lines.iter()
+                                                    .filter_map(|l| l.as_str())
+                                                    .collect::<Vec<_>>()
+                                                    .join("\n")
+                                            } else {
+                                                String::new()
+                                            }
+                                        } else if let Some(content) = value.get("content").and_then(|c| c.as_str()) {
+                                            content.to_string()
+                                        } else if let Some(lines) = value.get("lines").and_then(|l| l.as_array()) {
+                                            lines.iter()
+                                                .filter_map(|l| l.as_str())
+                                                .collect::<Vec<_>>()
+                                                .join("\n")
+                                        } else if let Some(s) = value.as_str() {
+                                            s.to_string()
+                                        } else {
+                                            String::new()
+                                        };
+
+                                        let lines: Vec<String> = content_str
+                                            .lines()
+                                            .map(|l| l.to_string())
+                                            .collect();
+
+                                        if lines.is_empty() {
+                                            self.output_viewer.set_error("Output file is empty or not found".to_string());
+                                        } else {
+                                            self.output_viewer.set_content(lines);
+                                            debug!("Output file loaded: {} lines", self.output_viewer.content.len());
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.output_viewer.set_error(format!("RPC error: {}", e));
+                                        warn!("JSON-RPC error for output file: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.output_viewer.set_error(format!("Bridge error: {}", e));
+                                error!("Bridge dispatch failed for output file: {}", e);
+                            }
+                        }
+                    }
                     // Check if this is a structure preview response
                     else if request_id == self.materials.preview_request_id
                         && self.materials.preview_loading
@@ -3515,6 +3584,7 @@ impl<'a> App<'a> {
             || self.workflow_config.submitting
             || self.slurm_queue_state.loading
             || self.cluster_manager.loading
+            || self.output_viewer.loading
     }
 
     /// Send pending LSP change notification.
@@ -5028,6 +5098,89 @@ impl<'a> App<'a> {
         self.help.active
     }
 
+    // ===== Output File Viewer Modal =====
+
+    /// Check if the output viewer modal is active.
+    pub fn is_output_viewer_active(&self) -> bool {
+        self.output_viewer.active
+    }
+
+    /// Open the output file viewer modal for a specific job and file type.
+    pub fn open_output_viewer(&mut self, file_type: OutputFileType, job_pk: i32, job_name: Option<String>) {
+        self.output_viewer.open(file_type, job_pk, job_name);
+        self.request_fetch_output_file(job_pk, file_type);
+        self.mark_dirty();
+    }
+
+    /// Close the output file viewer modal.
+    pub fn close_output_viewer(&mut self) {
+        self.output_viewer.close();
+        self.mark_dirty();
+    }
+
+    /// Request output file content from the Python backend.
+    pub fn request_fetch_output_file(&mut self, job_pk: i32, file_type: OutputFileType) {
+        use crate::bridge::JsonRpcRequest;
+
+        self.output_viewer_request_id = self.next_request_id();
+        self.output_viewer.loading = true;
+        self.output_viewer.error = None;
+        self.mark_dirty();
+
+        let params = serde_json::json!({
+            "job_pk": job_pk,
+            "file_type": file_type.filename(),
+            "tail_lines": 5000  // Limit for performance
+        });
+
+        let rpc_request = JsonRpcRequest::new(
+            "jobs.get_output_file",
+            params,
+            self.output_viewer_request_id as u64,
+        );
+
+        if let Err(e) = self.bridge.request_rpc(rpc_request, self.output_viewer_request_id) {
+            self.output_viewer.loading = false;
+            self.output_viewer.set_error(format!("Failed to request output file: {}", e));
+        }
+    }
+
+    /// Handle output file viewer scroll up.
+    pub fn output_viewer_scroll_up(&mut self) {
+        self.output_viewer.scroll_up();
+        self.mark_dirty();
+    }
+
+    /// Handle output file viewer scroll down.
+    pub fn output_viewer_scroll_down(&mut self, visible_height: usize) {
+        self.output_viewer.scroll_down(visible_height);
+        self.mark_dirty();
+    }
+
+    /// Handle output file viewer page up.
+    pub fn output_viewer_page_up(&mut self) {
+        self.output_viewer.page_up();
+        self.mark_dirty();
+    }
+
+    /// Handle output file viewer page down.
+    pub fn output_viewer_page_down(&mut self, visible_height: usize) {
+        self.output_viewer.page_down(visible_height);
+        self.mark_dirty();
+    }
+
+    /// Handle output file viewer scroll to top.
+    pub fn output_viewer_scroll_top(&mut self) {
+        self.output_viewer.scroll_top();
+        self.mark_dirty();
+    }
+
+    /// Handle output file viewer scroll to bottom.
+    pub fn output_viewer_scroll_bottom(&mut self, visible_height: usize) {
+        self.output_viewer.scroll_bottom(visible_height);
+        self.mark_dirty();
+    }
+
     /// Determine the help context based on active modals or current tab.
     pub fn determine_help_context(&self) -> HelpContext {
         // Check modals in priority order (most specific first)
@@ -5063,6 +5216,10 @@ impl<'a> App<'a> {
         }
         if self.workflow_results.active {
             return HelpContext::Modal(ModalType::WorkflowResults);
+        }
+        if self.output_viewer.active {
+            // Output viewer doesn't have its own modal type yet, use global context
+            return HelpContext::Tab(self.current_tab);
         }
 
         // No modal active - use current tab
@@ -5476,6 +5633,8 @@ mod tests {
             template_browser: TemplateBrowserState::default(),
             batch_submission: BatchSubmissionState::default(),
             help: HelpState::default(),
+            output_viewer: OutputViewerState::default(),
+            output_viewer_request_id: 0,
             recipe_request_id: 0,
             workflow_request_id: 0,
             vasp_request_id: 0,
