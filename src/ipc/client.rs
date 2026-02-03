@@ -117,6 +117,50 @@ pub fn default_socket_path() -> PathBuf {
     PathBuf::from("/tmp/crystalmath.sock")
 }
 
+/// Find the crystalmath-server binary, checking venv first then PATH.
+///
+/// Resolution order:
+/// 1. `.venv/bin/crystalmath-server` (project venv)
+/// 2. `crystalmath-server` in PATH
+///
+/// Returns the path to the server binary.
+fn find_server_binary() -> PathBuf {
+    // Check for venv in project root (relative to current directory)
+    let venv_server = PathBuf::from(".venv/bin/crystalmath-server");
+    if venv_server.exists() {
+        return venv_server;
+    }
+
+    // Check for venv relative to CARGO_MANIFEST_DIR (for tests and when running from different dirs)
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let project_venv_server = PathBuf::from(&manifest_dir).join(".venv/bin/crystalmath-server");
+        if project_venv_server.exists() {
+            return project_venv_server;
+        }
+    }
+
+    // Also check if we're in a subdirectory of the project
+    if let Ok(current_dir) = std::env::current_dir() {
+        // Walk up directories looking for .venv
+        let mut dir = current_dir.as_path();
+        for _ in 0..5 {
+            // Don't walk too far up
+            let potential_venv = dir.join(".venv/bin/crystalmath-server");
+            if potential_venv.exists() {
+                return potential_venv;
+            }
+            if let Some(parent) = dir.parent() {
+                dir = parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Fallback to PATH
+    PathBuf::from("crystalmath-server")
+}
+
 /// Ensures the crystalmath-server is running, starting it if necessary.
 ///
 /// This function implements the zero-config experience for the TUI:
@@ -164,8 +208,10 @@ pub fn ensure_server_running(socket_path: &Path) -> Result<()> {
     }
 
     // Server not running - spawn it
-    tracing::info!("Starting crystalmath-server...");
-    let _child = Command::new("crystalmath-server")
+    // Try venv first (most common case), then PATH
+    let server_binary = find_server_binary();
+    tracing::info!("Starting crystalmath-server from {:?}...", server_binary);
+    let _child = Command::new(&server_binary)
         .arg("--socket")
         .arg(socket_path)
         .stdout(Stdio::null())
