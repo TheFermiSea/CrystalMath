@@ -147,56 +147,59 @@ Plans:
 
 ---
 
-## Phase 4: Job Submission & Monitoring
+## Phase 4: Job Submission & Monitoring ✅
 
 **Goal:** Submit VASP jobs through quacc and track their status.
 
 **Why fourth:** Write operations only after read/input phases validated.
 
-**Status:** Planned
-**Plans:** 4 plans
+**Status:** Complete
+**Completed:** 2026-02-02
+**Plans:** 4 plans (all complete)
 
 Plans:
-- [ ] 04-01-PLAN.md — Python job submission core (POTCAR validation, JobRunner, handlers)
-- [ ] 04-02-PLAN.md — Rust TUI job submission (models, cluster selection, keybindings)
-- [ ] 04-03-PLAN.md — Job status polling and display (30s interval, progress, errors)
-- [ ] 04-04-PLAN.md — Integration tests (MockRunner, handler tests, Rust tests)
+- [x] 04-01-PLAN.md — Python job submission core (POTCAR validation, JobRunner, handlers)
+- [x] 04-02-PLAN.md — Rust TUI job submission (models, cluster selection, keybindings)
+- [x] 04-03-PLAN.md — Job status polling and display (30s interval, progress, errors)
+- [x] 04-04-PLAN.md — Integration tests (MockRunner, handler tests, Rust tests)
 
 ### Deliverables
 
-- [ ] `jobs.submit` RPC handler (invoke quacc recipe)
-- [ ] Cluster selection UI (choose from configured executors)
-- [ ] Job status polling (query workflow engine)
-- [ ] Progress display (PENDING -> RUNNING -> COMPLETE)
-- [ ] Error display (capture workflow engine errors)
+- [x] `jobs.submit` RPC handler (invoke quacc recipe)
+- [x] Cluster selection UI (choose from configured executors)
+- [x] Job status polling (query workflow engine)
+- [x] Progress display (PENDING -> RUNNING -> COMPLETE)
+- [x] Error display (capture workflow engine errors)
 
 ### Technical Notes
 
 - quacc's `@job` decorator handles ASE calculator setup
 - Parsl: use `python_app` with `HighThroughputExecutor`
 - Covalent: use `ct.dispatch()` with SLURM executor
-- Poll interval: 30-60 seconds
+- Poll interval: 30 seconds (implemented in `app.rs`)
 - Store job metadata in local JSON for TUI display
 - POTCAR validation before submission (fail fast)
 - JobRunner abstraction for Parsl/Covalent
 
 ### Success Criteria
 
-- [ ] Submit relaxation job from TUI
-- [ ] See job status update from PENDING to RUNNING
-- [ ] See completion status and basic results
-- [ ] Handle submission errors gracefully
+- [x] Submit relaxation job from TUI
+- [x] See job status update from PENDING to RUNNING
+- [x] See completion status and basic results
+- [x] Handle submission errors gracefully
 
 ### Dependencies
 
 - Phase 3 (Structure & Input)
 
-### Research Completed
+### Implementation Notes
 
-- POTCAR validation strategy: Check `VASP_PP_PATH`, verify element directories exist
-- Parsl vs Covalent: Both return exceptions via result/get_result, capture in JobMetadata.error_message
-- JobRunner abstraction: ABC with submit/get_status/get_result/cancel interface
-- MockRunner: For testing without real workflow engines
+- POTCAR validation: `validate_potcars()` checks VASP_PP_PATH, verifies element directories
+- ParslRunner: Uses `python_app` decorator, stores futures in dict
+- CovalentRunner: Uses `ct.dispatch()`, stores dispatch IDs
+- MockRunner: Simulates lifecycle for testing without real engines
+- Status polling: 30s interval, time-gated to avoid excessive API calls
+- Status icons: ○ Created, ◐ Submitted, ⏳ Queued, ▶ Running, ✓ Complete, ✗ Failed
 
 ---
 
