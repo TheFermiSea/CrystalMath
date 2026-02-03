@@ -12,6 +12,7 @@ mod ui;
 // Re-use modules from lib.rs (exposed for integration tests)
 use crystalmath_tui::{bridge, models};
 
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::panic;
 use std::path::{Path, PathBuf};
@@ -322,13 +323,36 @@ fn main() -> Result<()> {
     // Install panic hook FIRST for terminal safety
     install_panic_hook();
 
-    // Initialize logging
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "crystalmath=info".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer().with_target(false))
-        .init();
+    // Initialize logging to file (avoids interference with TUI)
+    // Log file is stored at ~/.local/share/crystalmath/crystalmath.log (or platform equivalent)
+    let log_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("crystalmath");
+    let _ = fs::create_dir_all(&log_dir);
+    let log_file_path = log_dir.join("crystalmath.log");
+
+    // Open log file (truncate on each run)
+    let log_file = File::create(&log_file_path).ok();
+
+    if let Some(file) = log_file {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new(
+                std::env::var("RUST_LOG").unwrap_or_else(|_| "crystalmath=info".into()),
+            ))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_target(false)
+                    .with_ansi(false)
+                    .with_writer(std::sync::Mutex::new(file)),
+            )
+            .init();
+    } else {
+        // Fallback: no logging if file can't be created (don't use stderr to avoid TUI issues)
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("error"))
+            .with(tracing_subscriber::fmt::layer().with_target(false))
+            .init();
+    }
 
     tracing::info!("Starting CrystalMath TUI v{}", env!("CARGO_PKG_VERSION"));
 
@@ -1109,6 +1133,8 @@ fn handle_cluster_form_char(app: &mut App, c: char) {
         ClusterFormField::KeyFile => &mut app.cluster_manager.form_key_file,
         ClusterFormField::RemoteWorkdir => &mut app.cluster_manager.form_remote_workdir,
         ClusterFormField::QueueName => &mut app.cluster_manager.form_queue_name,
+        ClusterFormField::Cry23Root => &mut app.cluster_manager.form_cry23_root,
+        ClusterFormField::VaspRoot => &mut app.cluster_manager.form_vasp_root,
         ClusterFormField::MaxConcurrent => {
             // Only allow digits for max concurrent
             if c.is_ascii_digit() {
@@ -1137,6 +1163,8 @@ fn handle_cluster_form_backspace(app: &mut App) {
         ClusterFormField::KeyFile => &mut app.cluster_manager.form_key_file,
         ClusterFormField::RemoteWorkdir => &mut app.cluster_manager.form_remote_workdir,
         ClusterFormField::QueueName => &mut app.cluster_manager.form_queue_name,
+        ClusterFormField::Cry23Root => &mut app.cluster_manager.form_cry23_root,
+        ClusterFormField::VaspRoot => &mut app.cluster_manager.form_vasp_root,
         ClusterFormField::MaxConcurrent => &mut app.cluster_manager.form_max_concurrent,
         ClusterFormField::ClusterType => return,
     };
@@ -1224,6 +1252,11 @@ fn handle_vasp_input_modal_input(app: &mut App, key: event::KeyEvent) {
         // Submit VASP job
         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.submit_vasp_job();
+        }
+
+        // Validate VASP inputs
+        KeyCode::Char('v') if key.modifiers.is_empty() => {
+            app.request_validate_vasp_inputs();
         }
 
         // Navigate between file tabs
@@ -1344,9 +1377,10 @@ fn handle_workflow_modal_input(app: &mut App, key: event::KeyEvent) {
             app.mark_dirty();
         }
 
-        // TODO: Enter to launch selected workflow
+        // Launch selected workflow
         KeyCode::Enter => {
-            // Workflow launching not yet implemented
+            app.launch_selected_workflow();
+            app.mark_dirty();
         }
 
         _ => {}

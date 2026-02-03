@@ -1210,6 +1210,12 @@ impl<'a> App<'a> {
                 // As methods migrate from legacy variants to JSON-RPC, we route
                 // responses based on request_id matching known pending operations.
                 BridgeResponse::RpcResult { request_id, result } => {
+                    // DEBUG: Log all RPC responses to trace routing
+                    info!(
+                        "RpcResult received: request_id={}, recipe_id={}, workflow_id={}, cluster_id={}, recipe_loading={}, workflow_loading={}",
+                        request_id, self.recipe_request_id, self.workflow_request_id,
+                        self.cluster_manager.request_id, self.recipe_browser.loading, self.workflow_state.loading
+                    );
                     // Check if this is a recipe list response
                     if request_id == self.recipe_request_id && self.recipe_browser.loading {
                         self.recipe_browser.loading = false;
@@ -1333,6 +1339,7 @@ impl<'a> App<'a> {
                     // Check if this is a workflow availability response
                     else if request_id == self.workflow_request_id && self.workflow_state.loading
                     {
+                        info!("Workflow availability response matched! Processing...");
                         self.workflow_state.set_loading(false);
                         match result {
                             Ok(rpc_response) => {
@@ -1375,8 +1382,15 @@ impl<'a> App<'a> {
                                             inner_value,
                                         ) {
                                             Ok(response) => {
+                                                info!(
+                                                    "Workflow response parsed: available={}, quacc={}, aiida={}, workflows={:?}",
+                                                    response.available, response.quacc_available,
+                                                    response.aiida_available, response.workflows
+                                                );
+                                                let combined_available = response.available || response.quacc_available;
+                                                info!("Setting workflow availability: combined={}, aiida={}", combined_available, response.aiida_available);
                                                 self.workflow_state.set_availability(
-                                                    response.available || response.quacc_available,
+                                                    combined_available,
                                                     response.aiida_available,
                                                 );
                                                 if let Some(err) = response.error {
@@ -1387,11 +1401,9 @@ impl<'a> App<'a> {
                                                         true,
                                                     );
                                                 }
-                                                debug!(
-                                                    "Workflow availability: {} workflows, aiida={}, quacc={}",
-                                                    response.workflows.len(),
-                                                    response.aiida_available,
-                                                    response.quacc_available
+                                                info!(
+                                                    "Workflow state after update: workflows_available={}",
+                                                    self.workflow_state.workflows_available
                                                 );
                                             }
                                             Err(e) => {
@@ -3600,6 +3612,90 @@ impl<'a> App<'a> {
     /// Select next workflow in the list.
     pub fn select_next_workflow(&mut self) {
         self.workflow_state.select_next();
+        self.mark_dirty();
+    }
+
+    /// Launch the currently selected workflow.
+    ///
+    /// This validates that workflows are available, gets the selected workflow type,
+    /// and initiates the appropriate workflow creation via the bridge.
+    pub fn launch_selected_workflow(&mut self) {
+        use crate::models::WorkflowType;
+
+        // Check if workflows are available
+        if !self.workflow_state.workflows_available {
+            self.workflow_state
+                .set_status("Workflows not available".to_string(), true);
+            self.mark_dirty();
+            return;
+        }
+
+        let workflow_type = self.workflow_state.selected_workflow();
+        let workflow_name = workflow_type.as_str();
+
+        // Show "launching" status
+        self.workflow_state.set_loading(true);
+        self.workflow_state
+            .set_status(format!("Launching {}...", workflow_name), false);
+        self.mark_dirty();
+
+        // Generate a default config for the workflow
+        // (In a full implementation, this would prompt for parameters)
+        let config = match workflow_type {
+            WorkflowType::Convergence => serde_json::json!({
+                "parameter": "shrink",
+                "values": [4, 6, 8, 10, 12],
+                "base_input": ""
+            }),
+            WorkflowType::BandStructure => serde_json::json!({
+                "structure_file": "",
+                "k_path": "auto"
+            }),
+            WorkflowType::Phonon => serde_json::json!({
+                "structure_file": "",
+                "supercell": [2, 2, 2]
+            }),
+            WorkflowType::Eos => serde_json::json!({
+                "structure_file": "",
+                "strains": [-0.06, -0.04, -0.02, 0.0, 0.02, 0.04, 0.06]
+            }),
+            WorkflowType::GeometryOptimization => serde_json::json!({
+                "structure_file": "",
+                "fmax": 0.01
+            }),
+        };
+        let config_json = config.to_string();
+
+        // Get request ID for tracking
+        let request_id = self.next_request_id();
+        self.workflow_state.request_id = Some(request_id);
+
+        // Call the appropriate bridge method
+        let result = match workflow_type {
+            WorkflowType::Convergence => self
+                .bridge
+                .request_create_convergence_study(&config_json, request_id),
+            WorkflowType::BandStructure => self
+                .bridge
+                .request_create_band_structure_workflow(&config_json, request_id),
+            WorkflowType::Phonon => self
+                .bridge
+                .request_create_phonon_workflow(&config_json, request_id),
+            WorkflowType::Eos => self
+                .bridge
+                .request_create_eos_workflow(&config_json, request_id),
+            WorkflowType::GeometryOptimization => self
+                .bridge
+                .request_launch_aiida_geopt(&config_json, request_id),
+        };
+
+        if let Err(e) = result {
+            self.workflow_state.set_loading(false);
+            self.workflow_state
+                .set_status(format!("Failed to launch: {}", e), true);
+        } else {
+            info!("Workflow {} launch request sent (id={})", workflow_name, request_id);
+        }
         self.mark_dirty();
     }
 
