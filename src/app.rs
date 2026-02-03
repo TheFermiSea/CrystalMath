@@ -188,6 +188,19 @@ pub struct App<'a> {
     /// Request ID for the current quacc job submission.
     pub submit_request_id: usize,
 
+    // ===== Job Status Polling =====
+    /// Timestamp of last job status poll.
+    last_job_poll: std::time::Instant,
+
+    /// Interval between status polls (default 30 seconds).
+    poll_interval: std::time::Duration,
+
+    /// Pending status requests (job_id -> request_id).
+    pending_status_requests: std::collections::HashMap<String, usize>,
+
+    /// Next request ID for status polls.
+    status_request_counter: usize,
+
     /// Startup animation effect.
     pub startup_effect: Option<Effect>,
 }
@@ -353,6 +366,10 @@ impl<'a> App<'a> {
             vasp_request_id: 0,
             quacc_clusters: Vec::new(),
             submit_request_id: 0,
+            last_job_poll: std::time::Instant::now(),
+            poll_interval: std::time::Duration::from_secs(30),
+            pending_status_requests: std::collections::HashMap::new(),
+            status_request_counter: 0,
             startup_effect: Some(fx::coalesce(1500)),
         })
     }
@@ -1638,6 +1655,53 @@ impl<'a> App<'a> {
                                 self.materials.preview = None;
                             }
                         }
+                    }
+                    // Check if this is a job status poll response
+                    else if let Some(job_id) = self
+                        .pending_status_requests
+                        .iter()
+                        .find(|(_, &rid)| rid == request_id)
+                        .map(|(jid, _)| jid.clone())
+                    {
+                        self.pending_status_requests.remove(&job_id);
+                        match result {
+                            Ok(rpc_response) => {
+                                match rpc_response.into_result() {
+                                    Ok(value) => {
+                                        // Parse the status response
+                                        // Expected format: {"job_id": "123", "status": "running", "error": null}
+                                        if let Some(status_str) = value.get("status").and_then(|v| v.as_str()) {
+                                            let new_state = match status_str {
+                                                "created" => crate::models::JobState::Created,
+                                                "submitted" => crate::models::JobState::Submitted,
+                                                "queued" => crate::models::JobState::Queued,
+                                                "running" => crate::models::JobState::Running,
+                                                "completed" => crate::models::JobState::Completed,
+                                                "failed" => crate::models::JobState::Failed,
+                                                "cancelled" => crate::models::JobState::Cancelled,
+                                                _ => crate::models::JobState::Unknown,
+                                            };
+                                            if let Ok(pk) = job_id.parse::<i32>() {
+                                                if let Some(job) = self.jobs_state.jobs.iter_mut().find(|j| j.pk == pk) {
+                                                    let old_state = job.state;
+                                                    if old_state != new_state {
+                                                        job.state = new_state;
+                                                        self.jobs_state.changed_pks.insert(pk);
+                                                        info!("Job {} status: {:?} -> {:?}", pk, old_state, new_state);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        debug!("JSON-RPC error for job status {}: {}", job_id, e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                debug!("Bridge dispatch failed for job status {}: {}", job_id, e);
+                            }
+                        }
                     } else {
                         // Fallback: log unhandled RPC responses
                         match result {
@@ -1665,6 +1729,86 @@ impl<'a> App<'a> {
                 }
             }
             self.mark_dirty();
+        }
+    }
+
+    /// Poll for job status updates (non-blocking, time-gated).
+    ///
+    /// Sends status requests for active (non-terminal) jobs every 30 seconds.
+    /// This keeps the TUI synchronized with actual job states on the workflow engine.
+    pub fn poll_job_statuses(&mut self) {
+        use crate::bridge::JsonRpcRequest;
+        use crate::models::JobState;
+
+        // Only poll if enough time has passed
+        if self.last_job_poll.elapsed() < self.poll_interval {
+            return;
+        }
+
+        // Get jobs in non-terminal states (active jobs)
+        let active_jobs: Vec<String> = self
+            .jobs_state
+            .jobs
+            .iter()
+            .filter(|j| {
+                matches!(
+                    j.state,
+                    JobState::Created | JobState::Submitted | JobState::Queued | JobState::Running
+                )
+            })
+            .map(|j| j.pk.to_string())
+            .collect();
+
+        if active_jobs.is_empty() {
+            // Reset poll timer even when no active jobs, to avoid immediate poll when a new job starts
+            self.last_job_poll = std::time::Instant::now();
+            return;
+        }
+
+        // Send status request for each active job
+        for job_id in active_jobs {
+            // Skip if we already have a pending request for this job
+            if self.pending_status_requests.contains_key(&job_id) {
+                continue;
+            }
+
+            self.status_request_counter += 1;
+            let request_id = self.status_request_counter;
+
+            // Send JSON-RPC request: jobs.status with {"job_id": job_id}
+            let params = serde_json::json!({"job_id": job_id.clone()});
+            let rpc_request = JsonRpcRequest::new("jobs.status", params, request_id as u64);
+            if let Err(e) = self.bridge.request_rpc(rpc_request, request_id) {
+                warn!("Failed to send status request for job {}: {}", job_id, e);
+                continue;
+            }
+            self.pending_status_requests.insert(job_id.clone(), request_id);
+            debug!("Sent status request for job {} (request_id: {})", job_id, request_id);
+        }
+
+        self.last_job_poll = std::time::Instant::now();
+    }
+
+    /// Update a job from a status poll response.
+    ///
+    /// Called when a jobs.status RPC response is received. Updates the job's
+    /// state and clears the pending request tracker.
+    #[allow(dead_code)]
+    fn update_job_from_status(&mut self, job_id: &str, status: crate::models::JobState) {
+        // Remove from pending requests
+        self.pending_status_requests.remove(job_id);
+
+        // Find and update the job
+        if let Ok(pk) = job_id.parse::<i32>() {
+            if let Some(job) = self.jobs_state.jobs.iter_mut().find(|j| j.pk == pk) {
+                let old_state = job.state;
+                if old_state != status {
+                    job.state = status;
+                    self.jobs_state.changed_pks.insert(pk);
+                    info!("Job {} status: {:?} -> {:?}", pk, old_state, status);
+                    self.mark_dirty();
+                }
+            }
         }
     }
 
@@ -3751,6 +3895,10 @@ mod tests {
             vasp_request_id: 0,
             quacc_clusters: Vec::new(),
             submit_request_id: 0,
+            last_job_poll: std::time::Instant::now(),
+            poll_interval: std::time::Duration::from_secs(30),
+            pending_status_requests: std::collections::HashMap::new(),
+            status_request_counter: 0,
             startup_effect: None, // No effect in tests
         }
     }

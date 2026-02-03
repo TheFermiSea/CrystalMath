@@ -322,6 +322,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
         // Poll Python bridge responses (non-blocking)
         app.poll_bridge_responses();
 
+        // Poll job status updates (time-gated, non-blocking)
+        app.poll_job_statuses();
+
         // Poll LSP events (non-blocking)
         app.poll_lsp_events();
 

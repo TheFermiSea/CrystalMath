@@ -46,12 +46,22 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             // Check if this job changed since last refresh
             let is_changed = app.jobs_state.changed_pks.contains(&job.pk);
 
-            // Status cell with color
+            // Status cell with color and icon
             let status_style = Style::default().fg(job.state.color());
+            let status_icon = match job.state {
+                JobState::Created => "○", // Empty circle
+                JobState::Submitted => "◐", // Half circle
+                JobState::Queued => "⏳", // Hourglass
+                JobState::Running => "▶", // Play
+                JobState::Completed => "✓", // Checkmark
+                JobState::Failed => "✗", // X
+                JobState::Cancelled => "○", // Empty circle
+                JobState::Unknown => "?",
+            };
             let status_text = if is_changed {
-                format!("● {}", job.state.as_str()) // Bullet for changed jobs
+                format!("● {} {}", status_icon, job.state.as_str()) // Extra bullet for changed jobs
             } else {
-                job.state.as_str().to_string()
+                format!("{} {}", status_icon, job.state.as_str())
             };
             let status_cell = Cell::from(status_text).style(status_style);
 
