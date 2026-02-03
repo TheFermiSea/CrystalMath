@@ -1192,15 +1192,43 @@ impl<'a> App<'a> {
                     if Some(request_id) == self.workflow_state.request_id {
                         self.workflow_state.set_loading(false);
                         match result {
-                            Ok(_workflow_json) => {
-                                self.workflow_state
-                                    .set_status("Workflow created successfully".to_string(), false);
-                                // TODO: Parse workflow JSON and show in results or trigger next step
-                                info!("Workflow created successfully");
+                            Ok(workflow_json) => {
+                                // Parse the response to extract useful info
+                                if let Ok(response) = serde_json::from_str::<serde_json::Value>(&workflow_json) {
+                                    // Check if this is an ApiResponse wrapper
+                                    let data = if response.get("ok").is_some() {
+                                        response.get("data").cloned().unwrap_or(response.clone())
+                                    } else {
+                                        response
+                                    };
+
+                                    // Count generated inputs
+                                    let input_count = data.get("inputs")
+                                        .and_then(|i| i.as_array())
+                                        .map(|arr| arr.len())
+                                        .unwrap_or(0);
+
+                                    if input_count > 0 {
+                                        self.workflow_state.set_status(
+                                            format!("Created {} input files. Use Job tab to submit.", input_count),
+                                            false,
+                                        );
+                                        info!("Workflow created with {} inputs", input_count);
+                                    } else {
+                                        self.workflow_state.set_status(
+                                            "Workflow created (no inputs generated - check config)".to_string(),
+                                            false,
+                                        );
+                                    }
+                                } else {
+                                    self.workflow_state
+                                        .set_status("Workflow created".to_string(), false);
+                                    info!("Workflow created (couldn't parse response)");
+                                }
                             }
                             Err(e) => {
                                 self.workflow_state
-                                    .set_status(format!("Failed to create workflow: {}", e), true);
+                                    .set_status(format!("Failed: {}", e), true);
                             }
                         }
                     }
@@ -3619,6 +3647,9 @@ impl<'a> App<'a> {
     ///
     /// This validates that workflows are available, gets the selected workflow type,
     /// and initiates the appropriate workflow creation via the bridge.
+    ///
+    /// NOTE: Full workflow configuration UI is not yet implemented.
+    /// Currently shows what workflow would be created with default parameters.
     pub fn launch_selected_workflow(&mut self) {
         use crate::models::WorkflowType;
 
@@ -3633,70 +3664,105 @@ impl<'a> App<'a> {
         let workflow_type = self.workflow_state.selected_workflow();
         let workflow_name = workflow_type.as_str();
 
-        // Show "launching" status
-        self.workflow_state.set_loading(true);
-        self.workflow_state
-            .set_status(format!("Launching {}...", workflow_name), false);
+        // For now, show info about the workflow since config UI isn't implemented
+        // A full implementation would show a configuration form before creating
+        let info_msg = match workflow_type {
+            WorkflowType::Convergence => {
+                "Convergence: Tests k-point/cutoff convergence. Needs base .d12 input."
+            }
+            WorkflowType::BandStructure => {
+                "Band Structure: Calculates bands along k-path. Needs structure file."
+            }
+            WorkflowType::Phonon => {
+                "Phonon: Finite-displacement phonons. Needs structure + supercell config."
+            }
+            WorkflowType::Eos => {
+                "EOS: Equation of state fitting. Needs structure + strain range."
+            }
+            WorkflowType::GeometryOptimization => {
+                "Geometry Opt: Relaxes structure. Requires AiiDA backend."
+            }
+        };
+
+        // Show workflow info (config UI not yet available)
+        self.workflow_state.set_status(
+            format!("{} - Config UI coming soon!", info_msg),
+            false,
+        );
+        info!("Workflow selected: {} - {}", workflow_name, info_msg);
         self.mark_dirty();
 
-        // Generate a default config for the workflow
-        // (In a full implementation, this would prompt for parameters)
-        let config = match workflow_type {
-            WorkflowType::Convergence => serde_json::json!({
-                "parameter": "shrink",
-                "values": [4, 6, 8, 10, 12],
-                "base_input": ""
-            }),
-            WorkflowType::BandStructure => serde_json::json!({
-                "structure_file": "",
-                "k_path": "auto"
-            }),
-            WorkflowType::Phonon => serde_json::json!({
-                "structure_file": "",
-                "supercell": [2, 2, 2]
-            }),
-            WorkflowType::Eos => serde_json::json!({
-                "structure_file": "",
-                "strains": [-0.06, -0.04, -0.02, 0.0, 0.02, 0.04, 0.06]
-            }),
-            WorkflowType::GeometryOptimization => serde_json::json!({
-                "structure_file": "",
-                "fmax": 0.01
-            }),
-        };
-        let config_json = config.to_string();
+        // Don't actually send request until config UI exists
+        // The code below is ready but needs proper config input
+        return;
 
-        // Get request ID for tracking
-        let request_id = self.next_request_id();
-        self.workflow_state.request_id = Some(request_id);
-
-        // Call the appropriate bridge method
-        let result = match workflow_type {
-            WorkflowType::Convergence => self
-                .bridge
-                .request_create_convergence_study(&config_json, request_id),
-            WorkflowType::BandStructure => self
-                .bridge
-                .request_create_band_structure_workflow(&config_json, request_id),
-            WorkflowType::Phonon => self
-                .bridge
-                .request_create_phonon_workflow(&config_json, request_id),
-            WorkflowType::Eos => self
-                .bridge
-                .request_create_eos_workflow(&config_json, request_id),
-            WorkflowType::GeometryOptimization => self
-                .bridge
-                .request_launch_aiida_geopt(&config_json, request_id),
-        };
-
-        if let Err(e) = result {
-            self.workflow_state.set_loading(false);
+        #[allow(unreachable_code)]
+        {
+            // Show "launching" status
+            self.workflow_state.set_loading(true);
             self.workflow_state
-                .set_status(format!("Failed to launch: {}", e), true);
-        } else {
-            info!("Workflow {} launch request sent (id={})", workflow_name, request_id);
+                .set_status(format!("Launching {}...", workflow_name), false);
+            self.mark_dirty();
+
+            // Generate a default config for the workflow
+            // (In a full implementation, this would prompt for parameters)
+            let config = match workflow_type {
+                WorkflowType::Convergence => serde_json::json!({
+                    "parameter": "shrink",
+                    "values": [4, 6, 8, 10, 12],
+                    "base_input": ""
+                }),
+                WorkflowType::BandStructure => serde_json::json!({
+                    "structure_file": "",
+                    "k_path": "auto"
+                }),
+                WorkflowType::Phonon => serde_json::json!({
+                    "structure_file": "",
+                    "supercell": [2, 2, 2]
+                }),
+                WorkflowType::Eos => serde_json::json!({
+                    "structure_file": "",
+                    "strains": [-0.06, -0.04, -0.02, 0.0, 0.02, 0.04, 0.06]
+                }),
+                WorkflowType::GeometryOptimization => serde_json::json!({
+                    "structure_file": "",
+                    "fmax": 0.01
+                }),
+            };
+            let config_json = config.to_string();
+
+            // Get request ID for tracking
+            let request_id = self.next_request_id();
+            self.workflow_state.request_id = Some(request_id);
+
+            // Call the appropriate bridge method
+            let result = match workflow_type {
+                WorkflowType::Convergence => self
+                    .bridge
+                    .request_create_convergence_study(&config_json, request_id),
+                WorkflowType::BandStructure => self
+                    .bridge
+                    .request_create_band_structure_workflow(&config_json, request_id),
+                WorkflowType::Phonon => self
+                    .bridge
+                    .request_create_phonon_workflow(&config_json, request_id),
+                WorkflowType::Eos => self
+                    .bridge
+                    .request_create_eos_workflow(&config_json, request_id),
+                WorkflowType::GeometryOptimization => self
+                    .bridge
+                    .request_launch_aiida_geopt(&config_json, request_id),
+            };
+
+            if let Err(e) = result {
+                self.workflow_state.set_loading(false);
+                self.workflow_state
+                    .set_status(format!("Failed to launch: {}", e), true);
+            } else {
+                info!("Workflow {} launch request sent (id={})", workflow_name, request_id);
+            }
+            self.mark_dirty();
         }
-        self.mark_dirty();
     }
 
     // ===== Template Browser Modal =====
