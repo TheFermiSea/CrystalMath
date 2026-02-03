@@ -76,6 +76,9 @@ class Cluster:
     username: str
     connection_config: Dict[str, Any]  # JSON: key_file, password, etc.
     status: str  # active, inactive, error
+    cry23_root: Optional[str] = None
+    vasp_root: Optional[str] = None
+    setup_commands: Optional[List[str]] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -123,7 +126,7 @@ class Database:
 
     # Schema version for migrations
     # Note: Must match the highest version after all migrations are applied
-    SCHEMA_VERSION = 7
+    SCHEMA_VERSION = 8
 
     # Base schema (version 1 - Phase 1)
     # Note: CANCELLED added in v4, but included here for new databases
@@ -327,6 +330,21 @@ class Database:
     CREATE INDEX IF NOT EXISTS idx_mpcontribs_project ON mpcontribs_cache (project);
     """
 
+    MIGRATION_V6_TO_V7 = """
+        -- Record version
+        conn.execute(
+            "INSERT INTO schema_version (version) VALUES (?)", (7,)
+        )
+        conn.execute("COMMIT")
+    """
+
+    # Migration to version 8 (Add environment paths to clusters)
+    MIGRATION_V7_TO_V8 = """
+    ALTER TABLE clusters ADD COLUMN cry23_root TEXT;
+    ALTER TABLE clusters ADD COLUMN vasp_root TEXT;
+    ALTER TABLE clusters ADD COLUMN setup_commands TEXT;
+    """
+
     def __init__(self, db_path: Path, pool_size: int = 4):
         """
         Initialize database with connection pooling for concurrent access.
@@ -463,6 +481,9 @@ class Database:
 
         if current_version < 7:
             self._migrate_v6_to_v7(conn)
+
+        if current_version < 8:
+            self._migrate_v7_to_v8(conn)
 
     def _get_schema_version(self, conn: sqlite3.Connection) -> int:
         """Get current schema version."""
@@ -725,6 +746,30 @@ class Database:
             if "duplicate column name" not in str(e).lower():
                 raise
 
+    def _migrate_v7_to_v8(self, conn: sqlite3.Connection) -> None:
+        """Migrate from version 7 to version 8 (add environment paths to clusters)."""
+        try:
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                # Parse and execute each statement individually
+                statements = [
+                    stmt.strip() for stmt in self.MIGRATION_V7_TO_V8.split(';')
+                    if stmt.strip()
+                ]
+                for stmt in statements:
+                    conn.execute(stmt)
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (8,)
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        except sqlite3.OperationalError as e:
+            # Migration may have been partially applied
+            if "duplicate column name" not in str(e).lower():
+                raise
+
     def get_schema_version(self) -> int:
         """Public method to get current schema version."""
         with self.connection() as conn:
@@ -949,19 +994,24 @@ class Database:
         hostname: str,
         username: str,
         port: int = 22,
-        connection_config: Optional[Dict[str, Any]] = None
+        connection_config: Optional[Dict[str, Any]] = None,
+        cry23_root: Optional[str] = None,
+        vasp_root: Optional[str] = None,
+        setup_commands: Optional[List[str]] = None
     ) -> int:
         """Create a new cluster configuration."""
         config_json = json.dumps(connection_config or {})
+        setup_json = json.dumps(setup_commands or [])
 
         with self.connection() as conn:
             with conn:
                 cursor = conn.execute(
                     """
-                    INSERT INTO clusters (name, type, hostname, port, username, connection_config)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO clusters (name, type, hostname, port, username, connection_config,
+                                         cry23_root, vasp_root, setup_commands)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (name, type, hostname, port, username, config_json)
+                    (name, type, hostname, port, username, config_json, cry23_root, vasp_root, setup_json)
                 )
                 cluster_id = cursor.lastrowid
                 if cluster_id is None:
@@ -1018,7 +1068,10 @@ class Database:
         port: Optional[int] = None,
         username: Optional[str] = None,
         connection_config: Optional[Dict[str, Any]] = None,
-        status: Optional[str] = None
+        status: Optional[str] = None,
+        cry23_root: Optional[str] = None,
+        vasp_root: Optional[str] = None,
+        setup_commands: Optional[List[str]] = None
     ) -> None:
         """Update cluster configuration."""
         updates = []
@@ -1042,6 +1095,15 @@ class Database:
         if status is not None:
             updates.append("status = ?")
             params.append(status)
+        if cry23_root is not None:
+            updates.append("cry23_root = ?")
+            params.append(cry23_root)
+        if vasp_root is not None:
+            updates.append("vasp_root = ?")
+            params.append(vasp_root)
+        if setup_commands is not None:
+            updates.append("setup_commands = ?")
+            params.append(json.dumps(setup_commands))
 
         if updates:
             updates.append("updated_at = CURRENT_TIMESTAMP")
@@ -1062,6 +1124,19 @@ class Database:
         """Convert database row to Cluster object."""
         connection_config = json.loads(row["connection_config"])
 
+        setup_commands = None
+        if "setup_commands" in row.keys() and row["setup_commands"]:
+            try:
+                setup_commands = json.loads(row["setup_commands"])
+            except json.JSONDecodeError:
+                setup_commands = []
+
+        def safe_get(col_name, default=None):
+            try:
+                return row[col_name] if col_name in row.keys() else default
+            except IndexError:
+                return default
+
         return Cluster(
             id=row["id"],
             name=row["name"],
@@ -1071,6 +1146,9 @@ class Database:
             username=row["username"],
             connection_config=connection_config,
             status=row["status"],
+            cry23_root=safe_get("cry23_root"),
+            vasp_root=safe_get("vasp_root"),
+            setup_commands=setup_commands,
             created_at=row["created_at"],
             updated_at=row["updated_at"]
         )

@@ -272,6 +272,7 @@ class CrystalController:
             # VASP input generation (Phase 3)
             "vasp.generate_inputs": (self.generate_vasp_inputs_json, ["config_json"]),
             "vasp.generate_from_mp": (self.generate_vasp_from_mp_json, ["mp_id", "config_json"]),
+            "vasp.validate_inputs": (self.validate_vasp_inputs_json, ["inputs_json"]),
             "structures.import_poscar": (self.import_poscar_json, ["poscar_content"]),
             "structures.preview": (self.preview_structure_json, ["source_type", "source_data"]),
         }
@@ -668,6 +669,63 @@ class CrystalController:
         except Exception as e:
             logger.error(f"VASP generation from MP failed: {e}")
             return _error_response("GENERATION_ERROR", str(e))
+
+    def validate_vasp_inputs_json(self, inputs_json: str) -> str:
+        """Validate VASP input files using Pymatgen.
+
+        Args:
+            inputs_json: JSON with keys "poscar", "incar", "kpoints".
+
+        Returns:
+            JSON with validation results:
+            {
+                "valid": bool,
+                "errors": [{"file": "POSCAR", "message": "..."}],
+                "warnings": [{"file": "INCAR", "message": "..."}]
+            }
+        """
+        try:
+            from pymatgen.io.vasp import Incar, Kpoints, Poscar
+
+            inputs = json.loads(inputs_json)
+            errors = []
+            warnings = []
+
+            # POSCAR
+            if "poscar" in inputs and inputs["poscar"].strip():
+                try:
+                    Poscar.from_str(inputs["poscar"])
+                except Exception as e:
+                    errors.append({"file": "POSCAR", "message": str(e)})
+
+            # INCAR
+            if "incar" in inputs and inputs["incar"].strip():
+                try:
+                    # Pymatgen's Incar validation is lenient, mostly checks parsing
+                    Incar.from_string(inputs["incar"])
+                except Exception as e:
+                    errors.append({"file": "INCAR", "message": str(e)})
+
+            # KPOINTS
+            if "kpoints" in inputs and inputs["kpoints"].strip():
+                try:
+                    Kpoints.from_string(inputs["kpoints"])
+                except Exception as e:
+                    errors.append({"file": "KPOINTS", "message": str(e)})
+
+            return _ok_response({
+                "valid": len(errors) == 0,
+                "errors": errors,
+                "warnings": warnings,
+            })
+
+        except json.JSONDecodeError as e:
+            return _error_response("INVALID_JSON", f"Invalid inputs JSON: {e}")
+        except ImportError as e:
+            return _error_response("IMPORT_ERROR", f"pymatgen not available: {e}")
+        except Exception as e:
+            logger.error(f"Validation failed: {e}")
+            return _error_response("VALIDATION_ERROR", str(e))
 
     def import_poscar_json(self, poscar_content: str) -> str:
         """Import POSCAR and return structure info.
@@ -1950,6 +2008,9 @@ class CrystalController:
                         "cluster_type": cluster.type,  # Must match Rust ClusterConfig field name
                         "status": cluster.status,
                         "connection_config": conn_config,
+                        "cry23_root": cluster.cry23_root,
+                        "vasp_root": cluster.vasp_root,
+                        "setup_commands": cluster.setup_commands,
                     }
                 )
 
@@ -1993,6 +2054,9 @@ class CrystalController:
                     "cluster_type": cluster.type,  # Must match Rust ClusterConfig field name
                     "status": cluster.status,
                     "connection_config": conn_config,
+                    "cry23_root": cluster.cry23_root,
+                    "vasp_root": cluster.vasp_root,
+                    "setup_commands": cluster.setup_commands,
                 }
             )
         except Exception as e:
@@ -2000,49 +2064,24 @@ class CrystalController:
             return _error_response("INTERNAL_ERROR", str(e))
 
     def create_cluster_json(self, json_payload: str) -> str:
-        """
-        Create a new cluster configuration.
-
-        Args:
-            json_payload: JSON string with cluster config:
-                {
-                    "name": "my-cluster",
-                    "hostname": "cluster.example.com",
-                    "port": 22,
-                    "username": "user",
-                    "cluster_type": "slurm",  # or "type" for legacy compat
-                    "connection_config": {...}
-                }
-
-        Returns:
-            JSON string with created cluster ID or error
-        """
+        """Create a new cluster from JSON payload."""
         try:
-            if not hasattr(self, "_db") or not self._db:
-                return _error_response("NO_DATABASE", "Database not available")
-
-            data = json.loads(json_payload)
-
-            # Accept both "cluster_type" (Rust) and "type" (legacy) field names
-            cluster_type = data.get("cluster_type") or data.get("type", "ssh")
-
+            config = json.loads(json_payload)
             cluster_id = self._db.create_cluster(
-                name=data["name"],
-                type=cluster_type,
-                hostname=data["hostname"],
-                port=data.get("port", 22),
-                username=data["username"],
-                connection_config=data.get("connection_config", {}),
+                name=config["name"],
+                type=config["cluster_type"],
+                hostname=config["hostname"],
+                port=config.get("port", 22),
+                username=config["username"],
+                connection_config=config.get("connection_config", {}),
+                cry23_root=config.get("cry23_root"),
+                vasp_root=config.get("vasp_root"),
+                setup_commands=config.get("setup_commands", []),
             )
-
-            return _ok_response({"id": cluster_id})
-        except json.JSONDecodeError as e:
-            return _error_response("INVALID_JSON", f"Invalid JSON: {e}")
-        except KeyError as e:
-            return _error_response("MISSING_FIELD", f"Missing required field: {e}")
+            # Return the created cluster
+            return self.get_cluster_json(cluster_id)
         except Exception as e:
-            logger.error(f"Failed to create cluster: {e}")
-            return _error_response("INTERNAL_ERROR", str(e))
+            return _error_response("CREATE_FAILED", str(e))
 
     def update_cluster_json(self, cluster_id: int, json_payload: str) -> str:
         """
@@ -2068,6 +2107,9 @@ class CrystalController:
                 port=data.get("port"),
                 username=data.get("username"),
                 connection_config=data.get("connection_config"),
+                cry23_root=data.get("cry23_root"),
+                vasp_root=data.get("vasp_root"),
+                setup_commands=data.get("setup_commands"),
             )
 
             return _ok_response({"success": True})

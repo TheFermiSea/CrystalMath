@@ -42,6 +42,8 @@ pub enum ClusterFormField {
     RemoteWorkdir,
     QueueName,
     MaxConcurrent,
+    Cry23Root,
+    VaspRoot,
 }
 
 impl ClusterFormField {
@@ -56,14 +58,16 @@ impl ClusterFormField {
             Self::KeyFile => Self::RemoteWorkdir,
             Self::RemoteWorkdir => Self::QueueName,
             Self::QueueName => Self::MaxConcurrent,
-            Self::MaxConcurrent => Self::Name,
+            Self::MaxConcurrent => Self::Cry23Root,
+            Self::Cry23Root => Self::VaspRoot,
+            Self::VaspRoot => Self::Name,
         }
     }
 
     /// Move to the previous field.
     pub fn prev(self) -> Self {
         match self {
-            Self::Name => Self::MaxConcurrent,
+            Self::Name => Self::VaspRoot,
             Self::ClusterType => Self::Name,
             Self::Hostname => Self::ClusterType,
             Self::Port => Self::Hostname,
@@ -72,6 +76,8 @@ impl ClusterFormField {
             Self::RemoteWorkdir => Self::KeyFile,
             Self::QueueName => Self::RemoteWorkdir,
             Self::MaxConcurrent => Self::QueueName,
+            Self::Cry23Root => Self::MaxConcurrent,
+            Self::VaspRoot => Self::Cry23Root,
         }
     }
 }
@@ -119,6 +125,10 @@ pub struct ClusterManagerState {
     pub form_queue_name: String,
     /// Form: max concurrent jobs.
     pub form_max_concurrent: String,
+    /// Form: CRYSTAL23 root path.
+    pub form_cry23_root: String,
+    /// Form: VASP root path.
+    pub form_vasp_root: String,
     /// ID of cluster being edited (None for add mode).
     pub editing_cluster_id: Option<i32>,
 
@@ -175,6 +185,8 @@ impl ClusterManagerState {
         self.form_remote_workdir.clear();
         self.form_queue_name.clear();
         self.form_max_concurrent = "4".to_string();
+        self.form_cry23_root.clear();
+        self.form_vasp_root.clear();
         self.focused_field = ClusterFormField::Name;
         self.editing_cluster_id = None;
     }
@@ -201,6 +213,8 @@ impl ClusterManagerState {
                 self.form_remote_workdir = cluster.remote_workdir.clone().unwrap_or_default();
                 self.form_queue_name = cluster.queue_name.clone().unwrap_or_default();
                 self.form_max_concurrent = cluster.max_concurrent.to_string();
+                self.form_cry23_root = cluster.cry23_root.clone().unwrap_or_default();
+                self.form_vasp_root = cluster.vasp_root.clone().unwrap_or_default();
                 self.focused_field = ClusterFormField::Name;
                 self.error = None;
             }
@@ -293,6 +307,17 @@ impl ClusterManagerState {
                 Some(self.form_queue_name.trim().to_string())
             },
             max_concurrent,
+            cry23_root: if self.form_cry23_root.trim().is_empty() {
+                None
+            } else {
+                Some(self.form_cry23_root.trim().to_string())
+            },
+            vasp_root: if self.form_vasp_root.trim().is_empty() {
+                None
+            } else {
+                Some(self.form_vasp_root.trim().to_string())
+            },
+            setup_commands: Vec::new(), // TODO: Add setup commands UI
             status: crate::models::ClusterStatus::Active,
         })
     }
@@ -578,6 +603,8 @@ fn render_form_view(frame: &mut Frame, app: &App, area: Rect) {
             Constraint::Length(3), // Port + Username (horizontal)
             Constraint::Length(3), // Key File
             Constraint::Length(3), // Remote Workdir
+            Constraint::Length(3), // CRYSTAL23 Root
+            Constraint::Length(3), // VASP Root
             Constraint::Length(3), // Queue Name + Max Concurrent (horizontal)
             Constraint::Min(2),    // Status
             Constraint::Length(3), // Buttons
@@ -641,11 +668,26 @@ fn render_form_view(frame: &mut Frame, app: &App, area: Rect) {
         chunks[5],
     );
 
+    render_text_input(
+        frame,
+        "CRYSTAL23 Root (optional)",
+        &state.form_cry23_root,
+        state.focused_field == ClusterFormField::Cry23Root,
+        chunks[6],
+    );
+    render_text_input(
+        frame,
+        "VASP Root (optional)",
+        &state.form_vasp_root,
+        state.focused_field == ClusterFormField::VaspRoot,
+        chunks[7],
+    );
+
     // Queue Name + Max Concurrent in horizontal layout
     let queue_max_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-        .split(chunks[6]);
+        .split(chunks[8]);
     render_text_input(
         frame,
         "Queue Name (SLURM)",
@@ -673,7 +715,7 @@ fn render_form_view(frame: &mut Frame, app: &App, area: Rect) {
     let status = Paragraph::new(text)
         .style(style)
         .block(Block::default().borders(Borders::ALL).title(" Status "));
-    frame.render_widget(status, chunks[7]);
+    frame.render_widget(status, chunks[9]);
 
     // Buttons
     let buttons = Line::from(vec![
@@ -694,7 +736,7 @@ fn render_form_view(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled("Cancel", Style::default().fg(Color::White)),
     ]);
     let paragraph = Paragraph::new(buttons).alignment(Alignment::Center);
-    frame.render_widget(paragraph, chunks[8]);
+    frame.render_widget(paragraph, chunks[10]);
 }
 
 /// Render a text input field.

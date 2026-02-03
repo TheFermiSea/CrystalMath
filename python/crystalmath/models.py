@@ -304,6 +304,11 @@ class ClusterConfig(BaseModel):
     queue_name: Optional[str] = Field(default=None, description="SLURM queue/partition name")
     max_concurrent: int = Field(default=4, ge=1, description="Max concurrent jobs")
 
+    # Environment configuration
+    cry23_root: Optional[str] = Field(default=None, description="Path to CRYSTAL23 installation")
+    vasp_root: Optional[str] = Field(default=None, description="Path to VASP installation")
+    setup_commands: List[str] = Field(default_factory=list, description="Setup commands (e.g. module load)")
+
     # Status
     status: Literal["active", "inactive", "error"] = Field(default="active")
 

@@ -97,6 +97,12 @@ pub struct VaspInputState {
     /// Status message (success feedback).
     pub status: Option<String>,
 
+    /// Validation results.
+    pub validation: Option<crate::models::ValidationResult>,
+
+    /// Request ID for current validation.
+    pub validation_request_id: usize,
+
     /// Animation effect for open/close.
     pub effect: Option<Effect>,
 }
@@ -132,6 +138,8 @@ impl VaspInputState {
             potcar_config: "Elements: ".to_string(),
             error: None,
             status: None,
+            validation: None,
+            validation_request_id: 0,
             effect: None,
         }
     }
@@ -229,6 +237,7 @@ impl VaspInputState {
     pub fn clear_messages(&mut self) {
         self.error = None;
         self.status = None;
+        self.validation = None;
     }
 
     // ===== Default Templates =====
@@ -418,6 +427,16 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     let (text, style) = if let Some(ref error) = state.error {
         (format!("Error: {}", error), Style::default().fg(Color::Red))
+    } else if let Some(ref val) = state.validation {
+        if val.valid {
+            ("Validation Passed!".to_string(), Style::default().fg(Color::Green))
+        } else {
+            let err_msg = val.errors.iter()
+                .map(|e| format!("{}: {}", e.file, e.message))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            (format!("Validation Failed: {}", err_msg), Style::default().fg(Color::Red))
+        }
     } else if let Some(ref status) = state.status {
         (status.clone(), Style::default().fg(Color::Green))
     } else {
@@ -449,6 +468,14 @@ fn render_footer(frame: &mut Frame, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Switch Files", Style::default().fg(Color::White)),
+        Span::raw("  "),
+        Span::styled(
+            " v ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Validate", Style::default().fg(Color::White)),
         Span::raw("  "),
         Span::styled(
             " Ctrl+S ",

@@ -649,6 +649,12 @@ pub struct ClusterConfig {
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent: i32,
     #[serde(default)]
+    pub cry23_root: Option<String>,
+    #[serde(default)]
+    pub vasp_root: Option<String>,
+    #[serde(default)]
+    pub setup_commands: Vec<String>,
+    #[serde(default)]
     pub status: ClusterStatus,
 }
 
@@ -785,6 +791,23 @@ pub struct StructurePreview {
     /// Symmetry information (may be None if analysis failed)
     #[serde(default)]
     pub symmetry: Option<SymmetryInfo>,
+}
+
+// ==================== Validation Models ====================
+
+/// Single validation message (error or warning).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ValidationMessage {
+    pub file: String,
+    pub message: String,
+}
+
+/// Validation results for input files.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ValidationResult {
+    pub valid: bool,
+    pub errors: Vec<ValidationMessage>,
+    pub warnings: Vec<ValidationMessage>,
 }
 
 // ==================== Materials Project API Models ====================
