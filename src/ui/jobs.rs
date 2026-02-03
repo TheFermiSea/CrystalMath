@@ -25,6 +25,18 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    // Get filtered jobs
+    let filtered_jobs = app.jobs_state.filtered_jobs();
+    let total_jobs = app.jobs_state.jobs.len();
+    let filtered_count = filtered_jobs.len();
+    let has_filter = app.jobs_state.has_active_filter();
+
+    // Handle case where filter matches no jobs
+    if has_filter && filtered_jobs.is_empty() {
+        render_no_filter_matches(frame, app, area);
+        return;
+    }
+
     // Table header
     let header = Row::new(vec![
         Cell::from("ID").style(Style::default().fg(Color::Yellow)),
@@ -37,10 +49,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     .height(1)
     .bottom_margin(1);
 
-    // Table rows with changed job highlighting
-    let rows: Vec<Row> = app
-        .jobs_state
-        .jobs
+    // Table rows with changed job highlighting (use filtered jobs)
+    let rows: Vec<Row> = filtered_jobs
         .iter()
         .map(|job| {
             // Check if this job changed since last refresh
@@ -124,7 +134,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(8),  // Code
     ];
 
-    // Build title with refresh timestamp and job counts
+    // Build title with refresh timestamp, job counts, and filter status
     let (running, failed, completed) = count_job_states(&app.jobs_state.jobs);
     let refresh_info = app
         .jobs_state
@@ -132,13 +142,32 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .map(|t| format_elapsed(t.elapsed()))
         .unwrap_or_else(|| "never".to_string());
 
-    let title = format!(
-        " Jobs │ {} {} {} │ {} ",
-        format_status_count(running, "▶", Color::Green),
-        format_status_count(failed, "✗", Color::Red),
-        format_status_count(completed, "✓", Color::Blue),
-        refresh_info
-    );
+    // Build title - show filter info if active
+    let title = if has_filter {
+        let filter_info = app.jobs_state.filter_display().unwrap_or_default();
+        format!(
+            " Jobs │ {}/{} │ [{}] │ {} ",
+            filtered_count,
+            total_jobs,
+            filter_info,
+            refresh_info
+        )
+    } else {
+        format!(
+            " Jobs │ {} {} {} │ {} ",
+            format_status_count(running, "▶", Color::Green),
+            format_status_count(failed, "✗", Color::Red),
+            format_status_count(completed, "✓", Color::Blue),
+            refresh_info
+        )
+    };
+
+    // Title style - yellow when filtered to indicate active filter
+    let title_style = if has_filter {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Cyan)
+    };
 
     let table = Table::new(rows, widths)
         .header(header)
@@ -146,7 +175,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .title_style(Style::default().fg(Color::Cyan)),
+                .title_style(title_style),
         )
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
@@ -186,6 +215,60 @@ fn format_status_count(count: usize, icon: &str, _color: Color) -> String {
     } else {
         format!("{}-", icon)
     }
+}
+
+/// Render message when no jobs match the current filter.
+fn render_no_filter_matches(frame: &mut Frame, app: &App, area: Rect) {
+    let yellow_bold = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let cyan = Style::default().fg(Color::Cyan);
+    let gray = Style::default().fg(Color::DarkGray);
+
+    let filter_info = app.jobs_state.filter_display().unwrap_or_else(|| "Active".to_string());
+    let total_jobs = app.jobs_state.jobs.len();
+
+    let message = vec![
+        Line::from(""),
+        Line::from(Span::styled("No jobs match current filter", yellow_bold)),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Filter: ", gray),
+            Span::styled(&filter_info, cyan),
+        ]),
+        Line::from(vec![
+            Span::styled("Total jobs: ", gray),
+            Span::styled(format!("{}", total_jobs), cyan),
+        ]),
+        Line::from(""),
+        Line::from("Keybindings:"),
+        Line::from(vec![
+            Span::styled("  f ", cyan),
+            Span::raw("Cycle status filter (Running → Completed → Failed → Queued)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  F ", cyan),
+            Span::raw("Cycle code filter (Crystal → VASP → QE)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  x ", cyan),
+            Span::raw("Clear all filters"),
+        ]),
+    ];
+
+    let title = format!(" Jobs │ 0/{} │ [{}] ", total_jobs, filter_info);
+
+    let paragraph = Paragraph::new(message)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_style(Style::default().fg(Color::Yellow)),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(paragraph, area);
 }
 
 /// Render helpful message when job list is empty.
