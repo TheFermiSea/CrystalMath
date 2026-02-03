@@ -873,15 +873,19 @@ pub enum WorkflowConfigField {
     BandPathPreset,
     BandCustomPath,
     // Phonon
+    PhononSourceJob,
     PhononSupercellA,
     PhononSupercellB,
     PhononSupercellC,
     PhononDisplacement,
     // EOS
+    EosSourceJob,
     EosStrainMin,
     EosStrainMax,
     EosStrainSteps,
     // Geometry Optimization
+    GeomStructurePk,
+    GeomCodeLabel,
     GeomFmax,
     GeomMaxSteps,
     // Buttons
@@ -1024,6 +1028,7 @@ pub struct BandStructureConfigState {
 /// Phonon workflow config state.
 #[derive(Debug, Default)]
 pub struct PhononConfigState {
+    pub source_job_pk: String,
     pub supercell_a: String,
     pub supercell_b: String,
     pub supercell_c: String,
@@ -1033,6 +1038,7 @@ pub struct PhononConfigState {
 /// Equation of state workflow config state.
 #[derive(Debug, Default)]
 pub struct EosConfigState {
+    pub source_job_pk: String,
     pub strain_min: String,
     pub strain_max: String,
     pub strain_steps: String,
@@ -1041,6 +1047,8 @@ pub struct EosConfigState {
 /// Geometry optimization workflow config state.
 #[derive(Debug, Default)]
 pub struct GeometryOptConfigState {
+    pub structure_pk: String,
+    pub code_label: String,
     pub fmax: String,
     pub max_steps: String,
 }
@@ -1162,28 +1170,32 @@ impl WorkflowConfigState {
                 _ => WorkflowConfigField::BandSourceJob,
             },
             WorkflowType::Phonon => match current {
+                WorkflowConfigField::PhononSourceJob => WorkflowConfigField::PhononSupercellA,
                 WorkflowConfigField::PhononSupercellA => WorkflowConfigField::PhononSupercellB,
                 WorkflowConfigField::PhononSupercellB => WorkflowConfigField::PhononSupercellC,
                 WorkflowConfigField::PhononSupercellC => WorkflowConfigField::PhononDisplacement,
                 WorkflowConfigField::PhononDisplacement => WorkflowConfigField::BtnLaunch,
                 WorkflowConfigField::BtnLaunch => WorkflowConfigField::BtnCancel,
-                WorkflowConfigField::BtnCancel => WorkflowConfigField::PhononSupercellA,
-                _ => WorkflowConfigField::PhononSupercellA,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::PhononSourceJob,
+                _ => WorkflowConfigField::PhononSourceJob,
             },
             WorkflowType::Eos => match current {
+                WorkflowConfigField::EosSourceJob => WorkflowConfigField::EosStrainMin,
                 WorkflowConfigField::EosStrainMin => WorkflowConfigField::EosStrainMax,
                 WorkflowConfigField::EosStrainMax => WorkflowConfigField::EosStrainSteps,
                 WorkflowConfigField::EosStrainSteps => WorkflowConfigField::BtnLaunch,
                 WorkflowConfigField::BtnLaunch => WorkflowConfigField::BtnCancel,
-                WorkflowConfigField::BtnCancel => WorkflowConfigField::EosStrainMin,
-                _ => WorkflowConfigField::EosStrainMin,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::EosSourceJob,
+                _ => WorkflowConfigField::EosSourceJob,
             },
             WorkflowType::GeometryOptimization => match current {
+                WorkflowConfigField::GeomStructurePk => WorkflowConfigField::GeomCodeLabel,
+                WorkflowConfigField::GeomCodeLabel => WorkflowConfigField::GeomFmax,
                 WorkflowConfigField::GeomFmax => WorkflowConfigField::GeomMaxSteps,
                 WorkflowConfigField::GeomMaxSteps => WorkflowConfigField::BtnLaunch,
                 WorkflowConfigField::BtnLaunch => WorkflowConfigField::BtnCancel,
-                WorkflowConfigField::BtnCancel => WorkflowConfigField::GeomFmax,
-                _ => WorkflowConfigField::GeomFmax,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::GeomStructurePk,
+                _ => WorkflowConfigField::GeomStructurePk,
             },
         }
     }
@@ -1207,28 +1219,32 @@ impl WorkflowConfigState {
                 _ => WorkflowConfigField::BandSourceJob,
             },
             WorkflowType::Phonon => match current {
-                WorkflowConfigField::PhononSupercellA => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::PhononSourceJob => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::PhononSupercellA => WorkflowConfigField::PhononSourceJob,
                 WorkflowConfigField::PhononSupercellB => WorkflowConfigField::PhononSupercellA,
                 WorkflowConfigField::PhononSupercellC => WorkflowConfigField::PhononSupercellB,
                 WorkflowConfigField::PhononDisplacement => WorkflowConfigField::PhononSupercellC,
                 WorkflowConfigField::BtnLaunch => WorkflowConfigField::PhononDisplacement,
                 WorkflowConfigField::BtnCancel => WorkflowConfigField::BtnLaunch,
-                _ => WorkflowConfigField::PhononSupercellA,
+                _ => WorkflowConfigField::PhononSourceJob,
             },
             WorkflowType::Eos => match current {
-                WorkflowConfigField::EosStrainMin => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::EosSourceJob => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::EosStrainMin => WorkflowConfigField::EosSourceJob,
                 WorkflowConfigField::EosStrainMax => WorkflowConfigField::EosStrainMin,
                 WorkflowConfigField::EosStrainSteps => WorkflowConfigField::EosStrainMax,
                 WorkflowConfigField::BtnLaunch => WorkflowConfigField::EosStrainSteps,
                 WorkflowConfigField::BtnCancel => WorkflowConfigField::BtnLaunch,
-                _ => WorkflowConfigField::EosStrainMin,
+                _ => WorkflowConfigField::EosSourceJob,
             },
             WorkflowType::GeometryOptimization => match current {
-                WorkflowConfigField::GeomFmax => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::GeomStructurePk => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::GeomCodeLabel => WorkflowConfigField::GeomStructurePk,
+                WorkflowConfigField::GeomFmax => WorkflowConfigField::GeomCodeLabel,
                 WorkflowConfigField::GeomMaxSteps => WorkflowConfigField::GeomFmax,
                 WorkflowConfigField::BtnLaunch => WorkflowConfigField::GeomMaxSteps,
                 WorkflowConfigField::BtnCancel => WorkflowConfigField::BtnLaunch,
-                _ => WorkflowConfigField::GeomFmax,
+                _ => WorkflowConfigField::GeomStructurePk,
             },
         }
     }
@@ -1237,9 +1253,9 @@ impl WorkflowConfigState {
         match workflow_type {
             WorkflowType::Convergence => WorkflowConfigField::ConvergenceParameter,
             WorkflowType::BandStructure => WorkflowConfigField::BandSourceJob,
-            WorkflowType::Phonon => WorkflowConfigField::PhononSupercellA,
-            WorkflowType::Eos => WorkflowConfigField::EosStrainMin,
-            WorkflowType::GeometryOptimization => WorkflowConfigField::GeomFmax,
+            WorkflowType::Phonon => WorkflowConfigField::PhononSourceJob,
+            WorkflowType::Eos => WorkflowConfigField::EosSourceJob,
+            WorkflowType::GeometryOptimization => WorkflowConfigField::GeomStructurePk,
         }
     }
 }

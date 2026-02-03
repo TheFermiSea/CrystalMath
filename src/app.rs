@@ -3675,6 +3675,7 @@ impl<'a> App<'a> {
     ///
     pub fn launch_selected_workflow(&mut self) {
         use crate::models::WorkflowType;
+        use crate::state::BandPathPreset;
 
         if !self.workflow_config.active {
             self.workflow_state.set_status(
@@ -3695,52 +3696,311 @@ impl<'a> App<'a> {
         let workflow_type = self.workflow_config.workflow_type;
         let workflow_name = workflow_type.as_str();
 
-        if workflow_type != WorkflowType::Convergence {
-            self.workflow_config.error = Some(
-                "Only Convergence workflow is supported in the config UI yet.".to_string(),
-            );
-            self.mark_dirty();
-            return;
-        }
-
-        let base_input = self.workflow_config.convergence.base_input.lines().join("\n");
-        if base_input.trim().is_empty() {
-            self.workflow_config
-                .error = Some("Base input (.d12) is required".to_string());
-            self.mark_dirty();
-            return;
-        }
-
-        let values_raw = self.workflow_config.convergence.values.clone();
-        let values: Vec<f64> = values_raw
-            .split(',')
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-            .map(|v| v.parse::<f64>())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| "Values must be a comma-separated list of numbers")
-            .unwrap_or_else(|err| {
-                self.workflow_config.error = Some(err.to_string());
-                Vec::new()
-            });
-
-        if values.is_empty() {
-            if self.workflow_config.error.is_none() {
-                self.workflow_config
-                    .error = Some("Values cannot be empty".to_string());
+        let parse_i32 = |label: &str, value: &str| -> Result<i32, String> {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(format!("{} is required", label));
             }
-            self.mark_dirty();
-            return;
-        }
+            let parsed = trimmed
+                .parse::<i32>()
+                .map_err(|_| format!("{} must be an integer", label))?;
+            if parsed <= 0 {
+                return Err(format!("{} must be > 0", label));
+            }
+            Ok(parsed)
+        };
 
-        let config = serde_json::json!({
-            "parameter": self.workflow_config.convergence.parameter.as_str(),
-            "values": values,
-            "base_input": base_input,
-            "dft_code": "crystal",
-            "name_prefix": "conv",
-        });
-        let config_json = config.to_string();
+        let parse_f64 = |label: &str, value: &str| -> Result<f64, String> {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(format!("{} is required", label));
+            }
+            trimmed
+                .parse::<f64>()
+                .map_err(|_| format!("{} must be a number", label))
+        };
+
+        let parse_positive_f64 = |label: &str, value: &str| -> Result<f64, String> {
+            let parsed = parse_f64(label, value)?;
+            if parsed <= 0.0 {
+                return Err(format!("{} must be > 0", label));
+            }
+            Ok(parsed)
+        };
+
+        let config_json = match workflow_type {
+            WorkflowType::Convergence => {
+                let base_input = self.workflow_config.convergence.base_input.lines().join("\n");
+                if base_input.trim().is_empty() {
+                    self.workflow_config
+                        .error = Some("Base input (.d12) is required".to_string());
+                    self.mark_dirty();
+                    return;
+                }
+
+                let values_raw = self.workflow_config.convergence.values.clone();
+                let values: Vec<f64> = values_raw
+                    .split(',')
+                    .map(|v| v.trim())
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.parse::<f64>())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| "Values must be a comma-separated list of numbers")
+                    .unwrap_or_else(|err| {
+                        self.workflow_config.error = Some(err.to_string());
+                        Vec::new()
+                    });
+
+                if values.is_empty() {
+                    if self.workflow_config.error.is_none() {
+                        self.workflow_config
+                            .error = Some("Values cannot be empty".to_string());
+                    }
+                    self.mark_dirty();
+                    return;
+                }
+
+                serde_json::json!({
+                    "parameter": self.workflow_config.convergence.parameter.as_str(),
+                    "values": values,
+                    "base_input": base_input,
+                    "dft_code": "crystal",
+                    "name_prefix": "conv",
+                })
+                .to_string()
+            }
+            WorkflowType::BandStructure => {
+                let source_job_pk = match parse_i32(
+                    "Source job PK",
+                    &self.workflow_config.band_structure.source_job_pk,
+                ) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+
+                let (path_type, crystal_system, explicit_path) =
+                    match self.workflow_config.band_structure.path_preset {
+                        BandPathPreset::Auto => ("auto", None, None),
+                        BandPathPreset::Custom => {
+                            let path = self.workflow_config.band_structure.custom_path.trim();
+                            if path.is_empty() {
+                                self.workflow_config.error =
+                                    Some("Custom path is required".to_string());
+                                self.mark_dirty();
+                                return;
+                            }
+                            ("explicit", None, Some(path.to_string()))
+                        }
+                        preset => ("crystal_system", Some(preset.as_str()), None),
+                    };
+
+                let mut config = serde_json::json!({
+                    "source_job_pk": source_job_pk,
+                    "path_type": path_type,
+                });
+
+                if let Some(system) = crystal_system {
+                    config["crystal_system"] = serde_json::json!(system);
+                }
+                if let Some(path) = explicit_path {
+                    config["explicit_path"] = serde_json::json!(path);
+                }
+
+                config.to_string()
+            }
+            WorkflowType::Phonon => {
+                let source_job_pk =
+                    match parse_i32("Source job PK", &self.workflow_config.phonon.source_job_pk) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            self.workflow_config.error = Some(err);
+                            self.mark_dirty();
+                            return;
+                        }
+                    };
+
+                let supercell_a = match parse_i32(
+                    "Supercell A",
+                    &self.workflow_config.phonon.supercell_a,
+                ) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+                let supercell_b = match parse_i32(
+                    "Supercell B",
+                    &self.workflow_config.phonon.supercell_b,
+                ) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+                let supercell_c = match parse_i32(
+                    "Supercell C",
+                    &self.workflow_config.phonon.supercell_c,
+                ) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+
+                let displacement = match parse_positive_f64(
+                    "Displacement",
+                    &self.workflow_config.phonon.displacement,
+                ) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+
+                serde_json::json!({
+                    "source_job_pk": source_job_pk,
+                    "supercell_dim": [supercell_a, supercell_b, supercell_c],
+                    "displacement_distance": displacement,
+                    "dft_code": "crystal",
+                })
+                .to_string()
+            }
+            WorkflowType::Eos => {
+                let source_job_pk =
+                    match parse_i32("Source job PK", &self.workflow_config.eos.source_job_pk) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            self.workflow_config.error = Some(err);
+                            self.mark_dirty();
+                            return;
+                        }
+                    };
+
+                let strain_min = match parse_f64("Strain min", &self.workflow_config.eos.strain_min)
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+                let strain_max = match parse_f64("Strain max", &self.workflow_config.eos.strain_max)
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+                if strain_min >= strain_max {
+                    self.workflow_config
+                        .error = Some("Strain min must be less than strain max".to_string());
+                    self.mark_dirty();
+                    return;
+                }
+
+                let min_scale = 1.0 + strain_min;
+                let max_scale = 1.0 + strain_max;
+                if min_scale <= 0.0 || max_scale <= 0.0 {
+                    self.workflow_config.error =
+                        Some("Strain values must keep volume scale > 0".to_string());
+                    self.mark_dirty();
+                    return;
+                }
+
+                let steps = match parse_i32("Steps", &self.workflow_config.eos.strain_steps) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+                if steps <= 1 {
+                    self.workflow_config
+                        .error = Some("Steps must be > 1".to_string());
+                    self.mark_dirty();
+                    return;
+                }
+
+                serde_json::json!({
+                    "source_job_pk": source_job_pk,
+                    "volume_range": [min_scale, max_scale],
+                    "num_points": steps,
+                    "dft_code": "crystal",
+                    "name_prefix": "eos",
+                })
+                .to_string()
+            }
+            WorkflowType::GeometryOptimization => {
+                if !self.workflow_state.aiida_available {
+                    self.workflow_config
+                        .error = Some("AiiDA is required for geometry optimization".to_string());
+                    self.mark_dirty();
+                    return;
+                }
+
+                let structure_pk = match parse_i32(
+                    "Structure PK",
+                    &self.workflow_config.geometry_opt.structure_pk,
+                ) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+
+                let code_label = self.workflow_config.geometry_opt.code_label.trim();
+                if code_label.is_empty() {
+                    self.workflow_config
+                        .error = Some("Code label is required".to_string());
+                    self.mark_dirty();
+                    return;
+                }
+
+                let fmax = match parse_positive_f64("Fmax threshold", &self.workflow_config.geometry_opt.fmax) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+
+                let max_steps = match parse_i32("Max iterations", &self.workflow_config.geometry_opt.max_steps) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.workflow_config.error = Some(err);
+                        self.mark_dirty();
+                        return;
+                    }
+                };
+
+                serde_json::json!({
+                    "structure_pk": structure_pk,
+                    "code_label": code_label,
+                    "force_threshold": fmax,
+                    "max_iterations": max_steps,
+                })
+                .to_string()
+            }
+        };
 
         let request_id = self.next_request_id();
         self.workflow_state.request_id = Some(request_id);
@@ -3753,9 +4013,23 @@ impl<'a> App<'a> {
         self.workflow_config.submitting = true;
         self.workflow_config.request_id = request_id;
 
-        let result = self
-            .bridge
-            .request_create_convergence_study(&config_json, request_id);
+        let result = match workflow_type {
+            WorkflowType::Convergence => self
+                .bridge
+                .request_create_convergence_study(&config_json, request_id),
+            WorkflowType::BandStructure => self
+                .bridge
+                .request_create_band_structure_workflow(&config_json, request_id),
+            WorkflowType::Phonon => self
+                .bridge
+                .request_create_phonon_workflow(&config_json, request_id),
+            WorkflowType::Eos => self
+                .bridge
+                .request_create_eos_workflow(&config_json, request_id),
+            WorkflowType::GeometryOptimization => self
+                .bridge
+                .request_launch_aiida_geopt(&config_json, request_id),
+        };
 
         if let Err(e) = result {
             self.workflow_state.set_loading(false);

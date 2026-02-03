@@ -146,12 +146,21 @@ fn render_phonon(frame: &mut Frame, state: &WorkflowConfigState, area: Rect) {
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
+            Constraint::Length(3), // source job
             Constraint::Length(3), // supercell
             Constraint::Length(3), // displacement
             Constraint::Length(3), // status
             Constraint::Length(3), // buttons
         ])
         .split(area);
+
+    render_text_input(
+        frame,
+        "Source Job PK",
+        &state.phonon.source_job_pk,
+        state.focused_field == WorkflowConfigField::PhononSourceJob,
+        chunks[0],
+    );
 
     let supercell_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -160,7 +169,7 @@ fn render_phonon(frame: &mut Frame, state: &WorkflowConfigState, area: Rect) {
             Constraint::Percentage(33),
             Constraint::Percentage(34),
         ])
-        .split(chunks[0]);
+        .split(chunks[1]);
 
     render_text_input(
         frame,
@@ -189,11 +198,11 @@ fn render_phonon(frame: &mut Frame, state: &WorkflowConfigState, area: Rect) {
         "Displacement (Angstrom)",
         &state.phonon.displacement,
         state.focused_field == WorkflowConfigField::PhononDisplacement,
-        chunks[1],
+        chunks[2],
     );
 
-    render_status(frame, state, chunks[2]);
-    render_buttons(frame, state.focused_field, chunks[3]);
+    render_status(frame, state, chunks[3]);
+    render_buttons(frame, state.focused_field, chunks[4]);
 }
 
 fn render_eos(frame: &mut Frame, state: &WorkflowConfigState, area: Rect) {
@@ -201,6 +210,7 @@ fn render_eos(frame: &mut Frame, state: &WorkflowConfigState, area: Rect) {
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
+            Constraint::Length(3), // source job
             Constraint::Length(3), // strain min/max
             Constraint::Length(3), // steps
             Constraint::Length(3), // status
@@ -208,10 +218,18 @@ fn render_eos(frame: &mut Frame, state: &WorkflowConfigState, area: Rect) {
         ])
         .split(area);
 
+    render_text_input(
+        frame,
+        "Source Job PK",
+        &state.eos.source_job_pk,
+        state.focused_field == WorkflowConfigField::EosSourceJob,
+        chunks[0],
+    );
+
     let strain_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[0]);
+        .split(chunks[1]);
 
     render_text_input(
         frame,
@@ -233,11 +251,11 @@ fn render_eos(frame: &mut Frame, state: &WorkflowConfigState, area: Rect) {
         "Steps",
         &state.eos.strain_steps,
         state.focused_field == WorkflowConfigField::EosStrainSteps,
-        chunks[1],
+        chunks[2],
     );
 
-    render_status(frame, state, chunks[2]);
-    render_buttons(frame, state.focused_field, chunks[3]);
+    render_status(frame, state, chunks[3]);
+    render_buttons(frame, state.focused_field, chunks[4]);
 }
 
 fn render_geometry_opt(frame: &mut Frame, state: &WorkflowConfigState, area: Rect) {
@@ -245,6 +263,8 @@ fn render_geometry_opt(frame: &mut Frame, state: &WorkflowConfigState, area: Rec
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
+            Constraint::Length(3), // structure pk
+            Constraint::Length(3), // code label
             Constraint::Length(3), // fmax
             Constraint::Length(3), // max steps
             Constraint::Length(3), // status
@@ -254,10 +274,26 @@ fn render_geometry_opt(frame: &mut Frame, state: &WorkflowConfigState, area: Rec
 
     render_text_input(
         frame,
+        "Structure PK",
+        &state.geometry_opt.structure_pk,
+        state.focused_field == WorkflowConfigField::GeomStructurePk,
+        chunks[0],
+    );
+
+    render_text_input(
+        frame,
+        "Code Label",
+        &state.geometry_opt.code_label,
+        state.focused_field == WorkflowConfigField::GeomCodeLabel,
+        chunks[1],
+    );
+
+    render_text_input(
+        frame,
         "Fmax Threshold",
         &state.geometry_opt.fmax,
         state.focused_field == WorkflowConfigField::GeomFmax,
-        chunks[0],
+        chunks[2],
     );
 
     render_text_input(
@@ -265,11 +301,11 @@ fn render_geometry_opt(frame: &mut Frame, state: &WorkflowConfigState, area: Rec
         "Max Iterations",
         &state.geometry_opt.max_steps,
         state.focused_field == WorkflowConfigField::GeomMaxSteps,
-        chunks[1],
+        chunks[3],
     );
 
-    render_status(frame, state, chunks[2]);
-    render_buttons(frame, state.focused_field, chunks[3]);
+    render_status(frame, state, chunks[4]);
+    render_buttons(frame, state.focused_field, chunks[5]);
 }
 
 fn render_text_input(frame: &mut Frame, label: &str, value: &str, focused: bool, area: Rect) {

@@ -1465,6 +1465,9 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
                 WorkflowConfigField::BandCustomPath => {
                     app.workflow_config.band_structure.custom_path.pop();
                 }
+                WorkflowConfigField::PhononSourceJob => {
+                    app.workflow_config.phonon.source_job_pk.pop();
+                }
                 WorkflowConfigField::PhononSupercellA => {
                     app.workflow_config.phonon.supercell_a.pop();
                 }
@@ -1477,6 +1480,9 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
                 WorkflowConfigField::PhononDisplacement => {
                     app.workflow_config.phonon.displacement.pop();
                 }
+                WorkflowConfigField::EosSourceJob => {
+                    app.workflow_config.eos.source_job_pk.pop();
+                }
                 WorkflowConfigField::EosStrainMin => {
                     app.workflow_config.eos.strain_min.pop();
                 }
@@ -1485,6 +1491,12 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
                 }
                 WorkflowConfigField::EosStrainSteps => {
                     app.workflow_config.eos.strain_steps.pop();
+                }
+                WorkflowConfigField::GeomStructurePk => {
+                    app.workflow_config.geometry_opt.structure_pk.pop();
+                }
+                WorkflowConfigField::GeomCodeLabel => {
+                    app.workflow_config.geometry_opt.code_label.pop();
                 }
                 WorkflowConfigField::GeomFmax => {
                     app.workflow_config.geometry_opt.fmax.pop();
@@ -1549,6 +1561,11 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
                         app.workflow_config.band_structure.custom_path.push(c);
                     }
                 }
+                WorkflowConfigField::PhononSourceJob => {
+                    if c.is_ascii_digit() {
+                        app.workflow_config.phonon.source_job_pk.push(c);
+                    }
+                }
                 WorkflowConfigField::PhononSupercellA => {
                     if c.is_ascii_digit() {
                         app.workflow_config.phonon.supercell_a.push(c);
@@ -1569,6 +1586,11 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
                         app.workflow_config.phonon.displacement.push(c);
                     }
                 }
+                WorkflowConfigField::EosSourceJob => {
+                    if c.is_ascii_digit() {
+                        app.workflow_config.eos.source_job_pk.push(c);
+                    }
+                }
                 WorkflowConfigField::EosStrainMin => {
                     if allow_float(c) {
                         app.workflow_config.eos.strain_min.push(c);
@@ -1582,6 +1604,16 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
                 WorkflowConfigField::EosStrainSteps => {
                     if c.is_ascii_digit() {
                         app.workflow_config.eos.strain_steps.push(c);
+                    }
+                }
+                WorkflowConfigField::GeomStructurePk => {
+                    if c.is_ascii_digit() {
+                        app.workflow_config.geometry_opt.structure_pk.push(c);
+                    }
+                }
+                WorkflowConfigField::GeomCodeLabel => {
+                    if !c.is_control() {
+                        app.workflow_config.geometry_opt.code_label.push(c);
                     }
                 }
                 WorkflowConfigField::GeomFmax => {
