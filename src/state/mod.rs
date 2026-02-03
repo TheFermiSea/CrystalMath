@@ -1307,6 +1307,104 @@ pub struct JobsState {
     pub diff_scroll: usize,
 }
 
+// =============================================================================
+// Workflow Dashboard State
+// =============================================================================
+
+/// Aggregate status for a workflow run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+}
+
+impl WorkflowStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "Pending",
+            Self::Running => "Running",
+            Self::Completed => "Completed",
+            Self::Failed => "Failed",
+        }
+    }
+}
+
+/// Aggregated workflow summary (derived from child jobs).
+#[derive(Debug, Clone)]
+pub struct WorkflowSummary {
+    pub workflow_id: String,
+    pub status: WorkflowStatus,
+    pub total_jobs: usize,
+    pub completed_jobs: usize,
+    pub failed_jobs: usize,
+    pub running_jobs: usize,
+    pub pending_jobs: usize,
+}
+
+/// Which pane is focused in the workflow dashboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorkflowDashboardFocus {
+    #[default]
+    Workflows,
+    Jobs,
+}
+
+/// Workflow dashboard state for grouped workflow/job view.
+#[derive(Debug, Default)]
+pub struct WorkflowListState {
+    /// Whether the workflow dashboard view is active.
+    pub active: bool,
+    /// Aggregated workflow summaries.
+    pub workflows: Vec<WorkflowSummary>,
+    /// Selected workflow index.
+    pub selected_workflow: Option<usize>,
+    /// Selected job index within the selected workflow.
+    pub selected_job: Option<usize>,
+    /// Which pane is focused (workflow list vs job list).
+    pub focus: WorkflowDashboardFocus,
+    /// Last status/error message for dashboard actions.
+    pub status: Option<String>,
+    /// Whether status is an error.
+    pub status_is_error: bool,
+}
+
+impl WorkflowListState {
+    pub fn clear_status(&mut self) {
+        self.status = None;
+        self.status_is_error = false;
+    }
+
+    pub fn set_status(&mut self, msg: impl Into<String>, is_error: bool) {
+        self.status = Some(msg.into());
+        self.status_is_error = is_error;
+    }
+
+    pub fn toggle_active(&mut self) {
+        self.active = !self.active;
+        if !self.active {
+            self.selected_workflow = None;
+            self.selected_job = None;
+            self.focus = WorkflowDashboardFocus::Workflows;
+            self.clear_status();
+        }
+    }
+
+    pub fn set_active(&mut self, active: bool) {
+        if self.active == active {
+            return;
+        }
+        self.active = active;
+        if !self.active {
+            self.selected_workflow = None;
+            self.selected_job = None;
+            self.focus = WorkflowDashboardFocus::Workflows;
+            self.clear_status();
+        }
+    }
+}
+
 #[allow(dead_code)] // Methods for incremental migration
 impl JobsState {
     /// Get the currently selected job.

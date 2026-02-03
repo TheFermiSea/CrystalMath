@@ -469,6 +469,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             handle_batch_submission_input(app, key);
                         }
                     } else {
+                        if app.current_tab == app::AppTab::Jobs && app.workflow_list.active {
+                            if handle_workflow_dashboard_input(app, key) {
+                                continue;
+                            }
+                        }
                         // Global key handlers
                         match (key.code, key.modifiers) {
                             // Quit: Ctrl+Q or Ctrl+C
@@ -535,6 +540,13 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             (KeyCode::Char('w'), KeyModifiers::NONE) => {
                                 if app.current_tab == app::AppTab::Jobs {
                                     app.open_workflow_modal();
+                                }
+                            }
+
+                            // Toggle Workflow Dashboard (Shift+W from Jobs tab)
+                            (KeyCode::Char('W'), KeyModifiers::SHIFT) => {
+                                if app.current_tab == app::AppTab::Jobs {
+                                    app.toggle_workflow_dashboard();
                                 }
                             }
 
@@ -712,6 +724,9 @@ fn handle_materials_modal_input(app: &mut App, key: event::KeyEvent) {
 fn handle_tab_input(app: &mut App, key: event::KeyEvent) {
     match app.current_tab {
         app::AppTab::Jobs => {
+            if app.workflow_list.active {
+                return;
+            }
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => app.select_prev_job(),
                 KeyCode::Down | KeyCode::Char('j') => app.select_next_job(),
@@ -781,6 +796,59 @@ fn handle_tab_input(app: &mut App, key: event::KeyEvent) {
             }
             _ => {}
         },
+    }
+}
+
+/// Handle input for the workflow dashboard (Jobs tab grouped view).
+/// Returns true if the key was consumed.
+fn handle_workflow_dashboard_input(app: &mut App, key: event::KeyEvent) -> bool {
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc, _) => {
+            app.workflow_list.set_active(false);
+            app.mark_dirty();
+            true
+        }
+        (KeyCode::Tab, KeyModifiers::NONE) | (KeyCode::BackTab, KeyModifiers::SHIFT) => {
+            app.toggle_workflow_focus();
+            true
+        }
+        (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+            if app.workflow_list.focus == crate::state::WorkflowDashboardFocus::Workflows {
+                app.select_prev_dashboard_workflow();
+            } else {
+                app.select_prev_workflow_job();
+            }
+            true
+        }
+        (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+            if app.workflow_list.focus == crate::state::WorkflowDashboardFocus::Workflows {
+                app.select_next_dashboard_workflow();
+            } else {
+                app.select_next_workflow_job();
+            }
+            true
+        }
+        (KeyCode::Enter, _) => {
+            if app.workflow_list.focus == crate::state::WorkflowDashboardFocus::Workflows {
+                app.toggle_workflow_focus();
+                if app.workflow_list.selected_job.is_none() {
+                    app.select_next_workflow_job();
+                }
+            } else if let Some(jobs) = app.selected_workflow_jobs() {
+                if let Some(idx) = app.workflow_list.selected_job {
+                    if let Some(job) = jobs.get(idx) {
+                        app.try_load_job_details(job.pk);
+                        app.set_tab(app::AppTab::Results);
+                    }
+                }
+            }
+            true
+        }
+        (KeyCode::Char('r'), KeyModifiers::NONE) => {
+            app.retry_selected_workflow_job();
+            true
+        }
+        _ => false,
     }
 }
 

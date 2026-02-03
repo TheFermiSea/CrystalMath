@@ -8,18 +8,29 @@ use crate::app::{App, AppTab};
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let keybindings = match app.current_tab {
         AppTab::Jobs => {
-            vec![
-                ("j/k", "Select"),
-                ("n", "New Job"),
-                ("c", "Clusters"),
-                ("r", "Recipes"),
-                ("w", "Workflows"),
-                ("s", "Queue"),
-                ("v", "VASP"),
-                ("Enter", "Details"),
-                ("L", "Logs"),
-                ("C", "Cancel"),
-            ]
+            if app.workflow_list.active {
+                vec![
+                    ("j/k", "Select"),
+                    ("Tab", "Focus"),
+                    ("r", "Retry"),
+                    ("Enter", "Details"),
+                    ("Esc", "Back"),
+                ]
+            } else {
+                vec![
+                    ("j/k", "Select"),
+                    ("n", "New Job"),
+                    ("c", "Clusters"),
+                    ("r", "Recipes"),
+                    ("w", "Workflows"),
+                    ("W", "Workflow View"),
+                    ("s", "Queue"),
+                    ("v", "VASP"),
+                    ("Enter", "Details"),
+                    ("L", "Logs"),
+                    ("C", "Cancel"),
+                ]
+            }
         }
         AppTab::Editor => {
             vec![

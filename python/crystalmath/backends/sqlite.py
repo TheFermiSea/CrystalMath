@@ -107,6 +107,7 @@ class SQLiteBackend(Backend):
                     runner_type=RunnerType(job.runner_type)
                     if job.runner_type
                     else RunnerType.LOCAL,
+                    workflow_id=job.workflow_id,
                     progress_percent=100.0 if job.status == "COMPLETED" else 0.0,
                     created_at=created_at,
                 )

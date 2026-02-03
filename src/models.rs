@@ -334,6 +334,9 @@ pub struct JobStatus {
     pub dft_code: Option<DftCode>,
     #[serde(default)]
     pub runner_type: Option<RunnerType>,
+    /// Parent workflow identifier for workflow-submitted jobs.
+    #[serde(default)]
+    pub workflow_id: Option<String>,
     #[serde(default)]
     pub progress_percent: f64,
     #[serde(default)]
@@ -1480,6 +1483,7 @@ mod tests {
             state: JobState::Running,
             dft_code: None,
             runner_type: None,
+            workflow_id: None,
             progress_percent: 0.0,
             wall_time_seconds: None,
             created_at: None,

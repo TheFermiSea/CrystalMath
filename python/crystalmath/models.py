@@ -223,6 +223,9 @@ class JobStatus(BaseModel):
     state: JobState = Field(..., description="Current execution state")
     dft_code: DftCode = Field(default=DftCode.CRYSTAL, description="DFT code type")
     runner_type: RunnerType = Field(default=RunnerType.LOCAL, description="Execution backend")
+    workflow_id: Optional[str] = Field(
+        default=None, description="Parent workflow identifier (if created by workflow)"
+    )
     progress_percent: float = Field(
         default=0.0, ge=0.0, le=100.0, description="Completion progress"
     )

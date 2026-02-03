@@ -13,6 +13,7 @@ mod new_job;
 pub mod recipes;
 mod results;
 mod slurm_queue;
+mod workflow_dashboard;
 mod workflow_config;
 mod templates;
 mod vasp_input;
@@ -90,7 +91,13 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
 
     // Render content based on current tab
     match app.current_tab {
-        crate::app::AppTab::Jobs => jobs::render(frame, app, chunks[1]),
+        crate::app::AppTab::Jobs => {
+            if app.workflow_list.active {
+                workflow_dashboard::render(frame, app, chunks[1]);
+            } else {
+                jobs::render(frame, app, chunks[1]);
+            }
+        }
         crate::app::AppTab::Editor => editor::render(frame, app, chunks[1]),
         crate::app::AppTab::Results => results::render(frame, app, chunks[1]),
         crate::app::AppTab::Log => log::render(frame, app, chunks[1]),

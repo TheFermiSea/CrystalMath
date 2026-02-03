@@ -20,7 +20,8 @@ use tachyonfx::{fx, Effect};
 // Re-export state types for backward compatibility with existing imports from crate::app
 pub use crate::state::{
     Action, AppTab, BatchSubmissionState, JobsState, MaterialsSearchState, NewJobField,
-    NewJobState, TemplateBrowserState, WorkflowConfigState,
+    NewJobState, TemplateBrowserState, WorkflowConfigState, WorkflowDashboardFocus,
+    WorkflowListState, WorkflowStatus, WorkflowSummary,
 };
 
 #[derive(Debug, Clone)]
@@ -186,6 +187,14 @@ pub struct App<'a> {
 
     /// Workflow job submissions awaiting job IDs (request_id -> workflow_id).
     workflow_job_requests: std::collections::HashMap<usize, String>,
+
+    /// Workflow dashboard state (Jobs tab grouped view).
+    pub workflow_list: WorkflowListState,
+
+    /// Pending workflow job retry (job PK) awaiting JobDetails response.
+    pending_retry_job_pk: Option<i32>,
+    /// Workflow ID associated with the pending retry (if any).
+    pending_retry_workflow_id: Option<String>,
 
     // ===== Recipe Browser Modal =====
     /// State for the quacc recipe browser modal.
@@ -390,6 +399,9 @@ impl<'a> App<'a> {
             workflow_config: WorkflowConfigState::default(),
             workflow_runs: std::collections::HashMap::new(),
             workflow_job_requests: std::collections::HashMap::new(),
+            workflow_list: WorkflowListState::default(),
+            pending_retry_job_pk: None,
+            pending_retry_workflow_id: None,
             recipe_browser: RecipeBrowserState::default(),
             template_browser: TemplateBrowserState::default(),
             batch_submission: BatchSubmissionState::default(),
@@ -791,6 +803,9 @@ impl<'a> App<'a> {
 
                             self.jobs_state.jobs = new_jobs;
                             self.jobs_state.last_refresh = Some(std::time::Instant::now());
+                            if self.workflow_list.active {
+                                self.rebuild_workflow_summaries();
+                            }
 
                             // Adjust selection if needed
                             if !self.jobs_state.jobs.is_empty() {
@@ -813,16 +828,92 @@ impl<'a> App<'a> {
                     }
                 }
                 BridgeResponse::JobDetails { result, .. } => match result {
-                    Ok(details) => {
-                        self.current_job_details = details;
+                    Ok(details_opt) => {
+                        let pending_retry = self.pending_retry_job_pk
+                            == details_opt.as_ref().map(|details| details.pk);
+                        let retry_workflow_id = if pending_retry {
+                            self.pending_retry_job_pk = None;
+                            self.pending_retry_workflow_id.take()
+                        } else {
+                            None
+                        };
+                        self.current_job_details = details_opt;
                         self.results_scroll = 0;
                         if let Some(ref d) = self.current_job_details {
                             self.log_lines = d.stdout_tail.clone();
                             self.log_scroll = 0;
                         }
                         self.clear_error();
+                        if pending_retry {
+                            let Some(workflow_id) = retry_workflow_id else {
+                                self.workflow_list.set_status(
+                                    "Retry failed: missing workflow link",
+                                    true,
+                                );
+                                return;
+                            };
+                            let Some(ref d) = self.current_job_details else {
+                                self.workflow_list
+                                    .set_status("Retry failed: missing job details", true);
+                                return;
+                            };
+                            let input_content = d.input_file.clone().unwrap_or_default();
+                            if input_content.trim().is_empty() {
+                                self.workflow_list.set_status(
+                                    "Retry failed: missing input content",
+                                    true,
+                                );
+                                return;
+                            }
+                            let dft_code = d.dft_code.unwrap_or(crate::models::DftCode::Crystal);
+                            let job_name = format!("{}_retry", d.name);
+                            let mut submission =
+                                crate::models::JobSubmission::new(&job_name, dft_code)
+                                    .with_input_content(&input_content)
+                                    .with_workflow_id(&workflow_id);
+                            if let Some(runner) = self
+                                .jobs_state
+                                .jobs
+                                .iter()
+                                .find(|job| job.pk == d.pk)
+                                .and_then(|job| job.runner_type)
+                            {
+                                submission = submission.with_runner_type(runner);
+                            }
+
+                            let request_id = self.next_request_id();
+                            match self.bridge.request_submit_job(&submission, request_id) {
+                                Ok(()) => {
+                                    self.pending_bridge_request =
+                                        Some(BridgeRequestKind::SubmitJob);
+                                    self.pending_request_id = Some(request_id);
+                                    self.pending_bridge_request_time =
+                                        Some(std::time::Instant::now());
+                                    self.workflow_job_requests
+                                        .insert(request_id, workflow_id.clone());
+                                    self.workflow_list.set_status(
+                                        format!("Retry submitted for workflow {}", workflow_id),
+                                        false,
+                                    );
+                                }
+                                Err(e) => {
+                                    self.workflow_list.set_status(
+                                        format!("Retry failed: {}", e),
+                                        true,
+                                    );
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
+                        if self.pending_retry_job_pk.is_some() {
+                            self.pending_retry_job_pk = None;
+                            self.pending_retry_workflow_id = None;
+                            self.workflow_list.set_status(
+                                format!("Retry failed: {}", e),
+                                true,
+                            );
+                        }
                         self.set_error(format!("Failed to fetch job details: {}", e));
                     }
                 },
@@ -1733,6 +1824,9 @@ impl<'a> App<'a> {
                                                 self.jobs_state.jobs = new_jobs;
                                                 self.jobs_state.last_refresh =
                                                     Some(std::time::Instant::now());
+                                                if self.workflow_list.active {
+                                                    self.rebuild_workflow_summaries();
+                                                }
 
                                                 // Adjust selection if needed
                                                 if !self.jobs_state.jobs.is_empty() {
@@ -2191,6 +2285,264 @@ impl<'a> App<'a> {
         self.jobs_state
             .selected_index
             .and_then(|idx| self.jobs_state.jobs.get(idx))
+    }
+
+    /// Toggle the workflow dashboard view in the Jobs tab.
+    pub fn toggle_workflow_dashboard(&mut self) {
+        self.workflow_list.toggle_active();
+        if self.workflow_list.active {
+            self.rebuild_workflow_summaries();
+        }
+        self.mark_dirty();
+    }
+
+    /// Rebuild workflow summaries from current job list.
+    fn rebuild_workflow_summaries(&mut self) {
+        let selected_id = self
+            .workflow_list
+            .selected_workflow
+            .and_then(|idx| self.workflow_list.workflows.get(idx))
+            .map(|wf| wf.workflow_id.clone());
+
+        let mut grouped: std::collections::BTreeMap<String, Vec<&JobStatus>> =
+            std::collections::BTreeMap::new();
+        for job in &self.jobs_state.jobs {
+            let Some(workflow_id) = job.workflow_id.as_ref() else {
+                continue;
+            };
+            grouped.entry(workflow_id.clone()).or_default().push(job);
+        }
+
+        let mut workflows: Vec<WorkflowSummary> = Vec::new();
+        for (workflow_id, jobs) in grouped {
+            let mut completed = 0usize;
+            let mut failed = 0usize;
+            let mut running = 0usize;
+            let mut pending = 0usize;
+
+            for job in jobs {
+                match job.state {
+                    crate::models::JobState::Completed => completed += 1,
+                    crate::models::JobState::Failed | crate::models::JobState::Cancelled => {
+                        failed += 1
+                    }
+                    crate::models::JobState::Running => running += 1,
+                    _ => pending += 1,
+                }
+            }
+
+            let total = completed + failed + running + pending;
+            let status = if failed > 0 {
+                WorkflowStatus::Failed
+            } else if completed == total && total > 0 {
+                WorkflowStatus::Completed
+            } else if running > 0 {
+                WorkflowStatus::Running
+            } else {
+                WorkflowStatus::Pending
+            };
+
+            workflows.push(WorkflowSummary {
+                workflow_id,
+                status,
+                total_jobs: total,
+                completed_jobs: completed,
+                failed_jobs: failed,
+                running_jobs: running,
+                pending_jobs: pending,
+            });
+        }
+
+        self.workflow_list.workflows = workflows;
+        if self.workflow_list.workflows.is_empty() {
+            self.workflow_list.selected_workflow = None;
+            self.workflow_list.selected_job = None;
+        } else if let Some(id) = selected_id {
+            if let Some(idx) = self
+                .workflow_list
+                .workflows
+                .iter()
+                .position(|wf| wf.workflow_id == id)
+            {
+                self.workflow_list.selected_workflow = Some(idx);
+            } else {
+                self.workflow_list.selected_workflow = Some(0);
+            }
+        } else if self.workflow_list.selected_workflow.is_none() {
+            self.workflow_list.selected_workflow = Some(0);
+        }
+
+        let max_job_index = self
+            .selected_workflow_jobs()
+            .map(|jobs| jobs.len().saturating_sub(1))
+            .unwrap_or(0);
+        if let Some(idx) = self.workflow_list.selected_job {
+            if idx > max_job_index {
+                self.workflow_list.selected_job = if max_job_index == 0 {
+                    None
+                } else {
+                    Some(max_job_index)
+                };
+            }
+        }
+    }
+
+    /// Return jobs for the selected workflow.
+    pub fn selected_workflow_jobs(&self) -> Option<Vec<&JobStatus>> {
+        let workflow_id = self
+            .workflow_list
+            .selected_workflow
+            .and_then(|idx| self.workflow_list.workflows.get(idx))
+            .map(|wf| wf.workflow_id.clone())?;
+        let jobs: Vec<&JobStatus> = self
+            .jobs_state
+            .jobs
+            .iter()
+            .filter(|job| job.workflow_id.as_deref() == Some(&workflow_id))
+            .collect();
+        Some(jobs)
+    }
+
+    /// Get the selected workflow summary.
+    pub fn selected_workflow_summary(&self) -> Option<&WorkflowSummary> {
+        self.workflow_list
+            .selected_workflow
+            .and_then(|idx| self.workflow_list.workflows.get(idx))
+    }
+
+    /// Select previous workflow in dashboard list.
+    pub fn select_prev_dashboard_workflow(&mut self) {
+        if self.workflow_list.workflows.is_empty() {
+            return;
+        }
+        let next = match self.workflow_list.selected_workflow {
+            Some(idx) if idx > 0 => idx - 1,
+            _ => self.workflow_list.workflows.len().saturating_sub(1),
+        };
+        self.workflow_list.selected_workflow = Some(next);
+        self.workflow_list.selected_job = None;
+        self.mark_dirty();
+    }
+
+    /// Select next workflow in dashboard list.
+    pub fn select_next_dashboard_workflow(&mut self) {
+        if self.workflow_list.workflows.is_empty() {
+            return;
+        }
+        let count = self.workflow_list.workflows.len();
+        let next = match self.workflow_list.selected_workflow {
+            Some(idx) => (idx + 1) % count,
+            None => 0,
+        };
+        self.workflow_list.selected_workflow = Some(next);
+        self.workflow_list.selected_job = None;
+        self.mark_dirty();
+    }
+
+    /// Select previous job within selected workflow.
+    pub fn select_prev_workflow_job(&mut self) {
+        let Some(jobs) = self.selected_workflow_jobs() else {
+            return;
+        };
+        if jobs.is_empty() {
+            self.workflow_list.selected_job = None;
+            return;
+        }
+        let next = match self.workflow_list.selected_job {
+            Some(idx) if idx > 0 => idx - 1,
+            _ => jobs.len().saturating_sub(1),
+        };
+        self.workflow_list.selected_job = Some(next);
+        self.mark_dirty();
+    }
+
+    /// Select next job within selected workflow.
+    pub fn select_next_workflow_job(&mut self) {
+        let Some(jobs) = self.selected_workflow_jobs() else {
+            return;
+        };
+        if jobs.is_empty() {
+            self.workflow_list.selected_job = None;
+            return;
+        }
+        let count = jobs.len();
+        let next = match self.workflow_list.selected_job {
+            Some(idx) => (idx + 1) % count,
+            None => 0,
+        };
+        self.workflow_list.selected_job = Some(next);
+        self.mark_dirty();
+    }
+
+    /// Toggle focus between workflow list and workflow job list.
+    pub fn toggle_workflow_focus(&mut self) {
+        self.workflow_list.focus = match self.workflow_list.focus {
+            WorkflowDashboardFocus::Workflows => WorkflowDashboardFocus::Jobs,
+            WorkflowDashboardFocus::Jobs => WorkflowDashboardFocus::Workflows,
+        };
+        if self.workflow_list.focus == WorkflowDashboardFocus::Jobs
+            && self.workflow_list.selected_job.is_none()
+        {
+            if let Some(jobs) = self.selected_workflow_jobs() {
+                if !jobs.is_empty() {
+                    self.workflow_list.selected_job = Some(0);
+                }
+            }
+        }
+        self.workflow_list.clear_status();
+        self.mark_dirty();
+    }
+
+    /// Retry the selected failed workflow job (requires JobDetails input content).
+    pub fn retry_selected_workflow_job(&mut self) {
+        if self.pending_bridge_request.is_some() {
+            self.workflow_list
+                .set_status("Pending operation in progress", true);
+            return;
+        }
+
+        let (job_pk, workflow_id, job_state) = {
+            let Some(jobs) = self.selected_workflow_jobs() else {
+                self.workflow_list
+                    .set_status("Select a workflow first", true);
+                return;
+            };
+            let Some(idx) = self.workflow_list.selected_job else {
+                self.workflow_list.set_status("Select a job", true);
+                return;
+            };
+            let Some(job) = jobs.get(idx) else {
+                self.workflow_list.set_status("Select a job", true);
+                return;
+            };
+            let Some(workflow_id) = job.workflow_id.clone() else {
+                self.workflow_list
+                    .set_status("Selected job is not linked to a workflow", true);
+                return;
+            };
+            (job.pk, workflow_id, job.state)
+        };
+
+        if !matches!(
+            job_state,
+            crate::models::JobState::Failed | crate::models::JobState::Cancelled
+        ) {
+            self.workflow_list
+                .set_status("Only failed/cancelled jobs can be retried", true);
+            return;
+        }
+
+        self.pending_retry_job_pk = Some(job_pk);
+        self.pending_retry_workflow_id = Some(workflow_id);
+        self.workflow_list
+            .set_status("Fetching job details for retry...", false);
+        self.request_job_details(job_pk);
+        if self.pending_bridge_request.is_none() {
+            self.pending_retry_job_pk = None;
+            self.pending_retry_workflow_id = None;
+            self.workflow_list
+                .set_status("Retry failed: unable to request job details", true);
+        }
     }
 
     /// Select the previous job in the list.
@@ -4819,6 +5171,9 @@ mod tests {
             workflow_config: WorkflowConfigState::default(),
             workflow_runs: std::collections::HashMap::new(),
             workflow_job_requests: std::collections::HashMap::new(),
+            workflow_list: WorkflowListState::default(),
+            pending_retry_job_pk: None,
+            pending_retry_workflow_id: None,
             recipe_browser: RecipeBrowserState::default(),
             template_browser: TemplateBrowserState::default(),
             batch_submission: BatchSubmissionState::default(),
@@ -4844,6 +5199,7 @@ mod tests {
             dft_code: Some(crate::models::DftCode::Crystal),
             state: crate::models::JobState::Completed,
             runner_type: Some(crate::models::RunnerType::Local),
+            workflow_id: None,
             progress_percent: 100.0,
             wall_time_seconds: Some(123.45),
             created_at: Some("2023-01-01T00:00:00".to_string()),

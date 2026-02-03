@@ -349,15 +349,17 @@ mod tests {
 
     // Test Helper for JobStatus
     fn test_job(pk: i32, name: &str) -> JobStatus {
-        JobState {
+        JobStatus {
             pk,
             uuid: format!("test-uuid-{}", pk),
             name: name.to_string(),
             state: JobState::Completed,
-            runner_type: RunnerType::Local,
-            progress_percent: None,
+            dft_code: Some(DftCode::Crystal),
+            runner_type: Some(RunnerType::Local),
+            workflow_id: None,
+            progress_percent: 0.0,
             wall_time_seconds: None,
-            created_at: chrono::Utc::now(),
+            created_at: None,
             error_snippet: None,
         }
     }
