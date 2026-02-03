@@ -238,6 +238,21 @@ pub trait BridgeService {
 /// Falls back to demo mode if no database found.
 pub fn init_python_backend() -> Result<Py<PyAny>> {
     Python::attach(|py| {
+        // Debug: Check what Python environment PyO3 sees
+        if let Ok(sys) = py.import("sys") {
+            if let Ok(path) = sys.getattr("path") {
+                if let Ok(path_list) = path.extract::<Vec<String>>() {
+                    tracing::info!("PyO3 sys.path (first 5 entries):");
+                    for (i, p) in path_list.iter().take(5).enumerate() {
+                        tracing::info!("  [{}] {}", i, p);
+                    }
+                    // Check for venv site-packages (any path containing .venv/lib)
+                    let has_venv_sp = path_list.iter().any(|p| p.contains(".venv/lib"));
+                    tracing::info!("Venv site-packages in sys.path: {}", has_venv_sp);
+                }
+            }
+        }
+
         // Import the crystalmath.api module
         let api_module = py
             .import("crystalmath.api")

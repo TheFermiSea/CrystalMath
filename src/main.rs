@@ -25,9 +25,11 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use app::App;
+use crate::state::BatchSubmissionField;
 use models::ClusterType;
 
 /// Global flag to track if terminal is in raw mode (for panic cleanup)
@@ -430,6 +432,14 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                         if !app.workflow_state.closing {
                             handle_workflow_modal_input(app, key);
                         }
+                    } else if app.is_template_browser_active() {
+                        if !app.template_browser.closing {
+                            handle_template_browser_input(app, key);
+                        }
+                    } else if app.is_batch_submission_active() {
+                        if !app.batch_submission.closing {
+                            handle_batch_submission_input(app, key);
+                        }
                     } else {
                         // Global key handlers
                         match (key.code, key.modifiers) {
@@ -497,6 +507,24 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             (KeyCode::Char('w'), KeyModifiers::NONE) => {
                                 if app.current_tab == app::AppTab::Jobs {
                                     app.open_workflow_modal();
+                                }
+                            }
+
+                            // Open Template Browser modal (T from Jobs or Editor tab)
+                            (KeyCode::Char('T'), KeyModifiers::SHIFT) => {
+                                if app.current_tab == app::AppTab::Jobs
+                                    || app.current_tab == app::AppTab::Editor
+                                {
+                                    app.open_template_browser();
+                                }
+                            }
+
+                            // Open Batch Submission modal (B from Jobs or Editor tab)
+                            (KeyCode::Char('B'), KeyModifiers::SHIFT) => {
+                                if app.current_tab == app::AppTab::Jobs
+                                    || app.current_tab == app::AppTab::Editor
+                                {
+                                    app.open_batch_submission();
                                 }
                             }
 
@@ -1319,6 +1347,121 @@ fn handle_workflow_modal_input(app: &mut App, key: event::KeyEvent) {
         // TODO: Enter to launch selected workflow
         KeyCode::Enter => {
             // Workflow launching not yet implemented
+        }
+
+        _ => {}
+    }
+}
+
+/// Handle keyboard input for the template browser modal.
+fn handle_template_browser_input(app: &mut App, key: event::KeyEvent) {
+    // Don't process input while loading (except Escape)
+    if app.template_browser.loading {
+        if key.code == KeyCode::Esc {
+            app.close_template_browser();
+        }
+        return;
+    }
+
+    match key.code {
+        // Close modal
+        KeyCode::Esc => {
+            app.close_template_browser();
+        }
+
+        // Navigation
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.select_next_template();
+            app.mark_dirty();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.select_prev_template();
+            app.mark_dirty();
+        }
+
+        // Enter: Render template (TODO: prompt for params)
+        KeyCode::Enter => {
+            if let Some(template) = app.template_browser.selected_template() {
+                let name = template.name.clone();
+                info!("Selected template: {}", name);
+                // TODO: Show param input form or just render with defaults
+                // For now, just close
+                app.close_template_browser();
+            }
+        }
+
+        _ => {}
+    }
+}
+
+/// Handle keyboard input for the batch submission modal.
+fn handle_batch_submission_input(app: &mut App, key: event::KeyEvent) {
+    if app.batch_submission.submitting {
+        return;
+    }
+
+    match key.code {
+        // Close modal
+        KeyCode::Esc => {
+            app.close_batch_submission();
+        }
+
+        // Navigate fields
+        KeyCode::Tab => {
+            app.batch_submission.focused_field = app.batch_submission.focused_field.next();
+            app.mark_dirty();
+        }
+        KeyCode::BackTab => {
+            app.batch_submission.focused_field = app.batch_submission.focused_field.prev();
+            app.mark_dirty();
+        }
+
+        // Field-specific input
+        KeyCode::Char('j') | KeyCode::Down if app.batch_submission.focused_field == BatchSubmissionField::JobList => {
+            let len = app.batch_submission.jobs.len();
+            if len > 0 {
+                let i = match app.batch_submission.selected_job_index {
+                    Some(i) if i >= len - 1 => 0,
+                    Some(i) => i + 1,
+                    None => 0,
+                };
+                app.batch_submission.selected_job_index = Some(i);
+                app.mark_dirty();
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up if app.batch_submission.focused_field == BatchSubmissionField::JobList => {
+            let len = app.batch_submission.jobs.len();
+            if len > 0 {
+                let i = match app.batch_submission.selected_job_index {
+                    Some(0) => len - 1,
+                    Some(i) => i - 1,
+                    None => 0,
+                };
+                app.batch_submission.selected_job_index = Some(i);
+                app.mark_dirty();
+            }
+        }
+
+        // Actions
+        KeyCode::Char('a') => {
+            app.add_current_editor_to_batch();
+        }
+        KeyCode::Char('d') => {
+            app.batch_submission.remove_selected();
+            app.mark_dirty();
+        }
+        KeyCode::Enter if app.batch_submission.focused_field == BatchSubmissionField::BtnSubmit => {
+            app.submit_batch();
+        }
+        KeyCode::Enter if app.batch_submission.focused_field == BatchSubmissionField::BtnAdd => {
+            app.add_current_editor_to_batch();
+        }
+        KeyCode::Enter if app.batch_submission.focused_field == BatchSubmissionField::BtnRemove => {
+            app.batch_submission.remove_selected();
+            app.mark_dirty();
+        }
+        KeyCode::Enter if app.batch_submission.focused_field == BatchSubmissionField::BtnCancel => {
+            app.close_batch_submission();
         }
 
         _ => {}

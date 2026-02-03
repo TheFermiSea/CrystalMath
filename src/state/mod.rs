@@ -12,13 +12,180 @@ use tachyonfx::{fx, Effect, Motion};
 use ratatui::style::Color;
 
 use crate::models::{
-    D12GenerationConfig, DftCode, JobStatus, MaterialResult, RunnerType, StructurePreview,
+    D12GenerationConfig, DftCode, JobStatus, MaterialResult, RunnerType, StructurePreview, Template,
     VaspGenerationConfig,
 };
 
 pub mod actions;
 
 pub use actions::*;
+
+/// Configuration for a single job in a batch.
+#[derive(Debug, Clone)]
+pub struct BatchJobConfig {
+    pub name: String,
+    pub input_content: String,
+    pub status: String, // "READY", "SUBMITTING", "SUCCESS", "ERROR"
+}
+
+/// State for the Batch Job Submission modal.
+pub struct BatchSubmissionState {
+    /// Whether the modal is active.
+    pub active: bool,
+
+    /// Common settings for all jobs in the batch.
+    pub common_runner_type: RunnerType,
+    pub common_cluster_id: Option<i32>,
+    pub common_mpi_ranks: String,
+    pub common_walltime: String,
+    pub common_memory_gb: String,
+    pub common_partition: String,
+
+    /// List of job configurations.
+    pub jobs: Vec<BatchJobConfig>,
+
+    /// Currently selected job index.
+    pub selected_job_index: Option<usize>,
+
+    /// Currently focused field (can be settings or buttons).
+    pub focused_field: BatchSubmissionField,
+
+    /// Error message.
+    pub error: Option<String>,
+
+    /// Whether submission is in progress.
+    pub submitting: bool,
+
+    /// Request ID for async operations.
+    pub request_id: usize,
+
+    /// Animation effect.
+    pub effect: Option<Effect>,
+
+    /// Whether modal is closing.
+    pub closing: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BatchSubmissionField {
+    #[default]
+    Cluster,
+    MpiRanks,
+    Walltime,
+    Memory,
+    Partition,
+    JobList,
+    BtnAdd,
+    BtnRemove,
+    BtnSubmit,
+    BtnCancel,
+}
+
+impl BatchSubmissionField {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Cluster => Self::MpiRanks,
+            Self::MpiRanks => Self::Walltime,
+            Self::Walltime => Self::Memory,
+            Self::Memory => Self::Partition,
+            Self::Partition => Self::JobList,
+            Self::JobList => Self::BtnAdd,
+            Self::BtnAdd => Self::BtnRemove,
+            Self::BtnRemove => Self::BtnSubmit,
+            Self::BtnSubmit => Self::BtnCancel,
+            Self::BtnCancel => Self::Cluster,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Cluster => Self::BtnCancel,
+            Self::MpiRanks => Self::Cluster,
+            Self::Walltime => Self::MpiRanks,
+            Self::Memory => Self::Walltime,
+            Self::Partition => Self::Memory,
+            Self::JobList => Self::Partition,
+            Self::BtnAdd => Self::JobList,
+            Self::BtnRemove => Self::BtnAdd,
+            Self::BtnSubmit => Self::BtnRemove,
+            Self::BtnCancel => Self::BtnSubmit,
+        }
+    }
+}
+
+impl Default for BatchSubmissionState {
+    fn default() -> Self {
+        Self {
+            active: false,
+            common_runner_type: RunnerType::Local,
+            common_cluster_id: None,
+            common_mpi_ranks: "4".to_string(),
+            common_walltime: "24:00:00".to_string(),
+            common_memory_gb: "32".to_string(),
+            common_partition: "".to_string(),
+            jobs: Vec::new(),
+            selected_job_index: None,
+            focused_field: BatchSubmissionField::default(),
+            error: None,
+            submitting: false,
+            request_id: 0,
+            effect: None,
+            closing: false,
+        }
+    }
+}
+
+impl std::fmt::Debug for BatchSubmissionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BatchSubmissionState")
+            .field("active", &self.active)
+            .field("jobs_count", &self.jobs.len())
+            .field("submitting", &self.submitting)
+            .finish()
+    }
+}
+
+impl BatchSubmissionState {
+    pub fn open(&mut self) {
+        self.active = true;
+        self.closing = false;
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
+        
+        self.jobs.clear();
+        self.selected_job_index = None;
+        self.focused_field = BatchSubmissionField::default();
+        self.error = None;
+        self.submitting = false;
+    }
+
+    pub fn close(&mut self) {
+        self.closing = true;
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
+        self.request_id += 1;
+    }
+
+    pub fn add_job(&mut self, name: String, content: String) {
+        self.jobs.push(BatchJobConfig {
+            name,
+            input_content: content,
+            status: "READY".to_string(),
+        });
+        if self.selected_job_index.is_none() {
+            self.selected_job_index = Some(0);
+        }
+    }
+
+    pub fn remove_selected(&mut self) {
+        if let Some(idx) = self.selected_job_index {
+            self.jobs.remove(idx);
+            if self.jobs.is_empty() {
+                self.selected_job_index = None;
+            } else if idx >= self.jobs.len() {
+                self.selected_job_index = Some(self.jobs.len() - 1);
+            }
+        }
+    }
+}
 
 // =============================================================================
 // Materials Project Search Modal State
@@ -576,6 +743,117 @@ impl NewJobState {
             return Err("Job name can only contain letters, numbers, hyphens, and underscores");
         }
         Ok(())
+    }
+}
+
+// =============================================================================
+// Template Browser Modal State
+// =============================================================================
+
+/// State for the calculation template browser modal.
+pub struct TemplateBrowserState {
+    /// Whether the modal is currently active/visible.
+    pub active: bool,
+
+    /// Loaded templates from the backend.
+    pub templates: Vec<Template>,
+
+    /// Currently selected template index.
+    pub selected_index: Option<usize>,
+
+    /// Whether templates are being loaded.
+    pub loading: bool,
+
+    /// Error message to display.
+    pub error: Option<String>,
+
+    /// Request ID for async operations.
+    pub request_id: usize,
+
+    /// Animation effect for open/close.
+    pub effect: Option<Effect>,
+
+    /// Whether the modal is closing.
+    pub closing: bool,
+}
+
+impl Default for TemplateBrowserState {
+    fn default() -> Self {
+        Self {
+            active: false,
+            templates: Vec::new(),
+            selected_index: None,
+            loading: false,
+            error: None,
+            request_id: 0,
+            effect: None,
+            closing: false,
+        }
+    }
+}
+
+impl std::fmt::Debug for TemplateBrowserState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TemplateBrowserState")
+            .field("active", &self.active)
+            .field("closing", &self.closing)
+            .field("loading", &self.loading)
+            .field("templates_count", &self.templates.len())
+            .finish()
+    }
+}
+
+impl TemplateBrowserState {
+    /// Open the modal.
+    pub fn open(&mut self) {
+        self.active = true;
+        self.closing = false;
+        // Slide in from bottom
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
+        
+        self.templates.clear();
+        self.selected_index = None;
+        self.loading = true;
+        self.error = None;
+    }
+
+    /// Close the modal.
+    pub fn close(&mut self) {
+        self.closing = true;
+        // Slide out to bottom
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
+        self.request_id += 1;
+    }
+
+    /// Select the next template.
+    pub fn select_next(&mut self) {
+        if self.templates.is_empty() {
+            return;
+        }
+        let i = match self.selected_index {
+            Some(i) if i >= self.templates.len() - 1 => 0,
+            Some(i) => i + 1,
+            None => 0,
+        };
+        self.selected_index = Some(i);
+    }
+
+    /// Select the previous template.
+    pub fn select_prev(&mut self) {
+        if self.templates.is_empty() {
+            return;
+        }
+        let i = match self.selected_index {
+            Some(0) => self.templates.len() - 1,
+            Some(i) => i - 1,
+            None => 0,
+        };
+        self.selected_index = Some(i);
+    }
+
+    /// Get the currently selected template.
+    pub fn selected_template(&self) -> Option<&Template> {
+        self.selected_index.and_then(|i| self.templates.get(i))
     }
 }
 

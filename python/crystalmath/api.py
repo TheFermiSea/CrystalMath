@@ -473,7 +473,6 @@ class CrystalController:
             # Get quacc version if available
             try:
                 import quacc
-
                 quacc_version = getattr(quacc, "__version__", "unknown")
             except ImportError:
                 quacc_version = None

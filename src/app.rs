@@ -18,7 +18,10 @@ use crate::ui::{ClusterManagerState, RecipeBrowserState, SlurmQueueState};
 use tachyonfx::{fx, Effect};
 
 // Re-export state types for backward compatibility with existing imports from crate::app
-pub use crate::state::{Action, AppTab, JobsState, MaterialsSearchState, NewJobField, NewJobState};
+pub use crate::state::{
+    Action, AppTab, BatchSubmissionState, JobsState, MaterialsSearchState, NewJobField,
+    NewJobState, TemplateBrowserState,
+};
 
 /// Main application state.
 pub struct App<'a> {
@@ -171,6 +174,14 @@ pub struct App<'a> {
     // ===== Recipe Browser Modal =====
     /// State for the quacc recipe browser modal.
     pub recipe_browser: RecipeBrowserState,
+
+    // ===== Template Browser Modal =====
+    /// State for the calculation template browser modal.
+    pub template_browser: TemplateBrowserState,
+
+    // ===== Batch Submission Modal =====
+    /// State for the batch job submission modal.
+    pub batch_submission: BatchSubmissionState,
 
     /// Request ID for the current recipe fetch (to ignore stale responses).
     pub recipe_request_id: usize,
@@ -361,6 +372,8 @@ impl<'a> App<'a> {
             vasp_input_state: crate::ui::VaspInputState::default(),
             workflow_state: crate::ui::WorkflowState::default(),
             recipe_browser: RecipeBrowserState::default(),
+            template_browser: TemplateBrowserState::default(),
+            batch_submission: BatchSubmissionState::default(),
             recipe_request_id: 0,
             workflow_request_id: 0,
             vasp_request_id: 0,
@@ -1117,18 +1130,25 @@ impl<'a> App<'a> {
                         }
                     }
                 }
-                BridgeResponse::Templates { request_id, result } => match result {
-                    Ok(templates) => {
-                        debug!(
-                            "Received {} templates (request_id={})",
-                            templates.len(),
-                            request_id
-                        );
+                BridgeResponse::Templates { request_id, result } => {
+                    if request_id == self.template_browser.request_id && self.template_browser.active
+                    {
+                        self.template_browser.loading = false;
+                        match result {
+                            Ok(templates) => {
+                                let count = templates.len();
+                                self.template_browser.templates = templates;
+                                if count > 0 {
+                                    self.template_browser.selected_index = Some(0);
+                                }
+                                info!("Loaded {} templates", count);
+                            }
+                            Err(e) => {
+                                self.template_browser.error = Some(format!("Error: {}", e));
+                            }
+                        }
                     }
-                    Err(e) => {
-                        self.set_error(format!("Failed to fetch templates: {}", e));
-                    }
-                },
+                }
                 BridgeResponse::TemplateRendered { request_id, result } => match result {
                     Ok(rendered) => {
                         debug!(
@@ -1197,6 +1217,8 @@ impl<'a> App<'a> {
                             Ok(rpc_response) => {
                                 match rpc_response.into_result() {
                                     Ok(value) => {
+                                        // DEBUG: Log the raw response
+                                        debug!("recipes.list raw response: {}", serde_json::to_string(&value).unwrap_or_default());
                                         // Deserialize the JSON value into RecipesListResponse
                                         match serde_json::from_value::<
                                             crate::models::RecipesListResponse,
@@ -1204,21 +1226,23 @@ impl<'a> App<'a> {
                                         {
                                             Ok(response) => {
                                                 let count = response.recipes.len();
+                                                let quacc_ver = response.quacc_version.clone();
+                                                let quacc_installed = quacc_ver.is_some();
+                                                info!("recipes.list response: {} recipes, quacc_version={:?}, error={:?}",
+                                                    count, quacc_ver, response.error);
                                                 // Build WorkflowEngineStatus from response
                                                 let engine_status =
                                                     crate::models::WorkflowEngineStatus {
                                                         configured: None,
                                                         installed: Vec::new(),
-                                                        quacc_installed: response
-                                                            .quacc_version
-                                                            .is_some(),
+                                                        quacc_installed,
                                                     };
                                                 self.recipe_browser.set_data(
                                                     response.recipes,
                                                     engine_status,
                                                     response.error,
                                                 );
-                                                debug!("Loaded {} recipes via JSON-RPC", count);
+                                                info!("Recipe browser updated: quacc_installed={}", quacc_installed);
                                             }
                                             Err(e) => {
                                                 self.recipe_browser.error =
@@ -3406,12 +3430,13 @@ impl<'a> App<'a> {
             self.recipe_request_id as u64,
         );
 
+        info!("Sending recipes.list RPC request (id={})", self.recipe_request_id);
         if let Err(e) = self.bridge.request_rpc(rpc_request, self.recipe_request_id) {
             self.recipe_browser.loading = false;
             self.recipe_browser.error = Some(format!("Failed to request recipes: {}", e));
             error!("Failed to send recipes.list request: {}", e);
         } else {
-            debug!("Sent recipes.list request (id={})", self.recipe_request_id);
+            info!("recipes.list request sent successfully");
         }
 
         self.mark_dirty();
@@ -3465,6 +3490,129 @@ impl<'a> App<'a> {
     /// Select next workflow in the list.
     pub fn select_next_workflow(&mut self) {
         self.workflow_state.select_next();
+        self.mark_dirty();
+    }
+
+    // ===== Template Browser Modal =====
+
+    /// Open the template browser modal and request templates.
+    pub fn open_template_browser(&mut self) {
+        self.template_browser.open();
+        self.request_load_templates();
+        self.mark_dirty();
+    }
+
+    /// Close the template browser modal.
+    pub fn close_template_browser(&mut self) {
+        self.template_browser.close();
+        self.mark_dirty();
+    }
+
+    /// Check if the template browser modal is active.
+    pub fn is_template_browser_active(&self) -> bool {
+        self.template_browser.active
+    }
+
+    /// Request template list load (async).
+    pub fn request_load_templates(&mut self) {
+        let request_id = self.next_request_id();
+        self.template_browser.request_id = request_id;
+        self.template_browser.loading = true;
+
+        if let Err(e) = self.bridge.request_fetch_templates(request_id) {
+            self.template_browser.loading = false;
+            self.template_browser.error = Some(format!("Failed to request templates: {}", e));
+        }
+        self.mark_dirty();
+    }
+
+    /// Select previous template in the list.
+    pub fn select_prev_template(&mut self) {
+        self.template_browser.select_prev();
+        self.mark_dirty();
+    }
+
+    /// Select next template in the list.
+    pub fn select_next_template(&mut self) {
+        self.template_browser.select_next();
+        self.mark_dirty();
+    }
+
+    // ===== Batch Submission Modal =====
+
+    /// Open the batch submission modal.
+    pub fn open_batch_submission(&mut self) {
+        self.batch_submission.open();
+        self.mark_dirty();
+    }
+
+    /// Close the batch submission modal.
+    pub fn close_batch_submission(&mut self) {
+        self.batch_submission.close();
+        self.mark_dirty();
+    }
+
+    /// Check if the batch submission modal is active.
+    pub fn is_batch_submission_active(&self) -> bool {
+        self.batch_submission.active
+    }
+
+    /// Add current editor content as a job to the batch.
+    pub fn add_current_editor_to_batch(&mut self) {
+        let content = self.editor.lines().join("\n");
+        if content.trim().is_empty() {
+            self.batch_submission.error = Some("Editor is empty".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        // Generate name from file path or timestamp
+        let job_name = self
+            .editor_file_path
+            .as_ref()
+            .map(|p| {
+                std::path::Path::new(p)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("untitled")
+                    .to_string()
+            })
+            .unwrap_or_else(|| format!("batch_{}", chrono::Utc::now().format("%H%M%S")));
+
+        self.batch_submission.add_job(job_name, content);
+        self.mark_dirty();
+    }
+
+    /// Submit all jobs in the batch.
+    pub fn submit_batch(&mut self) {
+        if self.batch_submission.jobs.is_empty() {
+            self.batch_submission.error = Some("No jobs to submit".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        self.batch_submission.submitting = true;
+        self.batch_submission.error = None;
+
+        // Clone jobs to avoid borrow checker issues with self.next_request_id()
+        let jobs = self.batch_submission.jobs.clone();
+        let runner_type = self.batch_submission.common_runner_type;
+
+        for job in jobs {
+            let submission =
+                crate::models::JobSubmission::new(&job.name, crate::models::DftCode::Crystal)
+                    .with_input_content(&job.input_content)
+                    .with_runner_type(runner_type);
+
+            let request_id = self.next_request_id();
+            let _ = self.bridge.request_submit_job(&submission, request_id);
+        }
+
+        self.batch_submission.close();
+        self.set_error(format!(
+            "Submitted {} jobs in batch",
+            self.batch_submission.jobs.len()
+        ));
         self.mark_dirty();
     }
 
@@ -3890,6 +4038,8 @@ mod tests {
             vasp_input_state: crate::ui::VaspInputState::default(),
             workflow_state: crate::ui::WorkflowState::default(),
             recipe_browser: RecipeBrowserState::default(),
+            template_browser: TemplateBrowserState::default(),
+            batch_submission: BatchSubmissionState::default(),
             recipe_request_id: 0,
             workflow_request_id: 0,
             vasp_request_id: 0,
