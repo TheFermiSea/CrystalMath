@@ -1320,6 +1320,10 @@ llm = [
     { name = "langchain" },
     { name = "langchain-anthropic" },
 ]
+vasp = [
+    { name = "numpy" },
+    { name = "pymatgen" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1330,14 +1334,16 @@ requires-dist = [
     { name = "langchain", marker = "extra == 'llm'", specifier = ">=0.3.0" },
     { name = "langchain-anthropic", marker = "extra == 'llm'", specifier = ">=0.3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "numpy", marker = "extra == 'vasp'", specifier = ">=1.20.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pymatgen", marker = "extra == 'aiida'", specifier = ">=2024.1.1" },
+    { name = "pymatgen", marker = "extra == 'vasp'", specifier = ">=2024.1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
 ]
-provides-extras = ["aiida", "dev", "llm", "all"]
+provides-extras = ["vasp", "aiida", "dev", "llm", "all"]
 
 [[package]]
 name = "crystalmath-workspace"

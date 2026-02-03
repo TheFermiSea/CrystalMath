@@ -342,19 +342,33 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                 Event::Key(key) => {
                     // Modal input takes priority over all other handlers
                     if app.is_new_job_modal_active() {
-                        handle_new_job_modal_input(app, key);
+                        if !app.new_job.closing {
+                            handle_new_job_modal_input(app, key);
+                        }
                     } else if app.is_materials_modal_active() {
-                        handle_materials_modal_input(app, key);
+                        if !app.materials.closing {
+                            handle_materials_modal_input(app, key);
+                        }
                     } else if app.is_cluster_manager_modal_active() {
-                        handle_cluster_manager_modal_input(app, key);
+                        if !app.cluster_manager.closing {
+                            handle_cluster_manager_modal_input(app, key);
+                        }
                     } else if app.is_slurm_queue_modal_active() {
-                        handle_slurm_queue_modal_input(app, key);
+                        if !app.slurm_queue_state.closing {
+                            handle_slurm_queue_modal_input(app, key);
+                        }
                     } else if app.is_vasp_input_modal_active() {
-                        handle_vasp_input_modal_input(app, key);
+                        if !app.vasp_input_state.closing {
+                            handle_vasp_input_modal_input(app, key);
+                        }
                     } else if app.is_recipe_browser_active() {
-                        handle_recipe_browser_input(app, key);
+                        if !app.recipe_browser.closing {
+                            handle_recipe_browser_input(app, key);
+                        }
                     } else if app.is_workflow_modal_active() {
-                        handle_workflow_modal_input(app, key);
+                        if !app.workflow_state.closing {
+                            handle_workflow_modal_input(app, key);
+                        }
                     } else {
                         // Global key handlers
                         match (key.code, key.modifiers) {
@@ -539,6 +553,18 @@ fn handle_materials_modal_input(app: &mut App, key: event::KeyEvent) {
         // Note: lowercase 'k' is used for navigation
         KeyCode::Char('K') if app.materials.table_state.selected().is_some() => {
             app.materials.cycle_kppra();
+            app.mark_dirty();
+        }
+
+        // 's' key: Submit job to quacc (requires generated POSCAR)
+        KeyCode::Char('s') if app.materials.can_submit() => {
+            app.request_submit_quacc_job();
+        }
+
+        // 'c' key: Cycle through quacc clusters
+        KeyCode::Char('c') if !app.quacc_clusters.is_empty() => {
+            let max = app.quacc_clusters.len();
+            app.materials.cycle_cluster(max);
             app.mark_dirty();
         }
 

@@ -8,6 +8,7 @@
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState};
+use tachyonfx::{fx, Effect, Motion};
 
 use crate::models::WorkflowType;
 
@@ -30,6 +31,12 @@ pub struct WorkflowState {
     pub status_is_error: bool,
     /// Request ID for current operation.
     pub request_id: Option<usize>,
+
+    /// Animation effect for open/close.
+    pub effect: Option<Effect>,
+
+    /// Whether the modal is closing.
+    pub closing: bool,
 }
 
 #[allow(dead_code)]
@@ -39,19 +46,24 @@ impl WorkflowState {
         Self::default()
     }
 
-    /// Open the modal.
+    /// Open the workflow modal.
     pub fn open(&mut self) {
         self.active = true;
+        self.closing = false;
         self.selected = 0;
         self.status = None;
         self.status_is_error = false;
+        // Slide in from bottom
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
     }
 
-    /// Close the modal.
+    /// Close the workflow modal.
     pub fn close(&mut self) {
-        self.active = false;
-        self.loading = false;
+        self.closing = true;
         self.status = None;
+        self.status_is_error = false;
+        // Slide out to bottom
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
     }
 
     /// Move selection up.
@@ -313,13 +325,18 @@ mod tests {
     fn test_workflow_state_open_close() {
         let mut state = WorkflowState::new();
         assert!(!state.active);
+        assert!(!state.closing);
 
         state.open();
         assert!(state.active);
+        assert!(!state.closing);
         assert_eq!(state.selected, 0);
+        assert!(state.effect.is_some()); // Animation started
 
         state.close();
-        assert!(!state.active);
+        // Animation pattern: closing=true, active still true until animation finishes
+        assert!(state.closing);
+        assert!(state.active); // Still active during close animation
     }
 
     #[test]

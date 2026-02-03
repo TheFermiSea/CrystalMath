@@ -99,29 +99,191 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
     // Render modal overlays on top of everything
     if app.materials.active {
         materials::render(frame, app);
+        
+        if let Some(ref mut effect) = app.materials.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let area = frame.area();
+            let modal_width = (area.width * 80 / 100).clamp(60, 100);
+            let modal_height = (area.height * 70 / 100).clamp(20, 35);
+            let modal_area = centered_rect_fixed(modal_width, modal_height, area);
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+            
+            if !effect.running() {
+                if app.materials.closing {
+                    app.materials.active = false;
+                    app.materials.closing = false;
+                    app.materials.effect = None;
+                } else {
+                    app.materials.effect = None;
+                }
+            } else {
+                app.mark_dirty();
+            }
+        }
     }
 
     if app.new_job.active {
         new_job::render(frame, app);
+        
+        // Apply modal effect if active
+        if let Some(ref mut effect) = app.new_job.effect {
+            let delta = std::time::Duration::from_millis(16);
+            // Calculate modal area (must match new_job::render logic)
+            let modal_area = centered_rect(70, 85, frame.area());
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+            
+            if !effect.running() {
+                if app.new_job.closing {
+                    app.new_job.active = false;
+                    app.new_job.closing = false;
+                    app.new_job.effect = None;
+                } else {
+                    app.new_job.effect = None;
+                }
+            } else {
+                app.mark_dirty();
+            }
+        }
     }
 
     if app.cluster_manager.active {
         cluster_manager::render(frame, app);
+        
+        if let Some(ref mut effect) = app.cluster_manager.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let modal_area = centered_rect(80, 85, frame.area());
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+            
+            if !effect.running() {
+                if app.cluster_manager.closing {
+                    app.cluster_manager.active = false;
+                    app.cluster_manager.closing = false;
+                    app.cluster_manager.effect = None;
+                } else {
+                    app.cluster_manager.effect = None;
+                }
+            } else {
+                app.mark_dirty();
+            }
+        }
     }
 
     if app.slurm_queue_state.active {
         slurm_queue::render(frame, app);
+        
+        if let Some(ref mut effect) = app.slurm_queue_state.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let modal_area = centered_rect(85, 80, frame.area());
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+            
+            if !effect.running() {
+                if app.slurm_queue_state.closing {
+                    app.slurm_queue_state.active = false;
+                    app.slurm_queue_state.closing = false;
+                    app.slurm_queue_state.effect = None;
+                } else {
+                    app.slurm_queue_state.effect = None;
+                }
+            } else {
+                app.mark_dirty();
+            }
+        }
     }
 
     if app.vasp_input_state.active {
         vasp_input::render(frame, app);
+        
+        if let Some(ref mut effect) = app.vasp_input_state.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let modal_area = centered_rect(90, 85, frame.area());
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+            
+            if !effect.running() {
+                if app.vasp_input_state.closing {
+                    app.vasp_input_state.active = false;
+                    app.vasp_input_state.closing = false;
+                    app.vasp_input_state.effect = None;
+                } else {
+                    app.vasp_input_state.effect = None;
+                }
+            } else {
+                app.mark_dirty();
+            }
+        }
     }
 
     if app.workflow_state.active {
         workflows::render(frame, &app.workflow_state);
+
+        if let Some(ref mut effect) = app.workflow_state.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let area = frame.area();
+            let modal_width = (area.width * 70 / 100).clamp(50, 80);
+            let modal_height = (area.height * 60 / 100).clamp(15, 25);
+            let modal_area = centered_rect_fixed(modal_width, modal_height, area);
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+
+            if !effect.running() {
+                if app.workflow_state.closing {
+                    app.workflow_state.active = false;
+                    app.workflow_state.closing = false;
+                    app.workflow_state.effect = None;
+                } else {
+                    app.workflow_state.effect = None;
+                }
+            } else {
+                app.mark_dirty();
+            }
+        }
     }
 
     if app.recipe_browser.active {
         recipes::render(frame, &mut app.recipe_browser);
+
+        if let Some(ref mut effect) = app.recipe_browser.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let modal_area = centered_rect(80, 80, frame.area());
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+
+            if !effect.running() {
+                if app.recipe_browser.closing {
+                    app.recipe_browser.active = false;
+                    app.recipe_browser.closing = false;
+                    app.recipe_browser.effect = None;
+                } else {
+                    app.recipe_browser.effect = None;
+                }
+            } else {
+                app.mark_dirty();
+            }
+        }
     }
+}
+
+/// Helper function to create a centered rectangle (replicated from new_job).
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+/// Helper for fixed-size centered rect with clamping (for Materials/Workflow).
+fn centered_rect_fixed(width: u16, height: u16, area: Rect) -> Rect {
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    Rect::new(x, y, width.min(area.width), height.min(area.height))
 }

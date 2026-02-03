@@ -10,6 +10,8 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 
+use tachyonfx::{fx, Effect, Motion};
+
 use crate::app::App;
 use crate::models::{ClusterConfig, ClusterType};
 
@@ -119,6 +121,12 @@ pub struct ClusterManagerState {
     pub form_max_concurrent: String,
     /// ID of cluster being edited (None for add mode).
     pub editing_cluster_id: Option<i32>,
+
+    /// Animation effect for open/close.
+    pub effect: Option<Effect>,
+
+    /// Whether the modal is closing.
+    pub closing: bool,
 }
 
 /// Connection test result.
@@ -133,17 +141,27 @@ impl ClusterManagerState {
     /// Open the cluster manager modal.
     pub fn open(&mut self) {
         self.active = true;
+        self.closing = false;
         self.mode = ClusterManagerMode::List;
-        self.loading = true;
+        // Slide in from bottom
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
+        self.selected_index = None;
         self.error = None;
-        self.status = None;
-        self.connection_result = None;
     }
 
     /// Close the cluster manager modal.
     pub fn close(&mut self) {
-        self.active = false;
+        self.closing = true;
+        // Slide out to bottom
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
+        self.mode = ClusterManagerMode::List;
+        self.reset_form();
+    }
+
+    /// Reset the form fields to defaults.
+    pub fn reset_form(&mut self) {
         self.clear_form();
+        self.error = None;
     }
 
     /// Clear the form fields.

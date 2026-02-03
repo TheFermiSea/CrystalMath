@@ -10,6 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
+use tachyonfx::{fx, Effect, Motion};
 
 use crate::models::{Recipe, WorkflowEngineStatus};
 
@@ -30,6 +31,12 @@ pub struct RecipeBrowserState {
     pub loading: bool,
     /// Whether the recipe browser modal is active.
     pub active: bool,
+
+    /// Animation effect for open/close.
+    pub effect: Option<Effect>,
+
+    /// Whether the modal is closing.
+    pub closing: bool,
 }
 
 impl RecipeBrowserState {
@@ -42,12 +49,20 @@ impl RecipeBrowserState {
     /// Open the recipe browser modal.
     pub fn open(&mut self) {
         self.active = true;
-        self.loading = true;
+        self.closing = false;
+        self.selected = 0;
+        self.list_state.select(Some(0));
+        self.error = None;
+        // Slide in from bottom
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
     }
 
     /// Close the recipe browser modal.
     pub fn close(&mut self) {
-        self.active = false;
+        self.closing = true;
+        self.error = None;
+        // Slide out to bottom
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
     }
 
     /// Select previous recipe.
@@ -292,13 +307,17 @@ mod tests {
     fn test_recipe_browser_open_close() {
         let mut state = RecipeBrowserState::new();
         assert!(!state.active);
+        assert!(!state.closing);
 
         state.open();
         assert!(state.active);
-        assert!(state.loading);
+        assert!(!state.closing);
+        assert!(state.effect.is_some()); // Animation started
 
         state.close();
-        assert!(!state.active);
+        // Animation pattern: closing=true, active still true until animation finishes
+        assert!(state.closing);
+        assert!(state.active); // Still active during close animation
     }
 
     #[test]

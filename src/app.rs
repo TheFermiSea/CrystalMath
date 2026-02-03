@@ -15,7 +15,7 @@ use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
 use crate::models::{ApiResponse, JobDetails, JobStatus, SlurmQueueEntry};
 use crate::ui::{ClusterManagerState, RecipeBrowserState, SlurmQueueState};
 
-use tachyonfx::{fx, Effect, EffectTimer, Interpolation};
+use tachyonfx::{fx, Effect};
 
 // Re-export state types for backward compatibility with existing imports from crate::app
 pub use crate::state::{Action, AppTab, JobsState, MaterialsSearchState, NewJobField, NewJobState};
@@ -181,6 +181,13 @@ pub struct App<'a> {
     /// Request ID for the current VASP generation (to ignore stale responses).
     pub vasp_request_id: usize,
 
+    // ===== quacc Integration State =====
+    /// Available quacc cluster configurations.
+    pub quacc_clusters: Vec<crate::models::QuaccClusterConfig>,
+
+    /// Request ID for the current quacc job submission.
+    pub submit_request_id: usize,
+
     /// Startup animation effect.
     pub startup_effect: Option<Effect>,
 }
@@ -344,7 +351,9 @@ impl<'a> App<'a> {
             recipe_request_id: 0,
             workflow_request_id: 0,
             vasp_request_id: 0,
-            startup_effect: Some(fx::coalesce(EffectTimer::from_ms(1500, Interpolation::SineOut))),
+            quacc_clusters: Vec::new(),
+            submit_request_id: 0,
+            startup_effect: Some(fx::coalesce(1500)),
         })
     }
 
@@ -1460,6 +1469,10 @@ impl<'a> App<'a> {
                                                         })
                                                         .unwrap_or_else(|| "vasp_inputs.txt".to_string());
 
+                                                    // Store POSCAR for potential quacc job submission
+                                                    self.materials.generated_poscar =
+                                                        Some(vasp_inputs.poscar.clone());
+
                                                     // Combine all VASP files into a single view
                                                     // POSCAR is the primary file for structure
                                                     let combined_content = format!(
@@ -1512,6 +1525,71 @@ impl<'a> App<'a> {
                                     .set_status(&format!("Bridge error: {}", e), true);
                                 self.materials.selected_for_import = None;
                                 error!("Bridge dispatch failed for VASP generation: {}", e);
+                            }
+                        }
+                    }
+                    // Check if this is a quacc job submission response
+                    else if request_id == self.submit_request_id && self.materials.submitting {
+                        self.materials.submitting = false;
+                        match result {
+                            Ok(rpc_response) => {
+                                match rpc_response.into_result() {
+                                    Ok(value) => {
+                                        // Parse the submit response (wrapped in ApiResponse)
+                                        match serde_json::from_value::<
+                                            ApiResponse<crate::models::QuaccJobSubmitResponse>,
+                                        >(value)
+                                        {
+                                            Ok(api_response) => match api_response.into_result() {
+                                                Ok(submit_response) => {
+                                                    if submit_response.status == "pending" {
+                                                        let job_id = submit_response
+                                                            .job_id
+                                                            .unwrap_or_else(|| "unknown".to_string());
+                                                        self.materials.submit_success(job_id.clone());
+                                                        self.materials.set_status(
+                                                            &format!("Job submitted: {}", job_id),
+                                                            false,
+                                                        );
+                                                        info!("Job submitted successfully: {}", job_id);
+                                                    } else {
+                                                        let error = submit_response
+                                                            .error
+                                                            .unwrap_or_else(|| "Unknown error".to_string());
+                                                        self.materials.submit_failure(error.clone());
+                                                        self.materials
+                                                            .set_status(&format!("Submit error: {}", error), true);
+                                                        warn!("Job submission failed: {}", error);
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    self.materials.submit_failure(format!("API error: {}", e));
+                                                    self.materials
+                                                        .set_status(&format!("API error: {}", e), true);
+                                                    error!("Job submit API error: {}", e);
+                                                }
+                                            },
+                                            Err(e) => {
+                                                self.materials
+                                                    .submit_failure(format!("Parse error: {}", e));
+                                                self.materials
+                                                    .set_status(&format!("Parse error: {}", e), true);
+                                                error!("Failed to deserialize submit response: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.materials.submit_failure(format!("RPC error: {}", e));
+                                        self.materials.set_status(&format!("RPC error: {}", e), true);
+                                        warn!("JSON-RPC error for job submission: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.materials.submit_failure(format!("Bridge error: {}", e));
+                                self.materials
+                                    .set_status(&format!("Bridge error: {}", e), true);
+                                error!("Bridge dispatch failed for job submission: {}", e);
                             }
                         }
                     }
@@ -2541,6 +2619,72 @@ impl<'a> App<'a> {
                 self.materials.selected_for_import = None;
                 self.materials
                     .set_status(&format!("Generation failed: {}", e), true);
+            }
+        }
+    }
+
+    /// Request quacc job submission for the selected VASP input (non-blocking).
+    ///
+    /// Submits the generated POSCAR to quacc's jobs.submit endpoint.
+    /// The result is delivered via `poll_bridge_responses()`.
+    pub fn request_submit_quacc_job(&mut self) {
+        use crate::bridge::JsonRpcRequest;
+        use crate::models::QuaccJobSubmitRequest;
+
+        // Check we have generated POSCAR content
+        let poscar = match &self.materials.generated_poscar {
+            Some(p) => p.clone(),
+            None => {
+                self.materials.submit_failure("No structure available. Generate VASP inputs first.".to_string());
+                self.mark_dirty();
+                return;
+            }
+        };
+
+        // Get selected cluster name (or default to "local")
+        let cluster_name = if self.quacc_clusters.is_empty() {
+            None
+        } else {
+            let idx = self.materials.selected_cluster_idx % self.quacc_clusters.len();
+            Some(self.quacc_clusters[idx].name.clone())
+        };
+
+        // Set up submit request
+        self.submit_request_id = self.next_request_id();
+        self.materials.submit_request_id = self.submit_request_id;
+        self.materials.start_submit();
+        self.materials.set_status("Submitting job to quacc...", false);
+        self.mark_dirty();
+
+        // Build submit request
+        let submit_request = QuaccJobSubmitRequest {
+            recipe: "quacc.recipes.vasp.core.static_job".to_string(), // Default recipe
+            structure: poscar,
+            cluster: cluster_name,
+            params: serde_json::json!({}),
+        };
+
+        // Serialize and send
+        let params = match serde_json::to_value(&submit_request) {
+            Ok(v) => v,
+            Err(e) => {
+                self.materials.submit_failure(format!("Serialization error: {}", e));
+                return;
+            }
+        };
+
+        let rpc_request = JsonRpcRequest::new(
+            "jobs.submit",
+            params,
+            self.submit_request_id as u64,
+        );
+
+        match self.bridge.request_rpc(rpc_request, self.submit_request_id) {
+            Ok(()) => {
+                info!("Job submission requested (id={})", self.submit_request_id);
+            }
+            Err(e) => {
+                self.materials.submit_failure(format!("Submission failed: {}", e));
             }
         }
     }
@@ -3605,6 +3749,8 @@ mod tests {
             recipe_request_id: 0,
             workflow_request_id: 0,
             vasp_request_id: 0,
+            quacc_clusters: Vec::new(),
+            submit_request_id: 0,
             startup_effect: None, // No effect in tests
         }
     }
@@ -3750,7 +3896,8 @@ mod tests {
         state.active = true;
         state.close();
 
-        assert!(!state.active);
+        // close() sets closing=true and starts animation; active becomes false when animation completes
+        assert!(state.closing);
         assert_eq!(state.request_id, initial_id + 1);
     }
 
@@ -4406,7 +4553,8 @@ mod tests {
         // Clear dirty and close
         app.take_needs_redraw();
         app.close_materials_modal();
-        assert!(!app.materials.active);
+        // close() sets closing=true and starts animation; active becomes false when animation completes
+        assert!(app.materials.closing);
         assert!(app.needs_redraw());
     }
 

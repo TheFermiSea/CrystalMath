@@ -8,6 +8,8 @@ use std::collections::HashSet;
 
 use ratatui::widgets::TableState;
 use tui_textarea::TextArea;
+use tachyonfx::{fx, Effect, Motion};
+use ratatui::style::Color;
 
 use crate::models::{
     D12GenerationConfig, DftCode, JobStatus, MaterialResult, RunnerType, StructurePreview,
@@ -23,7 +25,6 @@ pub use actions::*;
 // =============================================================================
 
 /// State for the Materials Project search modal.
-#[derive(Debug)]
 pub struct MaterialsSearchState<'a> {
     /// Whether the modal is currently active/visible.
     pub active: bool,
@@ -67,6 +68,31 @@ pub struct MaterialsSearchState<'a> {
 
     /// Request ID for the current preview fetch.
     pub preview_request_id: usize,
+
+    /// Animation effect for open/close.
+    pub effect: Option<Effect>,
+
+    /// Whether the modal is closing.
+    pub closing: bool,
+
+    // ===== Job Submission State (quacc) =====
+    /// Selected cluster index for job submission.
+    pub selected_cluster_idx: usize,
+
+    /// Whether a job submission is in progress.
+    pub submitting: bool,
+
+    /// Request ID for the current job submission.
+    pub submit_request_id: usize,
+
+    /// Last submission error message.
+    pub submit_error: Option<String>,
+
+    /// Last submitted job ID (for success feedback).
+    pub last_submitted_job_id: Option<String>,
+
+    /// Generated POSCAR content (from VASP generation).
+    pub generated_poscar: Option<String>,
 }
 
 impl<'a> Default for MaterialsSearchState<'a> {
@@ -89,7 +115,28 @@ impl<'a> Default for MaterialsSearchState<'a> {
             preview: None,
             preview_loading: false,
             preview_request_id: 0,
+            effect: None,
+            closing: false,
+            // Job submission state
+            selected_cluster_idx: 0,
+            submitting: false,
+            submit_request_id: 0,
+            submit_error: None,
+            last_submitted_job_id: None,
+            generated_poscar: None,
         }
+    }
+}
+
+impl<'a> std::fmt::Debug for MaterialsSearchState<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MaterialsSearchState")
+            .field("active", &self.active)
+            .field("closing", &self.closing)
+            .field("loading", &self.loading)
+            .field("status", &self.status)
+            // Skip effect and TextArea
+            .finish()
     }
 }
 
@@ -97,6 +144,10 @@ impl<'a> MaterialsSearchState<'a> {
     /// Open the modal.
     pub fn open(&mut self) {
         self.active = true;
+        self.closing = false;
+        // Slide in from bottom
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
+
         self.results.clear();
         self.table_state = TableState::default();
         self.loading = false;
@@ -109,11 +160,19 @@ impl<'a> MaterialsSearchState<'a> {
         self.input = TextArea::default();
         self.input
             .set_placeholder_text("Enter formula (e.g., MoS2, Si, LiFePO4)");
+        // Reset submission state
+        self.submitting = false;
+        self.submit_error = None;
+        self.last_submitted_job_id = None;
+        self.generated_poscar = None;
     }
 
     /// Close the modal and reset state.
     pub fn close(&mut self) {
-        self.active = false;
+        self.closing = true;
+        // Slide out to bottom
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
+        
         // Increment request_id to ignore any pending responses
         self.request_id += 1;
         self.preview_request_id += 1;
@@ -197,6 +256,41 @@ impl<'a> MaterialsSearchState<'a> {
             _ => 500,
         };
     }
+
+    // ===== Job Submission Methods =====
+
+    /// Cycle to the next cluster in the list.
+    pub fn cycle_cluster(&mut self, max: usize) {
+        if max == 0 {
+            return;
+        }
+        self.selected_cluster_idx = (self.selected_cluster_idx + 1) % max;
+    }
+
+    /// Start job submission (set loading state).
+    pub fn start_submit(&mut self) {
+        self.submitting = true;
+        self.submit_error = None;
+    }
+
+    /// Handle successful job submission.
+    pub fn submit_success(&mut self, job_id: String) {
+        self.submitting = false;
+        self.last_submitted_job_id = Some(job_id);
+        self.submit_error = None;
+    }
+
+    /// Handle failed job submission.
+    pub fn submit_failure(&mut self, error: String) {
+        self.submitting = false;
+        self.submit_error = Some(error);
+        self.last_submitted_job_id = None;
+    }
+
+    /// Check if we have the necessary data for job submission.
+    pub fn can_submit(&self) -> bool {
+        self.generated_poscar.is_some() && !self.submitting
+    }
 }
 
 // =============================================================================
@@ -269,10 +363,15 @@ impl NewJobField {
 }
 
 /// State for the New Job creation modal.
-#[derive(Debug)]
 pub struct NewJobState {
     /// Whether the modal is currently active/visible.
     pub active: bool,
+
+    /// Animation effect for open/close.
+    pub effect: Option<Effect>,
+
+    /// Whether the modal is closing.
+    pub closing: bool,
 
     /// Currently focused field.
     pub focused_field: NewJobField,
@@ -336,6 +435,8 @@ impl Default for NewJobState {
     fn default() -> Self {
         Self {
             active: false,
+            effect: None,
+            closing: false,
             focused_field: NewJobField::Name,
             job_name: String::new(),
             dft_code: DftCode::Crystal,
@@ -364,10 +465,26 @@ impl Default for NewJobState {
     }
 }
 
+impl std::fmt::Debug for NewJobState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewJobState")
+            .field("active", &self.active)
+            .field("closing", &self.closing)
+            .field("focused_field", &self.focused_field)
+            .field("job_name", &self.job_name)
+            // Skip effect
+            .finish()
+    }
+}
+
 impl NewJobState {
     /// Open the new job modal.
     pub fn open(&mut self) {
         self.active = true;
+        self.closing = false;
+        // Slide in from bottom (Motion::DownToUp)
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
+        
         self.focused_field = NewJobField::Name;
         self.job_name.clear();
         self.dft_code = DftCode::Crystal;
@@ -393,7 +510,10 @@ impl NewJobState {
 
     /// Close the new job modal.
     pub fn close(&mut self) {
-        self.active = false;
+        self.closing = true;
+        // Slide out to bottom (Motion::UpToDown)
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
+        // Don't set active = false here; wait for animation to finish
     }
 
     /// Check if the form has an error.

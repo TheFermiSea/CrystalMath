@@ -15,6 +15,7 @@
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap};
+use tachyonfx::{fx, Effect, Motion};
 
 use crate::app::App;
 use crate::models::SlurmQueueEntry;
@@ -34,24 +35,32 @@ pub struct SlurmQueueState {
     pub cluster_id: Option<i32>,
     /// Request ID for async operations.
     pub request_id: usize,
+
+    /// Animation effect for open/close.
+    pub effect: Option<Effect>,
+
+    /// Whether the modal is closing.
+    pub closing: bool,
 }
 
 impl SlurmQueueState {
-    /// Open the modal and trigger a queue fetch for the given cluster.
+    /// Open the SLURM queue modal.
     pub fn open(&mut self, cluster_id: i32) {
         self.active = true;
-        self.loading = true;
-        self.error = None;
+        self.closing = false;
         self.cluster_id = Some(cluster_id);
-        self.selected_index = None;
+        // Slide in from bottom
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
+        self.loading = true;
     }
 
-    /// Close the modal.
+    /// Close the SLURM queue modal.
     pub fn close(&mut self) {
-        self.active = false;
+        self.closing = true;
+        // Slide out to bottom
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
+        self.cluster_id = None;
         self.loading = false;
-        self.error = None;
-        self.selected_index = None;
     }
 
     /// Move selection up in the queue list.

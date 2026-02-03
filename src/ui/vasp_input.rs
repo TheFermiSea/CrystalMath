@@ -9,6 +9,7 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs, Wrap};
 use tui_textarea::TextArea;
+use tachyonfx::{fx, Effect, Motion};
 
 use crate::app::App;
 use crate::models::VaspInputFiles;
@@ -71,6 +72,9 @@ pub struct VaspInputState {
     /// Whether the modal is active.
     pub active: bool,
 
+    /// Whether the modal is closing (for animation).
+    pub closing: bool,
+
     /// Currently selected tab.
     pub current_tab: VaspFileTab,
 
@@ -92,6 +96,9 @@ pub struct VaspInputState {
 
     /// Status message (success feedback).
     pub status: Option<String>,
+
+    /// Animation effect for open/close.
+    pub effect: Option<Effect>,
 }
 
 impl Default for VaspInputState {
@@ -117,6 +124,7 @@ impl VaspInputState {
 
         Self {
             active: false,
+            closing: false,
             current_tab: VaspFileTab::default(),
             poscar_editor,
             incar_editor,
@@ -124,20 +132,27 @@ impl VaspInputState {
             potcar_config: "Elements: ".to_string(),
             error: None,
             status: None,
+            effect: None,
         }
     }
 
-    /// Open the modal (activate).
+    /// Open the VASP input modal.
     pub fn open(&mut self) {
         self.active = true;
+        self.closing = false;
         self.current_tab = VaspFileTab::Poscar;
+        // Slide in from bottom
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
         self.error = None;
-        self.status = None;
     }
 
-    /// Close the modal (deactivate).
+    /// Close the VASP input modal.
     pub fn close(&mut self) {
-        self.active = false;
+        self.closing = true;
+        // Slide out to bottom
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
+        // Clear messages, keep editors intact for potential reopen
+        self.clear_messages();
     }
 
     /// Move to the next tab.

@@ -1107,7 +1107,8 @@ mod tests {
         // Clear dirty and close
         app.take_needs_redraw();
         app.close_materials_modal();
-        assert!(!app.materials.active);
+        // close() sets closing=true and starts animation; active becomes false when animation completes
+        assert!(app.materials.closing);
         assert!(app.needs_redraw());
     }
 

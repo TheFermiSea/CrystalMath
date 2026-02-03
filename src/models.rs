@@ -1316,6 +1316,64 @@ pub struct QuaccJobsListResponse {
     pub total: usize,
 }
 
+// ==================== quacc Job Submission Models ====================
+
+/// Request to submit a job via quacc recipe.
+///
+/// Sent to Python backend's `jobs.submit` RPC endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct QuaccJobSubmitRequest {
+    /// Full recipe path (e.g., "quacc.recipes.vasp.core.relax_job")
+    pub recipe: String,
+    /// Structure as POSCAR string
+    pub structure: String,
+    /// Cluster name from quacc config (optional, "local" if None)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<String>,
+    /// Recipe parameters (kpts, encut, etc.)
+    #[serde(default)]
+    pub params: serde_json::Value,
+}
+
+/// Response from jobs.submit RPC.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct QuaccJobSubmitResponse {
+    /// Assigned job ID (UUID) - None if submission failed
+    #[serde(default)]
+    pub job_id: Option<String>,
+    /// Initial status ("pending" or "error")
+    #[serde(default)]
+    pub status: String,
+    /// Error message if submission failed
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// Response from jobs.status RPC.
+#[derive(Debug, Clone, Deserialize)]
+pub struct QuaccJobStatusResponse {
+    pub job_id: String,
+    /// Status: "pending", "running", "completed", "failed", "cancelled"
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub result: Option<QuaccJobResultSummary>,
+}
+
+/// Summary of completed quacc job results.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct QuaccJobResultSummary {
+    #[serde(default)]
+    pub energy_ev: Option<f64>,
+    #[serde(default)]
+    pub max_force_ev_ang: Option<f64>,
+    #[serde(default)]
+    pub formula: Option<String>,
+    #[serde(default)]
+    pub work_dir: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1955,5 +2013,110 @@ mod tests {
         let response: QuaccJobsListResponse = serde_json::from_str(json).unwrap();
         assert!(response.jobs.is_empty());
         assert_eq!(response.total, 0);
+    }
+
+    // ==================== quacc Job Submission Tests ====================
+
+    #[test]
+    fn test_quacc_job_submit_request_serialize() {
+        let request = QuaccJobSubmitRequest {
+            recipe: "quacc.recipes.vasp.core.relax_job".to_string(),
+            structure: "Si\n1.0\n5.0 0.0 0.0\n".to_string(),
+            cluster: Some("nersc".to_string()),
+            params: serde_json::json!({"encut": 520}),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"recipe\":\"quacc.recipes.vasp.core.relax_job\""));
+        assert!(json.contains("\"cluster\":\"nersc\""));
+        assert!(json.contains("\"encut\":520"));
+    }
+
+    #[test]
+    fn test_quacc_job_submit_request_no_cluster() {
+        let request = QuaccJobSubmitRequest {
+            recipe: "quacc.recipes.vasp.core.static_job".to_string(),
+            structure: "Si\n1.0\n".to_string(),
+            cluster: None,
+            params: serde_json::json!({}),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        // cluster should be omitted when None
+        assert!(!json.contains("\"cluster\""));
+    }
+
+    #[test]
+    fn test_quacc_job_submit_response_success() {
+        let json = r#"{
+            "job_id": "abc-123-def",
+            "status": "pending",
+            "error": null
+        }"#;
+        let response: QuaccJobSubmitResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.job_id, Some("abc-123-def".to_string()));
+        assert_eq!(response.status, "pending");
+        assert!(response.error.is_none());
+    }
+
+    #[test]
+    fn test_quacc_job_submit_response_error() {
+        let json = r#"{
+            "job_id": null,
+            "status": "error",
+            "error": "VASP_PP_PATH not configured"
+        }"#;
+        let response: QuaccJobSubmitResponse = serde_json::from_str(json).unwrap();
+        assert!(response.job_id.is_none());
+        assert_eq!(response.status, "error");
+        assert_eq!(
+            response.error,
+            Some("VASP_PP_PATH not configured".to_string())
+        );
+    }
+
+    #[test]
+    fn test_quacc_job_status_response_completed() {
+        let json = r#"{
+            "job_id": "job-456",
+            "status": "completed",
+            "error": null,
+            "result": {
+                "energy_ev": -275.123,
+                "max_force_ev_ang": 0.01,
+                "formula": "MgO"
+            }
+        }"#;
+        let response: QuaccJobStatusResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.job_id, "job-456");
+        assert_eq!(response.status, "completed");
+        assert!(response.result.is_some());
+        let result = response.result.unwrap();
+        assert_eq!(result.energy_ev, Some(-275.123));
+        assert_eq!(result.max_force_ev_ang, Some(0.01));
+        assert_eq!(result.formula, Some("MgO".to_string()));
+    }
+
+    #[test]
+    fn test_quacc_job_status_response_running() {
+        let json = r#"{
+            "job_id": "job-789",
+            "status": "running"
+        }"#;
+        let response: QuaccJobStatusResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.job_id, "job-789");
+        assert_eq!(response.status, "running");
+        assert!(response.error.is_none());
+        assert!(response.result.is_none());
+    }
+
+    #[test]
+    fn test_quacc_job_result_summary_defaults() {
+        let json = r#"{}"#;
+        let result: QuaccJobResultSummary = serde_json::from_str(json).unwrap();
+        assert!(result.energy_ev.is_none());
+        assert!(result.max_force_ev_ang.is_none());
+        assert!(result.formula.is_none());
+        assert!(result.work_dir.is_none());
     }
 }
