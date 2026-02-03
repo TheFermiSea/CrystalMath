@@ -269,6 +269,11 @@ class CrystalController:
             "recipes.list": (self.get_recipes_list, []),
             "clusters.list": (self.get_quacc_clusters_list, []),
             "jobs.list": (self.get_quacc_jobs_list, ["status", "limit"]),
+            # VASP input generation (Phase 3)
+            "vasp.generate_inputs": (self.generate_vasp_inputs_json, ["config_json"]),
+            "vasp.generate_from_mp": (self.generate_vasp_from_mp_json, ["mp_id", "config_json"]),
+            "structures.import_poscar": (self.import_poscar_json, ["poscar_content"]),
+            "structures.preview": (self.preview_structure_json, ["source_type", "source_data"]),
         }
 
     def dispatch(self, request_json: str) -> str:
@@ -560,6 +565,226 @@ class CrystalController:
                 "jobs": [],
                 "total": 0,
             }
+
+    # ========== VASP Input Generation Methods (Phase 3) ==========
+
+    def generate_vasp_inputs_json(self, config_json: str) -> str:
+        """Generate VASP input files from structure.
+
+        Args:
+            config_json: JSON configuration with:
+                - poscar: POSCAR file content (string)
+                - preset: "relax", "static", "bands", "dos", "convergence"
+                - encut: Optional plane-wave cutoff (eV)
+                - kppra: k-points per reciprocal atom (default 1000)
+                - incar_overrides: Optional dict of INCAR parameters
+
+        Returns:
+            JSON string with POSCAR, INCAR, KPOINTS, and POTCAR symbols.
+        """
+        try:
+            from pymatgen.io.vasp import Poscar
+
+            from crystalmath.vasp import IncarPreset, VaspInputGenerator
+
+            config = json.loads(config_json)
+            poscar_str = config.get("poscar", "")
+            if not poscar_str:
+                return _error_response("VALIDATION_ERROR", "POSCAR content required")
+
+            # Parse POSCAR to get structure
+            poscar = Poscar.from_str(poscar_str)
+            structure = poscar.structure
+
+            # Get preset
+            preset_name = config.get("preset", "static")
+            try:
+                preset = IncarPreset(preset_name)
+            except ValueError:
+                preset = IncarPreset.STATIC
+
+            # Generate inputs
+            generator = VaspInputGenerator(
+                structure,
+                preset=preset,
+                encut=config.get("encut"),
+                kppra=config.get("kppra", 1000),
+                **config.get("incar_overrides", {}),
+            )
+            inputs = generator.generate()
+
+            return _ok_response(inputs.to_dict())
+
+        except json.JSONDecodeError as e:
+            return _error_response("INVALID_JSON", f"Invalid config JSON: {e}")
+        except ImportError as e:
+            return _error_response("IMPORT_ERROR", f"VASP module not available: {e}")
+        except Exception as e:
+            logger.error(f"VASP input generation failed: {e}")
+            return _error_response("GENERATION_ERROR", str(e))
+
+    def generate_vasp_from_mp_json(self, mp_id: str, config_json: str) -> str:
+        """Generate VASP inputs directly from Materials Project ID.
+
+        Args:
+            mp_id: Materials Project ID (e.g., "mp-149")
+            config_json: JSON configuration (same as generate_vasp_inputs_json,
+                         but without poscar field)
+
+        Returns:
+            JSON string with POSCAR, INCAR, KPOINTS, and POTCAR symbols.
+        """
+        try:
+            from crystalmath.integrations.pymatgen_bridge import structure_from_mp
+            from crystalmath.vasp import IncarPreset, VaspInputGenerator
+
+            config = json.loads(config_json) if config_json else {}
+
+            # Fetch structure from Materials Project
+            structure = structure_from_mp(mp_id)
+
+            # Get preset
+            preset_name = config.get("preset", "static")
+            try:
+                preset = IncarPreset(preset_name)
+            except ValueError:
+                preset = IncarPreset.STATIC
+
+            # Generate inputs
+            generator = VaspInputGenerator(
+                structure,
+                preset=preset,
+                encut=config.get("encut"),
+                kppra=config.get("kppra", 1000),
+                **config.get("incar_overrides", {}),
+            )
+            inputs = generator.generate()
+
+            return _ok_response(inputs.to_dict())
+
+        except json.JSONDecodeError as e:
+            return _error_response("INVALID_JSON", f"Invalid config JSON: {e}")
+        except ImportError as e:
+            return _error_response("IMPORT_ERROR", f"Dependencies not available: {e}")
+        except Exception as e:
+            logger.error(f"VASP generation from MP failed: {e}")
+            return _error_response("GENERATION_ERROR", str(e))
+
+    def import_poscar_json(self, poscar_content: str) -> str:
+        """Import POSCAR and return structure info.
+
+        Args:
+            poscar_content: POSCAR file content as string
+
+        Returns:
+            JSON with structure metadata (formula, natoms, lattice, species)
+        """
+        try:
+            from pymatgen.io.vasp import Poscar
+
+            poscar = Poscar.from_str(poscar_content)
+            structure = poscar.structure
+
+            # Extract metadata
+            lattice = structure.lattice
+            metadata = {
+                "formula": structure.formula,
+                "reduced_formula": structure.composition.reduced_formula,
+                "num_sites": structure.num_sites,
+                "volume": lattice.volume,
+                "lattice": {
+                    "a": lattice.a,
+                    "b": lattice.b,
+                    "c": lattice.c,
+                    "alpha": lattice.alpha,
+                    "beta": lattice.beta,
+                    "gamma": lattice.gamma,
+                },
+                "species": list(dict.fromkeys(str(s) for s in structure.species)),
+            }
+
+            return _ok_response(metadata)
+
+        except ImportError as e:
+            return _error_response("IMPORT_ERROR", f"pymatgen not available: {e}")
+        except Exception as e:
+            logger.error(f"POSCAR import failed: {e}")
+            return _error_response("PARSE_ERROR", f"Invalid POSCAR: {e}")
+
+    def preview_structure_json(self, source_type: str, source_data: str) -> str:
+        """Preview structure from various sources.
+
+        Args:
+            source_type: "poscar", "cif", "mp_id"
+            source_data: Content or ID depending on source_type
+
+        Returns:
+            JSON with structure preview (formula, lattice, atoms, symmetry)
+        """
+        try:
+            from pymatgen.core import Structure
+
+            # Load structure based on source type
+            if source_type == "poscar":
+                from pymatgen.io.vasp import Poscar
+
+                poscar = Poscar.from_str(source_data)
+                structure = poscar.structure
+            elif source_type == "cif":
+                structure = Structure.from_str(source_data, fmt="cif")
+            elif source_type == "mp_id":
+                from crystalmath.integrations.pymatgen_bridge import structure_from_mp
+
+                structure = structure_from_mp(source_data)
+            else:
+                return _error_response(
+                    "VALIDATION_ERROR", f"Unknown source_type: {source_type}"
+                )
+
+            # Build preview data
+            lattice = structure.lattice
+            preview = {
+                "formula": structure.formula,
+                "reduced_formula": structure.composition.reduced_formula,
+                "num_sites": structure.num_sites,
+                "volume": round(lattice.volume, 3),
+                "density": round(structure.density, 3),
+                "lattice": {
+                    "a": round(lattice.a, 4),
+                    "b": round(lattice.b, 4),
+                    "c": round(lattice.c, 4),
+                    "alpha": round(lattice.alpha, 2),
+                    "beta": round(lattice.beta, 2),
+                    "gamma": round(lattice.gamma, 2),
+                },
+                "species": list(dict.fromkeys(str(s) for s in structure.species)),
+                "composition": {
+                    str(el): int(amt)
+                    for el, amt in structure.composition.items()
+                },
+            }
+
+            # Try to get symmetry info
+            try:
+                from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+
+                sga = SpacegroupAnalyzer(structure)
+                preview["symmetry"] = {
+                    "space_group": sga.get_space_group_symbol(),
+                    "space_group_number": sga.get_space_group_number(),
+                    "crystal_system": sga.get_crystal_system(),
+                    "point_group": sga.get_point_group_symbol(),
+                }
+            except Exception:
+                preview["symmetry"] = None
+
+            return _ok_response(preview)
+
+        except ImportError as e:
+            return _error_response("IMPORT_ERROR", f"Dependencies not available: {e}")
+        except Exception as e:
+            logger.error(f"Structure preview failed: {e}")
+            return _error_response("PREVIEW_ERROR", str(e))
 
     # ========== AiiDA Backend Implementation ==========
 
