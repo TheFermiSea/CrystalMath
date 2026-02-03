@@ -25,6 +25,12 @@ pub fn render(frame: &mut Frame, app: &App) {
     let modal_width = (area.width * 80 / 100).clamp(60, 100);
     let modal_height = (area.height * 70 / 100).clamp(20, 35);
 
+    // Dim the background
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Color::Black)),
+        area,
+    );
+
     // Center the modal
     let modal_area = centered_rect(modal_width, modal_height, area);
 

@@ -266,6 +266,12 @@ impl VaspInputState {
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
+    // Dim the background
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Color::Black)),
+        area,
+    );
+
     // Center the modal (90% width, 85% height)
     let modal_area = centered_rect(90, 85, area);
 

@@ -295,6 +295,12 @@ impl ClusterManagerState {
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
+    // Dim the background
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Color::Black)),
+        area,
+    );
+
     // Center the modal (80% width, 85% height)
     let modal_area = centered_rect(80, 85, area);
 

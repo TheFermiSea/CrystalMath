@@ -96,10 +96,16 @@ impl SlurmQueueState {
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
+    // Dim the background by rendering a semi-transparent dark overlay
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Color::Black)),
+        area,
+    );
+
     // Center the modal (85% width, 80% height)
     let modal_area = centered_rect(85, 80, area);
 
-    // Clear the background
+    // Clear the modal area for crisp rendering
     frame.render_widget(Clear, modal_area);
 
     // Modal border
