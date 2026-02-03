@@ -60,28 +60,29 @@ None (foundational phase)
 
 ---
 
-## Phase 2: quacc Integration (Read-Only)
+## Phase 2: quacc Integration (Read-Only) ✅
 
 **Goal:** Connect TUI to quacc's recipe system and validate workflow engine configuration.
 
 **Why second:** Establishes quacc patterns before implementing write operations. Low-risk exploration of the quacc API.
 
-**Status:** Planned
-**Plans:** 4 plans
+**Status:** Complete
+**Completed:** 2026-02-02
+**Plans:** 4 plans (all complete)
 
 Plans:
-- [ ] 02-01-PLAN.md — Python quacc module (discovery, engines, config, store)
-- [ ] 02-02-PLAN.md — RPC handlers (recipes.list, clusters.list, jobs.list)
-- [ ] 02-03-PLAN.md — Rust models and recipe browser TUI
-- [ ] 02-04-PLAN.md — Integration tests and human verification
+- [x] 02-01-PLAN.md — Python quacc module (discovery, engines, config, store)
+- [x] 02-02-PLAN.md — RPC handlers (recipes.list, clusters.list, jobs.list)
+- [x] 02-03-PLAN.md — Rust models and recipe browser TUI
+- [x] 02-04-PLAN.md — Integration tests and bug fixes
 
 ### Deliverables
 
-- [ ] `recipes.list` RPC handler (enumerate available quacc VASP recipes)
-- [ ] `clusters.list` RPC handler (list configured executors/clusters)
-- [ ] `jobs.list` RPC handler (list past job results if any)
-- [ ] Recipe browser screen in TUI
-- [ ] Cluster status display
+- [x] `recipes.list` RPC handler (enumerate available quacc VASP recipes)
+- [x] `clusters.list` RPC handler (list configured executors/clusters)
+- [x] `jobs.list` RPC handler (list past job results if any)
+- [x] Recipe browser screen in TUI
+- [x] Cluster status display
 
 ### Technical Notes
 
@@ -92,9 +93,9 @@ Plans:
 
 ### Success Criteria
 
-- [ ] TUI displays available VASP recipes
-- [ ] TUI shows configured clusters/executors
-- [ ] Workflow engine (Parsl/Covalent) detected correctly
+- [x] TUI displays available VASP recipes
+- [x] TUI shows configured clusters/executors
+- [x] Workflow engine (Parsl/Covalent) detected correctly
 
 ### Dependencies
 
@@ -102,19 +103,29 @@ Plans:
 
 ---
 
-## Phase 3: Structure & Input Handling
+## Phase 3: Structure & Input Handling ✅
 
 **Goal:** Enable users to import structures and configure VASP calculation parameters.
 
 **Why third:** Input handling has no side effects - safe to implement before job submission.
 
+**Status:** Complete
+**Completed:** 2026-02-02
+**Plans:** 4 plans (all complete)
+
+Plans:
+- [x] 03-01-PLAN.md — Python VASP utilities (INCAR, KPOINTS, generator)
+- [x] 03-02-PLAN.md — Rust TUI VASP integration
+- [x] 03-03-PLAN.md — Structure preview UI
+- [x] 03-04-PLAN.md — VASP config form and integration tests
+
 ### Deliverables
 
-- [ ] Structure import (POSCAR, CIF) via ASE/pymatgen
-- [ ] Materials Project structure search (`structures.search` RPC)
-- [ ] Structure preview in TUI (formula, lattice, atom count)
-- [ ] Recipe parameter configuration form
-- [ ] Input preview (show generated INCAR, KPOINTS)
+- [x] Structure import (POSCAR, CIF) via ASE/pymatgen
+- [x] Materials Project structure search (`structures.search` RPC)
+- [x] Structure preview in TUI (formula, lattice, atom count)
+- [x] Recipe parameter configuration form
+- [x] Input preview (show generated INCAR, KPOINTS)
 
 ### Technical Notes
 
@@ -125,10 +136,10 @@ Plans:
 
 ### Success Criteria
 
-- [ ] Import POSCAR file and display structure info
-- [ ] Search Materials Project by formula
-- [ ] Configure recipe parameters in TUI
-- [ ] Preview VASP input files before submission
+- [x] Import POSCAR file and display structure info
+- [x] Search Materials Project by formula
+- [x] Configure recipe parameters in TUI
+- [x] Preview VASP input files before submission
 
 ### Dependencies
 
@@ -141,6 +152,15 @@ Plans:
 **Goal:** Submit VASP jobs through quacc and track their status.
 
 **Why fourth:** Write operations only after read/input phases validated.
+
+**Status:** Planned
+**Plans:** 4 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Python job submission core (POTCAR validation, JobRunner, handlers)
+- [ ] 04-02-PLAN.md — Rust TUI job submission (models, cluster selection, keybindings)
+- [ ] 04-03-PLAN.md — Job status polling and display (30s interval, progress, errors)
+- [ ] 04-04-PLAN.md — Integration tests (MockRunner, handler tests, Rust tests)
 
 ### Deliverables
 
@@ -157,6 +177,8 @@ Plans:
 - Covalent: use `ct.dispatch()` with SLURM executor
 - Poll interval: 30-60 seconds
 - Store job metadata in local JSON for TUI display
+- POTCAR validation before submission (fail fast)
+- JobRunner abstraction for Parsl/Covalent
 
 ### Success Criteria
 
@@ -169,10 +191,12 @@ Plans:
 
 - Phase 3 (Structure & Input)
 
-### Research Flags
+### Research Completed
 
-- POTCAR validation strategy (`VASP_PP_PATH` verification)
-- Parsl vs Covalent error handling differences
+- POTCAR validation strategy: Check `VASP_PP_PATH`, verify element directories exist
+- Parsl vs Covalent: Both return exceptions via result/get_result, capture in JobMetadata.error_message
+- JobRunner abstraction: ABC with submit/get_status/get_result/cancel interface
+- MockRunner: For testing without real workflow engines
 
 ---
 
