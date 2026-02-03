@@ -9,7 +9,9 @@ use std::collections::HashSet;
 use ratatui::widgets::TableState;
 use tui_textarea::TextArea;
 
-use crate::models::{D12GenerationConfig, DftCode, JobStatus, MaterialResult, RunnerType};
+use crate::models::{
+    D12GenerationConfig, DftCode, JobStatus, MaterialResult, RunnerType, VaspGenerationConfig,
+};
 
 pub mod actions;
 
@@ -52,6 +54,9 @@ pub struct MaterialsSearchState<'a> {
 
     /// D12 generation config.
     pub d12_config: D12GenerationConfig,
+
+    /// VASP generation config.
+    pub vasp_config: VaspGenerationConfig,
 }
 
 impl<'a> Default for MaterialsSearchState<'a> {
@@ -70,6 +75,7 @@ impl<'a> Default for MaterialsSearchState<'a> {
             request_id: 0,
             selected_for_import: None,
             d12_config: D12GenerationConfig::default(),
+            vasp_config: VaspGenerationConfig::default(),
         }
     }
 }

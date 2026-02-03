@@ -1,20 +1,20 @@
 # CrystalMath Project State
 
-**Last updated:** 2026-02-02T23:45:00Z
+**Last updated:** 2026-02-03T01:00:00Z
 **Status:** Active development
 
 ## Current Position
 
-**Phase:** 2 of 6 (quacc Integration)
-**Plan:** 4 of 4 complete
-**Status:** COMPLETE
-**Last activity:** 2026-02-02 - Completed 02-04-PLAN.md, fixed cluster deserialization bug
+**Phase:** 3 of 6 (Structure & Input Handling)
+**Plan:** 2 of 4 complete
+**Status:** IN PROGRESS
+**Last activity:** 2026-02-03 - Wired VASP generation to Rust TUI (03-02)
 
 **Progress:**
 ```
 Phase 1 [##########] 100% (3/3 plans) COMPLETE
 Phase 2 [##########] 100% (4/4 plans) COMPLETE
-Phase 3 [----------] 0%
+Phase 3 [#####-----] 50% (2/4 plans)
 Phase 4 [----------] 0%
 Phase 5 [----------] 0%
 Phase 6 [----------] 0%
@@ -45,20 +45,25 @@ Phase 6 [----------] 0%
 | 02-03 | Recipe browser as modal overlay | Follows workflow_state pattern for consistency |
 | 02-03 | Serde defaults for optional fields | Handle partial API responses gracefully |
 | 02-04 | ApiResponse wrapper for fetch_clusters | Python API uses {"ok": true, "data": ...} envelope |
+| 03-01 | Lazy numpy import in KpointsBuilder | Avoids import error when numpy not installed |
+| 03-01 | ENMAX table for ENCUT estimation | Reasonable defaults without POTCAR lookup |
+| 03-01 | POTCAR symbols only (no content) | POTCAR requires VASP license, user provides |
+| 03-02 | JSON-RPC for VASP generation | Follows thin IPC pattern, no new bridge variants |
+| 03-02 | Combined VASP files in editor | Simple view for initial implementation |
+| 03-02 | 'v' keybinding for VASP | Keep Enter for D12, backwards compatible |
 
 ## Blockers / Concerns
 
-None currently. Phase 2 complete:
-- All 4 plans executed successfully
-- Integration tests passing (7/7)
-- Cluster deserialization bug fixed (ApiResponse wrapper)
-- Recipe browser UI ready for keybinding wiring
+None currently. Phase 3 in progress:
+- Plans 1-2 complete (Python VASP utilities + Rust TUI wiring)
+- VASP generation requires pymatgen (optional dependency)
+- 121 unit tests passing, 1 flaky integration test (pre-existing)
 
 ## Session Continuity
 
-**Last session:** 2026-02-02T23:45:00Z
-**Stopped at:** Completed Phase 2 (quacc Integration)
-**Resume with:** Phase 3 planning
+**Last session:** 2026-02-03T01:00:00Z
+**Stopped at:** Completed Plan 03-02 (Rust VASP wiring)
+**Resume with:** Plan 03-03 (Structure preview UI)
 
 ## Completed Summaries
 
@@ -72,6 +77,10 @@ Phase 2 (quacc Integration):
 - [02-02-SUMMARY.md](.planning/phases/02-quacc-integration/02-02-SUMMARY.md) - RPC handlers for quacc
 - [02-03-SUMMARY.md](.planning/phases/02-quacc-integration/02-03-SUMMARY.md) - Recipe browser UI
 - [02-04-SUMMARY.md](.planning/phases/02-quacc-integration/02-04-SUMMARY.md) - Integration tests and bug fixes
+
+Phase 3 (Structure & Input Handling):
+- [03-01-SUMMARY.md](.planning/phases/03-structure-input/03-01-SUMMARY.md) - Python VASP utilities
+- [03-02-PLAN.md](.planning/phases/03-structure-input/03-02-PLAN.md) - Rust TUI VASP wiring (complete)
 
 ## Key Files for Context
 
@@ -110,8 +119,23 @@ Created in Phase 2 Plan 4:
 - `tests/quacc_integration.rs` - 7 integration tests for quacc RPC handlers
 - `src/app.rs` - Fixed cluster deserialization with ApiResponse wrapper
 
+Created in Phase 3 Plan 1:
+- `python/crystalmath/vasp/__init__.py` - Module exports
+- `python/crystalmath/vasp/incar.py` - IncarBuilder, IncarPreset
+- `python/crystalmath/vasp/kpoints.py` - KpointsBuilder, KpointsMesh
+- `python/crystalmath/vasp/generator.py` - VaspInputGenerator, VaspInputs
+- `python/crystalmath/integrations/pymatgen_bridge.py` - Added structure_to_poscar()
+- `python/crystalmath/api.py` - Added vasp.* and structures.* RPC handlers
+- `python/tests/test_vasp_generator.py` - VASP generation tests
+
+Created in Phase 3 Plan 2:
+- `src/models.rs` - Added VaspPreset, VaspGenerationConfig, GeneratedVaspInputs, StructurePreview
+- `src/state/mod.rs` - Added vasp_config to MaterialsSearchState
+- `src/app.rs` - Added vasp_request_id, request_generate_vasp_from_mp(), VASP response handler
+- `src/main.rs` - Added 'v' keybinding for VASP generation in materials modal
+
 ## Next Steps
 
-1. Begin Phase 3 planning
-2. Consider wiring recipe browser to keybindings
-3. Continue Rust TUI development
+1. Plan 03-03: Structure preview UI component
+2. Plan 03-04: Integration tests and human verification
+3. Future: Separate files view for POSCAR/INCAR/KPOINTS

@@ -175,6 +175,9 @@ pub struct App<'a> {
 
     /// Request ID for the current workflow availability check.
     pub workflow_request_id: usize,
+
+    /// Request ID for the current VASP generation (to ignore stale responses).
+    pub vasp_request_id: usize,
 }
 
 impl<'a> App<'a> {
@@ -335,6 +338,7 @@ impl<'a> App<'a> {
             recipe_browser: RecipeBrowserState::default(),
             recipe_request_id: 0,
             workflow_request_id: 0,
+            vasp_request_id: 0,
         })
     }
 
@@ -1422,6 +1426,85 @@ impl<'a> App<'a> {
                                 self.set_error(format!("Bridge error: {}", e));
                             }
                         }
+                    }
+                    // Check if this is a VASP generation response
+                    else if request_id == self.vasp_request_id && self.materials.active {
+                        self.materials.loading = false;
+                        match result {
+                            Ok(rpc_response) => {
+                                match rpc_response.into_result() {
+                                    Ok(value) => {
+                                        // Parse the VASP inputs response (wrapped in ApiResponse)
+                                        match serde_json::from_value::<
+                                            ApiResponse<crate::models::GeneratedVaspInputs>,
+                                        >(value)
+                                        {
+                                            Ok(api_response) => match api_response.into_result() {
+                                                Ok(vasp_inputs) => {
+                                                    // Generate filename from material ID
+                                                    let filename = self
+                                                        .materials
+                                                        .selected_for_import
+                                                        .as_ref()
+                                                        .map(|mp_id| {
+                                                            format!("{}_vasp.txt", mp_id.replace('-', "_"))
+                                                        })
+                                                        .unwrap_or_else(|| "vasp_inputs.txt".to_string());
+
+                                                    // Combine all VASP files into a single view
+                                                    // POSCAR is the primary file for structure
+                                                    let combined_content = format!(
+                                                        "# ===== POSCAR =====\n{}\n\n# ===== INCAR =====\n{}\n\n# ===== KPOINTS =====\n{}\n\n# ===== POTCAR Required =====\n# Elements: {}\n# Note: POTCAR files must be obtained separately (VASP license required)",
+                                                        vasp_inputs.poscar,
+                                                        vasp_inputs.incar,
+                                                        vasp_inputs.kpoints,
+                                                        vasp_inputs.potcar_symbols.join(", ")
+                                                    );
+
+                                                    // Load into editor
+                                                    self.open_file(&filename, &combined_content);
+
+                                                    self.materials.close();
+                                                    self.current_tab = AppTab::Editor;
+                                                    info!(
+                                                        "Imported VASP inputs ({} bytes)",
+                                                        combined_content.len()
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    self.materials.set_status(
+                                                        &format!("API error: {}", e),
+                                                        true,
+                                                    );
+                                                    self.materials.selected_for_import = None;
+                                                    error!("VASP generation API error: {}", e);
+                                                }
+                                            },
+                                            Err(e) => {
+                                                self.materials.set_status(
+                                                    &format!("Parse error: {}", e),
+                                                    true,
+                                                );
+                                                self.materials.selected_for_import = None;
+                                                error!("Failed to deserialize VASP inputs: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.materials
+                                            .set_status(&format!("RPC error: {}", e), true);
+                                        self.materials.selected_for_import = None;
+                                        warn!("JSON-RPC error for VASP generation: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.materials
+                                    .set_status(&format!("Bridge error: {}", e), true);
+                                self.materials.selected_for_import = None;
+                                error!("Bridge dispatch failed for VASP generation: {}", e);
+                            }
+                        }
                     } else {
                         // Fallback: log unhandled RPC responses
                         match result {
@@ -2329,6 +2412,74 @@ impl<'a> App<'a> {
         {
             Ok(()) => {
                 info!("D12 generation requested for {}", mp_id);
+            }
+            Err(e) => {
+                self.materials.loading = false;
+                self.materials.selected_for_import = None;
+                self.materials
+                    .set_status(&format!("Generation failed: {}", e), true);
+            }
+        }
+    }
+
+    /// Request VASP input generation for the selected material (non-blocking).
+    ///
+    /// Generates VASP input files (POSCAR, INCAR, KPOINTS) from the selected
+    /// Materials Project structure. The result is delivered via `poll_bridge_responses()`.
+    pub fn request_generate_vasp_from_mp(&mut self) {
+        use crate::bridge::JsonRpcRequest;
+
+        let Some(material) = self.materials.selected_material() else {
+            self.materials
+                .set_status("Please select a structure first", true);
+            self.mark_dirty();
+            return;
+        };
+
+        let mp_id = material.material_id.clone();
+        let formula = material
+            .formula
+            .clone()
+            .or_else(|| material.formula_pretty.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Use VASP-specific request ID
+        self.vasp_request_id = self.next_request_id();
+        self.materials.loading = true;
+        self.materials.selected_for_import = Some(mp_id.clone());
+        self.materials.set_status(
+            &format!("Generating VASP inputs for {}...", formula),
+            false,
+        );
+        self.mark_dirty();
+
+        // Serialize config to JSON
+        let config_json = match serde_json::to_string(&self.materials.vasp_config) {
+            Ok(json) => json,
+            Err(e) => {
+                self.materials.loading = false;
+                self.materials.selected_for_import = None;
+                self.materials
+                    .set_status(&format!("Config error: {}", e), true);
+                return;
+            }
+        };
+
+        // Build JSON-RPC request params
+        let params = serde_json::json!({
+            "mp_id": mp_id,
+            "config_json": config_json
+        });
+
+        let rpc_request = JsonRpcRequest::new(
+            "vasp.generate_from_mp",
+            params,
+            self.vasp_request_id as u64,
+        );
+
+        match self.bridge.request_rpc(rpc_request, self.vasp_request_id) {
+            Ok(()) => {
+                info!("VASP generation requested for {} (id={})", mp_id, self.vasp_request_id);
             }
             Err(e) => {
                 self.materials.loading = false;
@@ -3351,6 +3502,7 @@ mod tests {
             recipe_browser: RecipeBrowserState::default(),
             recipe_request_id: 0,
             workflow_request_id: 0,
+            vasp_request_id: 0,
         }
     }
 

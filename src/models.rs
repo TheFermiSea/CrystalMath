@@ -717,6 +717,76 @@ pub struct VaspInputFiles {
     pub potcar_config: String,
 }
 
+/// Generated VASP inputs from Python backend.
+///
+/// Matches the response from `vasp.generate_inputs` and `vasp.generate_from_mp` RPC.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GeneratedVaspInputs {
+    /// POSCAR file content
+    pub poscar: String,
+    /// INCAR file content
+    pub incar: String,
+    /// KPOINTS file content
+    pub kpoints: String,
+    /// Element symbols for POTCAR (user must provide actual POTCAR files)
+    #[serde(default)]
+    pub potcar_symbols: Vec<String>,
+}
+
+/// Lattice parameters for structure preview.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LatticeParams {
+    pub a: f64,
+    pub b: f64,
+    pub c: f64,
+    pub alpha: f64,
+    pub beta: f64,
+    pub gamma: f64,
+}
+
+/// Symmetry information for structure preview.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SymmetryInfo {
+    #[serde(default)]
+    pub space_group: Option<String>,
+    #[serde(default)]
+    pub space_group_number: Option<i32>,
+    #[serde(default)]
+    pub crystal_system: Option<String>,
+    #[serde(default)]
+    pub point_group: Option<String>,
+}
+
+/// Structure preview from Python backend.
+///
+/// Matches the response from `structures.preview` RPC.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StructurePreview {
+    /// Chemical formula
+    pub formula: String,
+    /// Reduced chemical formula
+    #[serde(default)]
+    pub reduced_formula: Option<String>,
+    /// Number of atoms
+    pub num_sites: usize,
+    /// Unit cell volume (Å³)
+    pub volume: f64,
+    /// Density (g/cm³)
+    #[serde(default)]
+    pub density: Option<f64>,
+    /// Lattice parameters
+    pub lattice: LatticeParams,
+    /// Element species (unique, in order)
+    #[serde(default)]
+    pub species: Vec<String>,
+    /// Composition (element -> count)
+    #[serde(default)]
+    pub composition: std::collections::HashMap<String, i32>,
+    /// Symmetry information (may be None if analysis failed)
+    #[serde(default)]
+    pub symmetry: Option<SymmetryInfo>,
+}
+
 // ==================== Materials Project API Models ====================
 
 /// Material search result from Materials Project.
@@ -837,6 +907,74 @@ impl Default for D12GenerationConfig {
             basis_set: default_basis_set(),
             shrink: default_shrink(),
             optimize: false,
+        }
+    }
+}
+
+// =============================================================================
+// VASP Generation Configuration
+// =============================================================================
+
+/// Preset calculation types for VASP.
+///
+/// These map to Python's `IncarPreset` enum values.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VaspPreset {
+    /// Geometry relaxation with ionic optimization
+    #[default]
+    Relax,
+    /// Single-point static calculation
+    Static,
+    /// Band structure calculation (non-SCF)
+    Bands,
+    /// Density of states calculation
+    Dos,
+    /// ENCUT/k-point convergence testing
+    Convergence,
+}
+
+impl std::fmt::Display for VaspPreset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VaspPreset::Relax => write!(f, "Geometry Relaxation"),
+            VaspPreset::Static => write!(f, "Static Calculation"),
+            VaspPreset::Bands => write!(f, "Band Structure"),
+            VaspPreset::Dos => write!(f, "Density of States"),
+            VaspPreset::Convergence => write!(f, "Convergence Test"),
+        }
+    }
+}
+
+/// Configuration for VASP input generation.
+///
+/// Matches the parameters expected by Python's `vasp.generate_from_mp` RPC.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaspGenerationConfig {
+    /// Calculation preset (determines INCAR parameters)
+    #[serde(default)]
+    pub preset: VaspPreset,
+
+    /// K-points per reciprocal atom (higher = more accurate but slower)
+    /// Typical values: 500 (fast), 1000 (standard), 2000+ (accurate)
+    #[serde(default = "default_kppra")]
+    pub kppra: i32,
+
+    /// Energy cutoff in eV (if None, estimated from elements as 1.3×ENMAX)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encut: Option<f64>,
+}
+
+fn default_kppra() -> i32 {
+    1000
+}
+
+impl Default for VaspGenerationConfig {
+    fn default() -> Self {
+        Self {
+            preset: VaspPreset::default(),
+            kppra: default_kppra(),
+            encut: None,
         }
     }
 }

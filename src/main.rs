@@ -524,6 +524,11 @@ fn handle_materials_modal_input(app: &mut App, key: event::KeyEvent) {
             }
         }
 
+        // 'v' key: Generate VASP inputs (requires selection)
+        KeyCode::Char('v') if app.materials.table_state.selected().is_some() => {
+            app.request_generate_vasp_from_mp();
+        }
+
         // Navigate results table
         KeyCode::Up | KeyCode::Char('k') if !app.materials.results.is_empty() => {
             app.materials.select_prev();
