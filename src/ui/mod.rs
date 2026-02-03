@@ -126,6 +126,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                     app.materials.active = false;
                     app.materials.closing = false;
                     app.materials.effect = None;
+                    app.mark_dirty();
                 } else {
                     app.materials.effect = None;
                 }
@@ -150,6 +151,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                     app.new_job.active = false;
                     app.new_job.closing = false;
                     app.new_job.effect = None;
+                    app.mark_dirty();
                 } else {
                     app.new_job.effect = None;
                 }
@@ -172,6 +174,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                     app.cluster_manager.active = false;
                     app.cluster_manager.closing = false;
                     app.cluster_manager.effect = None;
+                    app.mark_dirty();
                 } else {
                     app.cluster_manager.effect = None;
                 }
@@ -194,6 +197,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                     app.slurm_queue_state.active = false;
                     app.slurm_queue_state.closing = false;
                     app.slurm_queue_state.effect = None;
+                    app.mark_dirty();
                 } else {
                     app.slurm_queue_state.effect = None;
                 }
@@ -216,6 +220,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                     app.vasp_input_state.active = false;
                     app.vasp_input_state.closing = false;
                     app.vasp_input_state.effect = None;
+                    app.mark_dirty();
                 } else {
                     app.vasp_input_state.effect = None;
                 }
@@ -241,6 +246,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                     app.workflow_state.active = false;
                     app.workflow_state.closing = false;
                     app.workflow_state.effect = None;
+                    app.mark_dirty();
                 } else {
                     app.workflow_state.effect = None;
                 }
@@ -263,6 +269,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                     app.workflow_config.active = false;
                     app.workflow_config.closing = false;
                     app.workflow_config.effect = None;
+                    app.mark_dirty();
                 } else {
                     app.workflow_config.effect = None;
                 }
@@ -289,6 +296,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                         app.recipe_browser.active = false;
                         app.recipe_browser.closing = false;
                         app.recipe_browser.effect = None;
+                        app.mark_dirty();
                     } else {
                         app.recipe_browser.effect = None;
                     }
@@ -323,6 +331,8 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                             app.template_browser.closing = false;
     
                             app.template_browser.effect = None;
+    
+                            app.mark_dirty();
     
                         } else {
     
@@ -368,6 +378,8 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
 
                             app.batch_submission.effect = None;
 
+                            app.mark_dirty();
+
                         } else {
 
                             app.batch_submission.effect = None;
@@ -401,6 +413,8 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                     app.help.active = false;
                     app.help.closing = false;
                     app.help.effect = None;
+                    // Trigger full redraw to clear the area left by slide-out
+                    app.mark_dirty();
                 } else {
                     app.help.effect = None;
                 }
