@@ -15,6 +15,7 @@ mod results;
 mod slurm_queue;
 mod workflow_dashboard;
 mod workflow_config;
+mod workflow_results;
 mod templates;
 mod vasp_input;
 mod workflows;
@@ -267,6 +268,10 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                 app.mark_dirty();
             }
         }
+    }
+
+    if app.workflow_results.active {
+        workflow_results::render(frame, app);
     }
 
         if app.recipe_browser.active {

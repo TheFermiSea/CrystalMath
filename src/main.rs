@@ -452,6 +452,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                         if !app.recipe_browser.closing {
                             handle_recipe_browser_input(app, key);
                         }
+                    } else if app.is_workflow_results_active() {
+                        handle_workflow_results_input(app, key);
                     } else if app.is_workflow_config_active() {
                         if !app.workflow_config.closing {
                             handle_workflow_config_input(app, key);
@@ -830,10 +832,7 @@ fn handle_workflow_dashboard_input(app: &mut App, key: event::KeyEvent) -> bool 
         }
         (KeyCode::Enter, _) => {
             if app.workflow_list.focus == crate::state::WorkflowDashboardFocus::Workflows {
-                app.toggle_workflow_focus();
-                if app.workflow_list.selected_job.is_none() {
-                    app.select_next_workflow_job();
-                }
+                app.open_selected_workflow_results();
             } else if let Some(jobs) = app.selected_workflow_jobs() {
                 if let Some(idx) = app.workflow_list.selected_job {
                     if let Some(job) = jobs.get(idx) {
@@ -849,6 +848,24 @@ fn handle_workflow_dashboard_input(app: &mut App, key: event::KeyEvent) -> bool 
             true
         }
         _ => false,
+    }
+}
+
+/// Handle input for the workflow results modal.
+fn handle_workflow_results_input(app: &mut App, key: event::KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.close_workflow_results(),
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.workflow_results.scroll > 0 {
+                app.workflow_results.scroll -= 1;
+                app.mark_dirty();
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.workflow_results.scroll = app.workflow_results.scroll.saturating_add(1);
+            app.mark_dirty();
+        }
+        _ => {}
     }
 }
 

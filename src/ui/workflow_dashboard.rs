@@ -189,7 +189,7 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
         (msg.clone(), Style::default().fg(color))
     } else {
         (
-            "Tab: switch pane │ Enter: details │ r: retry failed │ Esc: back"
+            "Tab: switch pane │ Enter: results/details │ r: retry failed │ Esc: back"
                 .to_string(),
             Style::default().fg(Color::DarkGray),
         )

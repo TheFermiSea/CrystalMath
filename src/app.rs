@@ -21,7 +21,7 @@ use tachyonfx::{fx, Effect};
 pub use crate::state::{
     Action, AppTab, BatchSubmissionState, JobsState, MaterialsSearchState, NewJobField,
     NewJobState, TemplateBrowserState, WorkflowConfigState, WorkflowDashboardFocus,
-    WorkflowListState, WorkflowStatus, WorkflowSummary,
+    WorkflowListState, WorkflowResultsState, WorkflowStatus, WorkflowSummary,
 };
 
 #[derive(Debug, Clone)]
@@ -29,6 +29,8 @@ struct WorkflowRun {
     workflow_json: String,
     job_ids: Vec<i32>,
     expected_jobs: usize,
+    workflow_type: crate::models::WorkflowType,
+    results_cache: Option<crate::state::WorkflowResultsCache>,
 }
 
 /// Main application state.
@@ -188,8 +190,14 @@ pub struct App<'a> {
     /// Workflow job submissions awaiting job IDs (request_id -> workflow_id).
     workflow_job_requests: std::collections::HashMap<usize, String>,
 
+    /// Workflow creation requests mapped to workflow type (request_id -> type).
+    workflow_request_types: std::collections::HashMap<usize, crate::models::WorkflowType>,
+
     /// Workflow dashboard state (Jobs tab grouped view).
     pub workflow_list: WorkflowListState,
+
+    /// Workflow results modal state.
+    pub workflow_results: WorkflowResultsState,
 
     /// Pending workflow job retry (job PK) awaiting JobDetails response.
     pending_retry_job_pk: Option<i32>,
@@ -399,7 +407,9 @@ impl<'a> App<'a> {
             workflow_config: WorkflowConfigState::default(),
             workflow_runs: std::collections::HashMap::new(),
             workflow_job_requests: std::collections::HashMap::new(),
+            workflow_request_types: std::collections::HashMap::new(),
             workflow_list: WorkflowListState::default(),
+            workflow_results: WorkflowResultsState::default(),
             pending_retry_job_pk: None,
             pending_retry_workflow_id: None,
             recipe_browser: RecipeBrowserState::default(),
@@ -1376,6 +1386,10 @@ impl<'a> App<'a> {
 
                                 let input_count = inputs.len();
                                 let workflow_id = format!("wf_{}", request_id);
+                                let workflow_type = self
+                                    .workflow_request_types
+                                    .remove(&request_id)
+                                    .unwrap_or(self.workflow_config.workflow_type);
 
                                 // Extract config details for job submissions
                                 let (dft_code, config_cluster_id) =
@@ -1449,6 +1463,12 @@ impl<'a> App<'a> {
                                         workflow_json: workflow_json_str.clone(),
                                         job_ids: Vec::new(),
                                         expected_jobs: input_count,
+                                        workflow_type,
+                                        results_cache: self
+                                            .build_workflow_results_cache(
+                                                workflow_type,
+                                                &workflow_json_str,
+                                            ),
                                     },
                                 );
 
@@ -2408,6 +2428,196 @@ impl<'a> App<'a> {
         self.workflow_list
             .selected_workflow
             .and_then(|idx| self.workflow_list.workflows.get(idx))
+    }
+
+    /// Check if the workflow results modal is active.
+    pub fn is_workflow_results_active(&self) -> bool {
+        self.workflow_results.active
+    }
+
+    /// Open the workflow results modal for a workflow ID.
+    pub fn open_workflow_results(&mut self, workflow_id: String) {
+        self.workflow_results.active = true;
+        self.workflow_results.workflow_id = Some(workflow_id.clone());
+        self.workflow_results.scroll = 0;
+        self.workflow_results.error = None;
+        self.workflow_results.status = None;
+
+        // Extract needed data before borrowing workflow_runs mutably
+        let cache = if let Some(run) = self.workflow_runs.get(&workflow_id) {
+            self.build_workflow_results_cache(run.workflow_type, &run.workflow_json)
+        } else {
+            None
+        };
+
+        if let Some(run) = self.workflow_runs.get_mut(&workflow_id) {
+            run.results_cache = cache.clone();
+            self.workflow_results.cache = cache;
+            if self.workflow_results.cache.is_none() {
+                self.workflow_results.status = Some("Awaiting results".to_string());
+            }
+        } else {
+            self.workflow_results.cache = None;
+            self.workflow_results.error = Some("Workflow not found".to_string());
+        }
+        self.mark_dirty();
+    }
+
+    /// Open the workflow results modal for the currently selected workflow.
+    pub fn open_selected_workflow_results(&mut self) {
+        if let Some(summary) = self.selected_workflow_summary() {
+            self.open_workflow_results(summary.workflow_id.clone());
+        } else {
+            self.workflow_list.set_status("Select a workflow", true);
+            self.mark_dirty();
+        }
+    }
+
+    /// Close the workflow results modal.
+    pub fn close_workflow_results(&mut self) {
+        self.workflow_results.active = false;
+        self.workflow_results.workflow_id = None;
+        self.workflow_results.cache = None;
+        self.workflow_results.status = None;
+        self.workflow_results.error = None;
+        self.mark_dirty();
+    }
+
+    /// Build a results cache from workflow JSON for supported workflow types.
+    fn build_workflow_results_cache(
+        &self,
+        workflow_type: crate::models::WorkflowType,
+        workflow_json: &str,
+    ) -> Option<crate::state::WorkflowResultsCache> {
+        let parsed: serde_json::Value = serde_json::from_str(workflow_json).ok()?;
+
+        let parse_f64 = |value: &serde_json::Value| -> Option<f64> {
+            if let Some(v) = value.as_f64() {
+                Some(v)
+            } else if let Some(s) = value.as_str() {
+                s.parse::<f64>().ok()
+            } else {
+                None
+            }
+        };
+
+        let value_to_string = |value: &serde_json::Value| -> String {
+            if let Some(s) = value.as_str() {
+                s.to_string()
+            } else if let Some(n) = value.as_f64() {
+                n.to_string()
+            } else {
+                value.to_string()
+            }
+        };
+
+        match workflow_type {
+            crate::models::WorkflowType::Convergence => {
+                let config = parsed.get("config")?;
+                let result = parsed.get("result")?;
+
+                let parameter = config
+                    .get("parameter")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("parameter")
+                    .to_string();
+
+                let points = result
+                    .get("points")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|point| {
+                                let parameter_value = point
+                                    .get("parameter_value")
+                                    .map(value_to_string)
+                                    .unwrap_or_else(|| "-".to_string());
+                                let energy = point
+                                    .get("energy")
+                                    .and_then(|v| parse_f64(v));
+                                let energy_per_atom = point
+                                    .get("energy_per_atom")
+                                    .and_then(|v| parse_f64(v));
+                                let status = point
+                                    .get("status")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("pending")
+                                    .to_string();
+
+                                crate::state::ConvergencePointCache {
+                                    parameter_value,
+                                    energy,
+                                    energy_per_atom,
+                                    status,
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                let converged_value = result
+                    .get("converged_value")
+                    .map(value_to_string);
+                let recommendation = result
+                    .get("recommendation")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Some(crate::state::WorkflowResultsCache::Convergence(
+                    crate::state::ConvergenceResultsCache {
+                        parameter,
+                        points,
+                        converged_value,
+                        recommendation,
+                    },
+                ))
+            }
+            crate::models::WorkflowType::Eos => {
+                let result = parsed.get("result")?;
+
+                let points = result
+                    .get("points")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|point| {
+                                crate::state::EosPointCache {
+                                    volume_scale: point
+                                        .get("volume_scale")
+                                        .and_then(|v| parse_f64(v)),
+                                    volume: point.get("volume").and_then(|v| parse_f64(v)),
+                                    energy: point.get("energy").and_then(|v| parse_f64(v)),
+                                    status: point
+                                        .get("status")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                let cache = crate::state::EosResultsCache {
+                    status: result
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    points,
+                    v0: result.get("v0").and_then(|v| parse_f64(v)),
+                    e0: result.get("e0").and_then(|v| parse_f64(v)),
+                    b0: result.get("b0").and_then(|v| parse_f64(v)),
+                    bp: result.get("bp").and_then(|v| parse_f64(v)),
+                    residual: result.get("residual").and_then(|v| parse_f64(v)),
+                    error_message: result
+                        .get("error_message")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                };
+
+                Some(crate::state::WorkflowResultsCache::Eos(cache))
+            }
+            _ => None,
+        }
     }
 
     /// Select previous workflow in dashboard list.
@@ -4583,6 +4793,8 @@ impl<'a> App<'a> {
         self.workflow_state.set_loading(true);
         self.workflow_state
             .set_status(format!("Launching {}...", workflow_name), false);
+        self.workflow_request_types
+            .insert(request_id, workflow_type);
 
         self.workflow_config.error = None;
         self.workflow_config.status = Some("Launching workflow...".to_string());
@@ -4608,6 +4820,7 @@ impl<'a> App<'a> {
         };
 
         if let Err(e) = result {
+            self.workflow_request_types.remove(&request_id);
             self.workflow_state.set_loading(false);
             self.workflow_state
                 .set_status(format!("Failed to launch: {}", e), true);
@@ -5171,7 +5384,9 @@ mod tests {
             workflow_config: WorkflowConfigState::default(),
             workflow_runs: std::collections::HashMap::new(),
             workflow_job_requests: std::collections::HashMap::new(),
+            workflow_request_types: std::collections::HashMap::new(),
             workflow_list: WorkflowListState::default(),
+            workflow_results: WorkflowResultsState::default(),
             pending_retry_job_pk: None,
             pending_retry_workflow_id: None,
             recipe_browser: RecipeBrowserState::default(),

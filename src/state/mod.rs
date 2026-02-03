@@ -1370,6 +1370,74 @@ pub struct WorkflowListState {
     pub status_is_error: bool,
 }
 
+// =============================================================================
+// Workflow Results State (Modal)
+// =============================================================================
+
+/// Cached convergence results for display.
+#[derive(Debug, Clone)]
+pub struct ConvergenceResultsCache {
+    pub parameter: String,
+    pub points: Vec<ConvergencePointCache>,
+    pub converged_value: Option<String>,
+    pub recommendation: Option<String>,
+}
+
+/// Single convergence point display data.
+#[derive(Debug, Clone)]
+pub struct ConvergencePointCache {
+    pub parameter_value: String,
+    pub energy: Option<f64>,
+    pub energy_per_atom: Option<f64>,
+    pub status: String,
+}
+
+/// Cached EOS results for display.
+#[derive(Debug, Clone)]
+pub struct EosResultsCache {
+    pub status: Option<String>,
+    pub points: Vec<EosPointCache>,
+    pub v0: Option<f64>,
+    pub e0: Option<f64>,
+    pub b0: Option<f64>,
+    pub bp: Option<f64>,
+    pub residual: Option<f64>,
+    pub error_message: Option<String>,
+}
+
+/// Single EOS point display data.
+#[derive(Debug, Clone)]
+pub struct EosPointCache {
+    pub volume_scale: Option<f64>,
+    pub volume: Option<f64>,
+    pub energy: Option<f64>,
+    pub status: Option<String>,
+}
+
+/// Cached results for a workflow (per type).
+#[derive(Debug, Clone)]
+pub enum WorkflowResultsCache {
+    Convergence(ConvergenceResultsCache),
+    Eos(EosResultsCache),
+}
+
+/// State for the workflow results modal.
+#[derive(Debug, Default)]
+pub struct WorkflowResultsState {
+    /// Whether the modal is active.
+    pub active: bool,
+    /// Workflow ID currently being viewed.
+    pub workflow_id: Option<String>,
+    /// Scroll offset for results view.
+    pub scroll: usize,
+    /// Status message.
+    pub status: Option<String>,
+    /// Error message.
+    pub error: Option<String>,
+    /// Cached results (parsed from workflow JSON).
+    pub cache: Option<WorkflowResultsCache>,
+}
+
 impl WorkflowListState {
     pub fn clear_status(&mut self) {
         self.status = None;
