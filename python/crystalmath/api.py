@@ -265,6 +265,10 @@ class CrystalController:
                 self.suggest_parameters_json,
                 ["calculation_type", "system_description"],
             ),
+            # quacc integration (Phase 2)
+            "recipes.list": (self.get_recipes_list, []),
+            "clusters.list": (self.get_quacc_clusters_list, []),
+            "jobs.list": (self.get_quacc_jobs_list, ["status", "limit"]),
         }
 
     def dispatch(self, request_json: str) -> str:
@@ -447,6 +451,115 @@ class CrystalController:
         """
         logs = self.get_job_log(pk, tail_lines)
         return json.dumps(logs)
+
+    # ========== quacc Integration Methods ==========
+
+    def get_recipes_list(self) -> Dict[str, Any]:
+        """Get list of available quacc VASP recipes.
+
+        Returns:
+            Dict with recipes list, quacc_version, and error field.
+        """
+        try:
+            from crystalmath.quacc.discovery import discover_vasp_recipes
+
+            recipes = discover_vasp_recipes()
+
+            # Get quacc version if available
+            try:
+                import quacc
+
+                quacc_version = getattr(quacc, "__version__", "unknown")
+            except ImportError:
+                quacc_version = None
+
+            return {
+                "recipes": recipes,
+                "quacc_version": quacc_version,
+                "error": None,
+            }
+        except ImportError as e:
+            return {
+                "recipes": [],
+                "quacc_version": None,
+                "error": f"quacc not available: {e}",
+            }
+        except Exception as e:
+            return {
+                "recipes": [],
+                "quacc_version": None,
+                "error": f"Error discovering recipes: {e}",
+            }
+
+    def get_quacc_clusters_list(self) -> Dict[str, Any]:
+        """Get list of configured quacc clusters and workflow engine status.
+
+        Returns:
+            Dict with clusters list and workflow_engine status.
+        """
+        try:
+            from crystalmath.quacc.config import ClusterConfigStore
+            from crystalmath.quacc.engines import get_engine_status
+
+            store = ClusterConfigStore()
+
+            return {
+                "clusters": store.list_clusters(),
+                "workflow_engine": get_engine_status(),
+            }
+        except ImportError as e:
+            return {
+                "clusters": [],
+                "workflow_engine": {
+                    "configured": None,
+                    "installed": [],
+                    "quacc_installed": False,
+                },
+            }
+        except Exception as e:
+            logger.error(f"Error getting quacc clusters: {e}")
+            return {
+                "clusters": [],
+                "workflow_engine": {
+                    "configured": None,
+                    "installed": [],
+                    "quacc_installed": False,
+                },
+            }
+
+    def get_quacc_jobs_list(
+        self, status: Optional[str] = None, limit: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Get list of quacc jobs with optional filtering.
+
+        Args:
+            status: Optional status filter (e.g., "running", "completed")
+            limit: Optional maximum number of jobs to return
+
+        Returns:
+            Dict with jobs list and total count.
+        """
+        try:
+            from crystalmath.quacc.store import JobStore
+
+            store = JobStore()
+            jobs = store.list_jobs(status=status, limit=limit)
+
+            return {
+                "jobs": [job.model_dump() for job in jobs],
+                "total": len(jobs),
+            }
+        except ImportError as e:
+            return {
+                "jobs": [],
+                "total": 0,
+            }
+        except Exception as e:
+            logger.error(f"Error getting quacc jobs: {e}")
+            return {
+                "jobs": [],
+                "total": 0,
+            }
 
     # ========== AiiDA Backend Implementation ==========
 
