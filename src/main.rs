@@ -351,6 +351,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                         handle_slurm_queue_modal_input(app, key);
                     } else if app.is_vasp_input_modal_active() {
                         handle_vasp_input_modal_input(app, key);
+                    } else if app.is_recipe_browser_active() {
+                        handle_recipe_browser_input(app, key);
                     } else {
                         // Global key handlers
                         match (key.code, key.modifiers) {
@@ -404,6 +406,13 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             (KeyCode::Char('c'), KeyModifiers::NONE) => {
                                 if app.current_tab == app::AppTab::Jobs {
                                     app.open_cluster_manager_modal();
+                                }
+                            }
+
+                            // Open Recipe Browser modal (r from Jobs tab)
+                            (KeyCode::Char('r'), KeyModifiers::NONE) => {
+                                if app.current_tab == app::AppTab::Jobs {
+                                    app.open_recipe_browser();
                                 }
                             }
 
@@ -1115,5 +1124,46 @@ fn handle_vasp_input_modal_input(app: &mut App, key: event::KeyEvent) {
                 }
             }
         }
+    }
+}
+
+/// Handle keyboard input for the recipe browser modal.
+///
+/// Key bindings:
+/// - Esc: Close modal
+/// - j/Down: Select next recipe
+/// - k/Up: Select previous recipe
+/// - r: Refresh recipes
+fn handle_recipe_browser_input(app: &mut App, key: event::KeyEvent) {
+    // Don't process input while loading (except Escape)
+    if app.recipe_browser.loading {
+        if key.code == KeyCode::Esc {
+            app.close_recipe_browser();
+        }
+        return;
+    }
+
+    match key.code {
+        // Close modal
+        KeyCode::Esc => {
+            app.close_recipe_browser();
+        }
+
+        // Navigation
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.select_next_recipe();
+            app.mark_dirty();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.select_prev_recipe();
+            app.mark_dirty();
+        }
+
+        // Refresh recipes
+        KeyCode::Char('r') => {
+            app.refresh_recipes();
+        }
+
+        _ => {}
     }
 }

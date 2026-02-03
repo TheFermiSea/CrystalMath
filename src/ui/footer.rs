@@ -12,6 +12,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 ("j/k", "Select"),
                 ("n", "New Job"),
                 ("c", "Clusters"),
+                ("r", "Recipes"),
                 ("s", "Queue"),
                 ("v", "VASP"),
                 ("Enter", "Details"),
