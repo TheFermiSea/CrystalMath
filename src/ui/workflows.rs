@@ -130,14 +130,28 @@ pub fn render(frame: &mut Frame, state: &WorkflowState) {
     // Clear the background for the modal
     frame.render_widget(Clear, modal_area);
 
-    // Main modal block
+    // Main modal block - pulsing border when loading
+    let border_color = if state.loading {
+        // Cycle through colors to indicate loading
+        let colors = [Color::Yellow, Color::Cyan, Color::Green, Color::Magenta];
+        let idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            / 250) as usize
+            % colors.len();
+        colors[idx]
+    } else {
+        Color::Magenta
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta))
+        .border_style(Style::default().fg(border_color))
         .title(" Workflow Launcher ")
         .title_style(
             Style::default()
-                .fg(Color::Magenta)
+                .fg(border_color)
                 .add_modifier(Modifier::BOLD),
         );
 

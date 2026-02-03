@@ -165,8 +165,24 @@ fn render_recipe_list(frame: &mut Frame, area: Rect, state: &mut RecipeBrowserSt
 
     // Recipe list
     if state.loading {
+        // Pulsing border color when loading
+        let colors = [Color::Yellow, Color::Cyan, Color::Green, Color::Magenta];
+        let idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            / 250) as usize
+            % colors.len();
+        let loading_color = colors[idx];
+
         let loading = Paragraph::new("Loading recipes...")
-            .block(Block::default().borders(Borders::ALL).title("Recipes"));
+            .style(Style::default().fg(loading_color))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(loading_color))
+                    .title("Recipes"),
+            );
         frame.render_widget(loading, chunks[1]);
         return;
     }

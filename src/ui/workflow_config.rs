@@ -28,11 +28,22 @@ pub fn render(frame: &mut Frame, state: &WorkflowConfigState) {
     let modal_area = centered_rect(80, 85, area);
     frame.render_widget(Clear, modal_area);
 
-    let border_style = if state.error.is_some() {
-        Style::default().fg(Color::Red)
+    let border_color = if state.error.is_some() {
+        Color::Red
+    } else if state.submitting {
+        // Pulsing border color when submitting
+        let colors = [Color::Yellow, Color::Cyan, Color::Green, Color::Magenta];
+        let idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            / 250) as usize
+            % colors.len();
+        colors[idx]
     } else {
-        Style::default().fg(Color::Cyan)
+        Color::Cyan
     };
+    let border_style = Style::default().fg(border_color);
 
     let title = format!(" Workflow Config: {} ", state.workflow_type.as_str());
     let modal_block = Block::default()

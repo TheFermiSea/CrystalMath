@@ -424,7 +424,7 @@ impl<'a> App<'a> {
             poll_interval: std::time::Duration::from_secs(30),
             pending_status_requests: std::collections::HashMap::new(),
             status_request_counter: 0,
-            startup_effect: Some(fx::coalesce(1500)),
+            startup_effect: None, // Disabled - no startup animation
         })
     }
 

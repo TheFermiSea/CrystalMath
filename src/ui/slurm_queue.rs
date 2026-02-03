@@ -117,12 +117,23 @@ pub fn render(frame: &mut Frame, app: &App) {
     // Clear the modal area for crisp rendering
     frame.render_widget(Clear, modal_area);
 
-    // Modal border
-    let border_style = if app.slurm_queue_state.error.is_some() {
-        Style::default().fg(Color::Red)
+    // Modal border - pulsing color when loading
+    let border_color = if app.slurm_queue_state.error.is_some() {
+        Color::Red
+    } else if app.slurm_queue_state.loading {
+        // Pulsing border color when loading
+        let colors = [Color::Yellow, Color::Cyan, Color::Green, Color::Magenta];
+        let idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            / 250) as usize
+            % colors.len();
+        colors[idx]
     } else {
-        Style::default().fg(Color::Cyan)
+        Color::Cyan
     };
+    let border_style = Style::default().fg(border_color);
 
     // Build title with cluster name and job counts
     let title = build_queue_title(app);

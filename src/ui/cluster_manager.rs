@@ -363,12 +363,23 @@ pub fn render(frame: &mut Frame, app: &App) {
 fn render_list_view(frame: &mut Frame, app: &App, area: Rect) {
     let state = &app.cluster_manager;
 
-    // Modal border
-    let border_style = if state.error.is_some() {
-        Style::default().fg(Color::Red)
+    // Modal border - pulsing color when loading
+    let border_color = if state.error.is_some() {
+        Color::Red
+    } else if state.loading {
+        // Pulsing border color when loading
+        let colors = [Color::Yellow, Color::Cyan, Color::Green, Color::Magenta];
+        let idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            / 250) as usize
+            % colors.len();
+        colors[idx]
     } else {
-        Style::default().fg(Color::Cyan)
+        Color::Cyan
     };
+    let border_style = Style::default().fg(border_color);
 
     let modal_block = Block::default()
         .borders(Borders::ALL)
@@ -574,12 +585,23 @@ fn render_form_view(frame: &mut Frame, app: &App, area: Rect) {
         " Add Cluster "
     };
 
-    // Modal border
-    let border_style = if state.error.is_some() {
-        Style::default().fg(Color::Red)
+    // Modal border - pulsing when loading/saving
+    let border_color = if state.error.is_some() {
+        Color::Red
+    } else if state.loading {
+        // Pulsing border color when saving
+        let colors = [Color::Yellow, Color::Cyan, Color::Green, Color::Magenta];
+        let idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            / 250) as usize
+            % colors.len();
+        colors[idx]
     } else {
-        Style::default().fg(Color::Cyan)
+        Color::Cyan
     };
+    let border_style = Style::default().fg(border_color);
 
     let modal_block = Block::default()
         .borders(Borders::ALL)
