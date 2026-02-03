@@ -30,7 +30,7 @@ use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use app::App;
-use crate::state::{BatchSubmissionField, WorkflowConfigField};
+use crate::state::{BatchSubmissionField, OutputFileType, WorkflowConfigField};
 use models::ClusterType;
 
 /// Global flag to track if terminal is in raw mode (for panic cleanup)
@@ -432,6 +432,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                         if !app.help.closing {
                             handle_help_modal_input(app, key);
                         }
+                    // Output viewer modal (high priority, similar to help)
+                    } else if app.is_output_viewer_active() {
+                        if !app.output_viewer.closing {
+                            handle_output_viewer_input(app, key);
+                        }
                     // Modal input takes priority over all other handlers
                     } else if app.is_new_job_modal_active() {
                         if !app.new_job.closing {
@@ -753,6 +758,22 @@ fn handle_tab_input(app: &mut App, key: event::KeyEvent) {
                 // L - View log for selected job (with follow mode)
                 KeyCode::Char('l') | KeyCode::Char('L') => {
                     app.view_job_log();
+                }
+                // o - View OUTCAR for selected job
+                KeyCode::Char('o') => {
+                    if let Some(job) = app.selected_job() {
+                        let pk = job.pk;
+                        let name = Some(job.name.clone());
+                        app.open_output_viewer(OutputFileType::Outcar, pk, name);
+                    }
+                }
+                // O - View vasprun.xml for selected job
+                KeyCode::Char('O') => {
+                    if let Some(job) = app.selected_job() {
+                        let pk = job.pk;
+                        let name = Some(job.name.clone());
+                        app.open_output_viewer(OutputFileType::VasprunXml, pk, name);
+                    }
                 }
                 // C - Cancel job (two-key confirmation: press twice within 3s)
                 KeyCode::Char('c') | KeyCode::Char('C') => {
@@ -1846,6 +1867,92 @@ fn handle_batch_submission_input(app: &mut App, key: event::KeyEvent) {
         }
         KeyCode::Enter if app.batch_submission.focused_field == BatchSubmissionField::BtnCancel => {
             app.close_batch_submission();
+        }
+
+        _ => {}
+    }
+}
+
+/// Handle keyboard input for the output file viewer modal.
+///
+/// Key bindings:
+/// - Esc: Close modal
+/// - j/k/Up/Down: Scroll line by line
+/// - PgUp/PgDn: Scroll by page
+/// - g/Home: Jump to top
+/// - G/End: Jump to bottom
+/// - 1/2/3: Switch file type (OUTCAR/vasprun.xml/OSZICAR)
+/// - r: Refresh current file
+fn handle_output_viewer_input(app: &mut App, key: event::KeyEvent) {
+    // Don't process input while loading (except Escape)
+    if app.output_viewer.loading {
+        if key.code == KeyCode::Esc {
+            app.close_output_viewer();
+        }
+        return;
+    }
+
+    // Calculate visible height (approximate based on modal size)
+    let visible_height = 35_usize; // ~85% of typical terminal height minus chrome
+
+    match key.code {
+        // Close modal
+        KeyCode::Esc => {
+            app.close_output_viewer();
+        }
+
+        // Line scrolling
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.output_viewer_scroll_down(visible_height);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.output_viewer_scroll_up();
+        }
+
+        // Page scrolling
+        KeyCode::PageDown => {
+            app.output_viewer_page_down(visible_height);
+        }
+        KeyCode::PageUp => {
+            app.output_viewer_page_up();
+        }
+
+        // Jump to top
+        KeyCode::Home | KeyCode::Char('g') => {
+            app.output_viewer_scroll_top();
+        }
+
+        // Jump to bottom
+        KeyCode::End | KeyCode::Char('G') => {
+            app.output_viewer_scroll_bottom(visible_height);
+        }
+
+        // Switch file type with number keys (if viewing a job)
+        KeyCode::Char('1') => {
+            if let Some(pk) = app.output_viewer.job_pk {
+                let name = app.output_viewer.job_name.clone();
+                app.open_output_viewer(OutputFileType::Outcar, pk, name);
+            }
+        }
+        KeyCode::Char('2') => {
+            if let Some(pk) = app.output_viewer.job_pk {
+                let name = app.output_viewer.job_name.clone();
+                app.open_output_viewer(OutputFileType::VasprunXml, pk, name);
+            }
+        }
+        KeyCode::Char('3') => {
+            if let Some(pk) = app.output_viewer.job_pk {
+                let name = app.output_viewer.job_name.clone();
+                app.open_output_viewer(OutputFileType::Oszicar, pk, name);
+            }
+        }
+
+        // Refresh current file
+        KeyCode::Char('r') => {
+            if let Some(pk) = app.output_viewer.job_pk {
+                let file_type = app.output_viewer.file_type;
+                app.request_fetch_output_file(pk, file_type);
+            }
         }
 
         _ => {}

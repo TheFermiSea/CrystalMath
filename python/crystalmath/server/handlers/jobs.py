@@ -412,6 +412,103 @@ def _parse_structure(structure_data: str | dict) -> Any:
         raise ValueError(f"Unknown structure format: {type(structure_data)}")
 
 
+@register_handler("jobs.get_output_file")
+async def handle_jobs_get_output_file(
+    controller: CrystalController | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Get contents of a job output file (OUTCAR, vasprun.xml, etc.).
+
+    Params:
+        job_pk (int): Job primary key
+        file_type (str): Output file name ("OUTCAR", "vasprun.xml", "OSZICAR", etc.)
+        tail_lines (int, optional): Return only last N lines (default: all)
+
+    Returns:
+        {
+            "ok": true,
+            "data": {
+                "content": "file contents as string",
+                "truncated": false,
+                "total_lines": 1234
+            }
+        }
+    """
+    import os
+    from pathlib import Path
+
+    job_pk = params.get("job_pk")
+    if job_pk is None:
+        return {"ok": False, "error": {"message": "job_pk parameter is required"}}
+
+    file_type = params.get("file_type", "OUTCAR")
+    tail_lines = params.get("tail_lines")
+
+    # Get job details to find work directory
+    if controller is None:
+        return {"ok": False, "error": {"message": "Controller not available"}}
+
+    try:
+        job_details = controller.get_job_details(job_pk)
+        if job_details is None:
+            return {"ok": False, "error": {"message": f"Job {job_pk} not found"}}
+    except Exception as e:
+        logger.error(f"Failed to get job details for pk={job_pk}: {e}")
+        return {"ok": False, "error": {"message": f"Failed to get job details: {e}"}}
+
+    # Get work directory
+    work_dir = getattr(job_details, "work_dir", None)
+    if not work_dir:
+        return {"ok": False, "error": {"message": f"Job {job_pk} has no work directory"}}
+
+    # Construct file path
+    file_path = Path(work_dir) / file_type
+
+    # Security check: ensure file is within work_dir (prevent path traversal)
+    try:
+        file_path = file_path.resolve()
+        work_dir_resolved = Path(work_dir).resolve()
+        if not str(file_path).startswith(str(work_dir_resolved)):
+            return {"ok": False, "error": {"message": "Invalid file path"}}
+    except Exception as e:
+        return {"ok": False, "error": {"message": f"Path resolution error: {e}"}}
+
+    # Check file exists
+    if not file_path.exists():
+        return {"ok": False, "error": {"message": f"File not found: {file_type}"}}
+
+    if not file_path.is_file():
+        return {"ok": False, "error": {"message": f"Not a file: {file_type}"}}
+
+    # Read file content
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+        total_lines = len(lines)
+        truncated = False
+
+        # Apply tail limit if specified
+        if tail_lines is not None and tail_lines > 0 and total_lines > tail_lines:
+            lines = lines[-tail_lines:]
+            truncated = True
+
+        content = "".join(lines)
+
+        return {
+            "ok": True,
+            "data": {
+                "content": content,
+                "truncated": truncated,
+                "total_lines": total_lines,
+            },
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to read file {file_path}: {e}")
+        return {"ok": False, "error": {"message": f"Failed to read file: {e}"}}
+
+
 def _summarize_result(result: dict) -> dict:
     """Extract key values from quacc result schema.
 

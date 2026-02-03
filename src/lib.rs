@@ -3,7 +3,7 @@
 //! This library provides the core components for the CrystalMath TUI:
 //!
 //! - `ipc` - IPC client for communication with crystalmath-server
-//! - `bridge` - Legacy PyO3 bridge (deprecated, use IPC)
+//! - `bridge` - JSON-RPC types and utilities for IPC communication
 //! - `models` - Data models shared between Rust and Python
 //!
 //! # IPC Module

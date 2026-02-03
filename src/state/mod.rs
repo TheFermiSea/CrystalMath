@@ -12,7 +12,7 @@ use tachyonfx::{fx, Effect, Motion};
 use ratatui::style::Color;
 
 use crate::models::{
-    D12GenerationConfig, DftCode, JobStatus, MaterialResult, RunnerType, StructurePreview, Template,
+    D12GenerationConfig, DftCode, JobState, JobStatus, MaterialResult, RunnerType, StructurePreview, Template,
     VaspGenerationConfig, WorkflowType,
 };
 
@@ -21,6 +21,186 @@ pub mod help;
 
 pub use actions::*;
 pub use help::{HelpContext, HelpState, ModalType};
+
+// =============================================================================
+// Output File Viewer State
+// =============================================================================
+
+/// Type of output file being viewed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputFileType {
+    /// VASP OUTCAR file
+    #[default]
+    Outcar,
+    /// VASP vasprun.xml file
+    VasprunXml,
+    /// VASP OSZICAR file
+    Oszicar,
+    /// CRYSTAL output file
+    CrystalOut,
+    /// Generic log/output file
+    GenericLog,
+}
+
+impl OutputFileType {
+    /// Get display name for the file type.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OutputFileType::Outcar => "OUTCAR",
+            OutputFileType::VasprunXml => "vasprun.xml",
+            OutputFileType::Oszicar => "OSZICAR",
+            OutputFileType::CrystalOut => "CRYSTAL Output",
+            OutputFileType::GenericLog => "Log",
+        }
+    }
+
+    /// Get typical filename for this file type.
+    pub fn filename(&self) -> &'static str {
+        match self {
+            OutputFileType::Outcar => "OUTCAR",
+            OutputFileType::VasprunXml => "vasprun.xml",
+            OutputFileType::Oszicar => "OSZICAR",
+            OutputFileType::CrystalOut => "output",
+            OutputFileType::GenericLog => "log",
+        }
+    }
+}
+
+/// State for the output file viewer modal.
+pub struct OutputViewerState {
+    /// Whether the modal is active.
+    pub active: bool,
+    /// Type of file being viewed.
+    pub file_type: OutputFileType,
+    /// File content (lines).
+    pub content: Vec<String>,
+    /// Scroll offset for viewing.
+    pub scroll: usize,
+    /// Error message if file loading failed.
+    pub error: Option<String>,
+    /// Whether file is being loaded.
+    pub loading: bool,
+    /// Request ID for async operations.
+    pub request_id: usize,
+    /// Animation effect.
+    pub effect: Option<Effect>,
+    /// Whether modal is closing.
+    pub closing: bool,
+    /// Job PK being viewed (for title display).
+    pub job_pk: Option<i32>,
+    /// Job name being viewed (for title display).
+    pub job_name: Option<String>,
+}
+
+impl Default for OutputViewerState {
+    fn default() -> Self {
+        Self {
+            active: false,
+            file_type: OutputFileType::default(),
+            content: Vec::new(),
+            scroll: 0,
+            error: None,
+            loading: false,
+            request_id: 0,
+            effect: None,
+            closing: false,
+            job_pk: None,
+            job_name: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for OutputViewerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutputViewerState")
+            .field("active", &self.active)
+            .field("file_type", &self.file_type)
+            .field("content_lines", &self.content.len())
+            .field("loading", &self.loading)
+            .finish()
+    }
+}
+
+impl OutputViewerState {
+    /// Open the modal for viewing a specific file type.
+    pub fn open(&mut self, file_type: OutputFileType, job_pk: i32, job_name: Option<String>) {
+        self.active = true;
+        self.closing = false;
+        self.file_type = file_type;
+        self.job_pk = Some(job_pk);
+        self.job_name = job_name;
+        self.content.clear();
+        self.scroll = 0;
+        self.error = None;
+        self.loading = true;
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
+    }
+
+    /// Close the modal.
+    pub fn close(&mut self) {
+        self.closing = true;
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
+        self.request_id += 1;
+    }
+
+    /// Set content and clear loading state.
+    pub fn set_content(&mut self, content: Vec<String>) {
+        self.content = content;
+        self.loading = false;
+        self.error = None;
+    }
+
+    /// Set error and clear loading state.
+    pub fn set_error(&mut self, error: String) {
+        self.error = Some(error);
+        self.loading = false;
+    }
+
+    /// Calculate max scroll based on content length.
+    pub fn max_scroll(&self, visible_height: usize) -> usize {
+        self.content.len().saturating_sub(visible_height)
+    }
+
+    /// Scroll up by one line.
+    pub fn scroll_up(&mut self) {
+        if self.scroll > 0 {
+            self.scroll -= 1;
+        }
+    }
+
+    /// Scroll down by one line.
+    pub fn scroll_down(&mut self, visible_height: usize) {
+        let max = self.max_scroll(visible_height);
+        if self.scroll < max {
+            self.scroll += 1;
+        }
+    }
+
+    /// Scroll up by one page.
+    pub fn page_up(&mut self) {
+        self.scroll = self.scroll.saturating_sub(20);
+    }
+
+    /// Scroll down by one page.
+    pub fn page_down(&mut self, visible_height: usize) {
+        let max = self.max_scroll(visible_height);
+        self.scroll = (self.scroll + 20).min(max);
+    }
+
+    /// Scroll to top.
+    pub fn scroll_top(&mut self) {
+        self.scroll = 0;
+    }
+
+    /// Scroll to bottom.
+    pub fn scroll_bottom(&mut self, visible_height: usize) {
+        self.scroll = self.max_scroll(visible_height);
+    }
+}
+
+// =============================================================================
+// Batch Submission State
+// =============================================================================
 
 /// Configuration for a single job in a batch.
 #[derive(Debug, Clone)]
@@ -1307,6 +1487,13 @@ pub struct JobsState {
     /// Scroll offset for diff view.
     #[allow(dead_code)] // Planned for job diff feature
     pub diff_scroll: usize,
+
+    // ===== Job Filtering =====
+    /// Filter jobs by status (None = show all).
+    pub status_filter: Option<JobState>,
+
+    /// Filter jobs by DFT code (None = show all).
+    pub dft_code_filter: Option<DftCode>,
 }
 
 // =============================================================================
@@ -1534,5 +1721,80 @@ impl JobsState {
         self.pending_submit_time
             .map(|t| t.elapsed() > SUBMIT_TIMEOUT)
             .unwrap_or(false)
+    }
+
+    // ===== Job Filtering Methods =====
+
+    /// Get filtered jobs based on current filter settings.
+    pub fn filtered_jobs(&self) -> Vec<&JobStatus> {
+        self.jobs
+            .iter()
+            .filter(|job| {
+                // Status filter
+                if let Some(status) = self.status_filter {
+                    if job.state != status {
+                        return false;
+                    }
+                }
+                // DFT code filter
+                if let Some(code) = self.dft_code_filter {
+                    if job.dft_code != Some(code) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect()
+    }
+
+    /// Check if any filter is active.
+    pub fn has_active_filter(&self) -> bool {
+        self.status_filter.is_some() || self.dft_code_filter.is_some()
+    }
+
+    /// Clear all filters.
+    pub fn clear_filters(&mut self) {
+        self.status_filter = None;
+        self.dft_code_filter = None;
+    }
+
+    /// Cycle through status filter options.
+    pub fn cycle_status_filter(&mut self) {
+        self.status_filter = match self.status_filter {
+            None => Some(JobState::Running),
+            Some(JobState::Running) => Some(JobState::Completed),
+            Some(JobState::Completed) => Some(JobState::Failed),
+            Some(JobState::Failed) => Some(JobState::Queued),
+            Some(JobState::Queued) => None,
+            Some(_) => None,
+        };
+    }
+
+    /// Cycle through DFT code filter options.
+    pub fn cycle_dft_code_filter(&mut self) {
+        use crate::models::DftCode;
+        self.dft_code_filter = match self.dft_code_filter {
+            None => Some(DftCode::Crystal),
+            Some(DftCode::Crystal) => Some(DftCode::Vasp),
+            Some(DftCode::Vasp) => Some(DftCode::QuantumEspresso),
+            Some(DftCode::QuantumEspresso) => None,
+            Some(_) => None,
+        };
+    }
+
+    /// Get display string for current filter state.
+    pub fn filter_display(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(status) = self.status_filter {
+            parts.push(format!("Status: {}", status.as_str()));
+        }
+        if let Some(code) = self.dft_code_filter {
+            parts.push(format!("Code: {}", code.as_str()));
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" | "))
+        }
     }
 }
