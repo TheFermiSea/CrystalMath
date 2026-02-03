@@ -6,6 +6,8 @@ mod cluster_manager;
 mod editor;
 mod footer;
 mod header;
+mod help;
+mod help_content;
 mod jobs;
 mod log;
 mod materials;
@@ -341,48 +343,73 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
         
     
             if app.batch_submission.active {
-    
+
                 batch_submission::render(frame, app);
-    
-                
-    
+
+
+
                 if let Some(ref mut effect) = app.batch_submission.effect {
-    
+
                     let delta = std::time::Duration::from_millis(16);
-    
+
                     let modal_area = centered_rect(85, 85, frame.area());
-    
+
                     effect.process(delta.into(), frame.buffer_mut(), modal_area);
-    
-                    
-    
+
+
+
                     if !effect.running() {
-    
+
                         if app.batch_submission.closing {
-    
+
                             app.batch_submission.active = false;
-    
+
                             app.batch_submission.closing = false;
-    
+
                             app.batch_submission.effect = None;
-    
+
                         } else {
-    
+
                             app.batch_submission.effect = None;
-    
+
                         }
-    
+
                     } else {
-    
+
                         app.mark_dirty();
-    
+
                     }
-    
+
                 }
-    
+
             }
-    
+
+    // Help modal renders LAST (on top of all other modals)
+    if app.help.active {
+        help::render(frame, &app.help);
+
+        if let Some(ref mut effect) = app.help.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let area = frame.area();
+            let modal_width = (area.width * 85 / 100).clamp(60, 120);
+            let modal_height = (area.height * 80 / 100).clamp(20, 40);
+            let modal_area = centered_rect_fixed(modal_width, modal_height, area);
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+
+            if !effect.running() {
+                if app.help.closing {
+                    app.help.active = false;
+                    app.help.closing = false;
+                    app.help.effect = None;
+                } else {
+                    app.help.effect = None;
+                }
+            } else {
+                app.mark_dirty();
+            }
         }
+    }
+}
     
         
     /// Helper function to create a centered rectangle (replicated from new_job).

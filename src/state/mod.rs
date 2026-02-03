@@ -17,8 +17,10 @@ use crate::models::{
 };
 
 pub mod actions;
+pub mod help;
 
 pub use actions::*;
+pub use help::{HelpContext, HelpState, ModalType};
 
 /// Configuration for a single job in a batch.
 #[derive(Debug, Clone)]

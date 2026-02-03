@@ -427,8 +427,13 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
         if event::poll(FRAME_DURATION)? {
             match event::read()? {
                 Event::Key(key) => {
+                    // Help modal takes highest priority (can overlay other modals)
+                    if app.is_help_modal_active() {
+                        if !app.help.closing {
+                            handle_help_modal_input(app, key);
+                        }
                     // Modal input takes priority over all other handlers
-                    if app.is_new_job_modal_active() {
+                    } else if app.is_new_job_modal_active() {
                         if !app.new_job.closing {
                             handle_new_job_modal_input(app, key);
                         }
@@ -478,6 +483,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                         }
                         // Global key handlers
                         match (key.code, key.modifiers) {
+                            // Help (works from anywhere, including over other modals)
+                            (KeyCode::Char('?'), _) => {
+                                app.open_help_modal();
+                            }
+
                             // Quit: Ctrl+Q or Ctrl+C
                             (KeyCode::Char('q'), KeyModifiers::CONTROL)
                             | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
@@ -1836,6 +1846,64 @@ fn handle_batch_submission_input(app: &mut App, key: event::KeyEvent) {
         }
         KeyCode::Enter if app.batch_submission.focused_field == BatchSubmissionField::BtnCancel => {
             app.close_batch_submission();
+        }
+
+        _ => {}
+    }
+}
+
+/// Handle keyboard input for the help modal.
+fn handle_help_modal_input(app: &mut App, key: event::KeyEvent) {
+    use crate::state::help::HelpPaneFocus;
+
+    match key.code {
+        // Close modal: Escape or '?'
+        KeyCode::Esc | KeyCode::Char('?') => {
+            app.close_help_modal();
+        }
+
+        // Navigate sidebar / scroll content
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.help.select_next();
+            app.mark_dirty();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.help.select_prev();
+            app.mark_dirty();
+        }
+
+        // Toggle focus between sidebar and content
+        KeyCode::Tab => {
+            app.help.toggle_focus();
+            app.mark_dirty();
+        }
+
+        // Enter topic (drill in) - also 'l' for vim-style
+        KeyCode::Enter | KeyCode::Char('l') if app.help.focus == HelpPaneFocus::Sidebar => {
+            app.help.enter_topic();
+            app.mark_dirty();
+        }
+
+        // Go back: Backspace or 'h' for vim-style
+        KeyCode::Backspace | KeyCode::Char('h') => {
+            app.help.go_back();
+            app.mark_dirty();
+        }
+
+        // Page up/down for content scrolling
+        KeyCode::PageUp => {
+            app.help.page_up();
+            app.mark_dirty();
+        }
+        KeyCode::PageDown => {
+            app.help.page_down();
+            app.mark_dirty();
+        }
+
+        // Home - go to root of help hierarchy
+        KeyCode::Home => {
+            app.help.go_to_root();
+            app.mark_dirty();
         }
 
         _ => {}

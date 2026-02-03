@@ -1632,6 +1632,9 @@ mod tests {
             remote_workdir: Some("/scratch/user".to_string()),
             queue_name: Some("compute".to_string()),
             max_concurrent: 4,
+            cry23_root: None,
+            vasp_root: None,
+            setup_commands: Vec::new(),
             status: ClusterStatus::Active,
         };
 

@@ -15,13 +15,14 @@ use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
 use crate::models::{ApiResponse, JobDetails, JobStatus, SlurmQueueEntry};
 use crate::ui::{ClusterManagerState, RecipeBrowserState, SlurmQueueState};
 
-use tachyonfx::{fx, Effect};
+use tachyonfx::Effect;
 
 // Re-export state types for backward compatibility with existing imports from crate::app
 pub use crate::state::{
-    Action, AppTab, BatchSubmissionState, JobsState, MaterialsSearchState, NewJobField,
-    NewJobState, TemplateBrowserState, WorkflowConfigState, WorkflowDashboardFocus,
-    WorkflowListState, WorkflowResultsState, WorkflowStatus, WorkflowSummary,
+    Action, AppTab, BatchSubmissionState, HelpContext, HelpState, JobsState, MaterialsSearchState,
+    ModalType, NewJobField, NewJobState, TemplateBrowserState, WorkflowConfigState,
+    WorkflowDashboardFocus, WorkflowListState, WorkflowResultsState, WorkflowStatus,
+    WorkflowSummary,
 };
 
 #[derive(Debug, Clone)]
@@ -215,6 +216,10 @@ pub struct App<'a> {
     // ===== Batch Submission Modal =====
     /// State for the batch job submission modal.
     pub batch_submission: BatchSubmissionState,
+
+    // ===== Help Modal =====
+    /// State for the hierarchical help modal.
+    pub help: HelpState,
 
     /// Request ID for the current recipe fetch (to ignore stale responses).
     pub recipe_request_id: usize,
@@ -415,6 +420,7 @@ impl<'a> App<'a> {
             recipe_browser: RecipeBrowserState::default(),
             template_browser: TemplateBrowserState::default(),
             batch_submission: BatchSubmissionState::default(),
+            help: HelpState::default(),
             recipe_request_id: 0,
             workflow_request_id: 0,
             vasp_request_id: 0,
@@ -5000,6 +5006,68 @@ impl<'a> App<'a> {
             );
         }
     }
+
+    // ===== Help Modal =====
+
+    /// Open the help modal with context-aware default topic.
+    pub fn open_help_modal(&mut self) {
+        let context = self.determine_help_context();
+        self.help.open(context);
+        self.mark_dirty();
+        info!("Help modal opened with context: {:?}", context);
+    }
+
+    /// Close the help modal.
+    pub fn close_help_modal(&mut self) {
+        self.help.close();
+        self.mark_dirty();
+    }
+
+    /// Check if the help modal is active.
+    pub fn is_help_modal_active(&self) -> bool {
+        self.help.active
+    }
+
+    /// Determine the help context based on active modals or current tab.
+    pub fn determine_help_context(&self) -> HelpContext {
+        // Check modals in priority order (most specific first)
+        if self.new_job.active {
+            return HelpContext::Modal(ModalType::NewJob);
+        }
+        if self.materials.active {
+            return HelpContext::Modal(ModalType::Materials);
+        }
+        if self.cluster_manager.active {
+            return HelpContext::Modal(ModalType::ClusterManager);
+        }
+        if self.slurm_queue_state.active {
+            return HelpContext::Modal(ModalType::SlurmQueue);
+        }
+        if self.vasp_input_state.active {
+            return HelpContext::Modal(ModalType::VaspInput);
+        }
+        if self.recipe_browser.active {
+            return HelpContext::Modal(ModalType::RecipeBrowser);
+        }
+        if self.workflow_config.active {
+            return HelpContext::Modal(ModalType::WorkflowConfig);
+        }
+        if self.workflow_state.active {
+            return HelpContext::Modal(ModalType::WorkflowLauncher);
+        }
+        if self.template_browser.active {
+            return HelpContext::Modal(ModalType::TemplateBrowser);
+        }
+        if self.batch_submission.active {
+            return HelpContext::Modal(ModalType::BatchSubmission);
+        }
+        if self.workflow_results.active {
+            return HelpContext::Modal(ModalType::WorkflowResults);
+        }
+
+        // No modal active - use current tab
+        HelpContext::Tab(self.current_tab)
+    }
 }
 
 // =============================================================================
@@ -5407,6 +5475,7 @@ mod tests {
             recipe_browser: RecipeBrowserState::default(),
             template_browser: TemplateBrowserState::default(),
             batch_submission: BatchSubmissionState::default(),
+            help: HelpState::default(),
             recipe_request_id: 0,
             workflow_request_id: 0,
             vasp_request_id: 0,
