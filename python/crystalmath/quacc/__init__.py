@@ -32,6 +32,8 @@ from crystalmath.quacc.engines import (
 )
 from crystalmath.quacc.config import ParslClusterConfig, ClusterConfigStore
 from crystalmath.quacc.store import JobStatus, JobMetadata, JobStore
+from crystalmath.quacc.runner import JobRunner, JobState, get_runner, get_or_create_runner
+from crystalmath.quacc.potcar import validate_potcars, get_potcar_path, get_potcar_info
 
 __all__ = [
     # Discovery
@@ -47,4 +49,13 @@ __all__ = [
     "JobStatus",
     "JobMetadata",
     "JobStore",
+    # Runner
+    "JobRunner",
+    "JobState",
+    "get_runner",
+    "get_or_create_runner",
+    # POTCAR
+    "validate_potcars",
+    "get_potcar_path",
+    "get_potcar_info",
 ]

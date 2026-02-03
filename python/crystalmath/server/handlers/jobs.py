@@ -1,13 +1,25 @@
-"""RPC handlers for jobs.* namespace (quacc job tracking)."""
+"""RPC handlers for jobs.* namespace (quacc job tracking).
+
+This module provides handlers for:
+- jobs.list: List jobs from local metadata store
+- jobs.submit: Submit a new job via quacc recipe
+- jobs.status: Get current status of a job
+- jobs.cancel: Cancel a running job
+"""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from io import StringIO
 from typing import TYPE_CHECKING, Any
+import logging
 
 from crystalmath.server.handlers import register_handler
 
 if TYPE_CHECKING:
     from crystalmath.api import CrystalController
+
+logger = logging.getLogger(__name__)
 
 
 @register_handler("jobs.list")
@@ -55,3 +67,381 @@ async def handle_jobs_list(
         "jobs": [j.model_dump(mode="json") for j in jobs],
         "total": len(jobs),
     }
+
+
+@register_handler("jobs.submit")
+async def handle_jobs_submit(
+    controller: CrystalController | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Submit a VASP job via quacc recipe.
+
+    Params:
+        recipe (str): Full recipe path (e.g., "quacc.recipes.vasp.core.relax_job")
+        structure (str | dict): POSCAR string or ASE Atoms dict
+        cluster (str, optional): Cluster name from configuration
+        params (dict, optional): Recipe parameters (kpts, encut, etc.)
+
+    Returns:
+        {
+            "job_id": "uuid" | null,
+            "status": "pending" | "error",
+            "error": null | "error message"
+        }
+    """
+    from crystalmath.quacc.engines import get_workflow_engine
+    from crystalmath.quacc.runner import get_or_create_runner
+    from crystalmath.quacc.potcar import validate_potcars
+    from crystalmath.quacc.store import JobStatus, JobMetadata, JobStore
+
+    # Check workflow engine is configured
+    engine = get_workflow_engine()
+    if engine is None:
+        return {
+            "job_id": None,
+            "status": "error",
+            "error": (
+                "No workflow engine configured. "
+                "Set QUACC_WORKFLOW_ENGINE environment variable to 'parsl' or 'covalent'."
+            ),
+        }
+
+    # Validate required params
+    recipe = params.get("recipe")
+    if not recipe:
+        return {
+            "job_id": None,
+            "status": "error",
+            "error": "recipe parameter is required",
+        }
+
+    structure_data = params.get("structure")
+    if not structure_data:
+        return {
+            "job_id": None,
+            "status": "error",
+            "error": "structure parameter is required",
+        }
+
+    # Parse structure
+    try:
+        atoms = _parse_structure(structure_data)
+    except Exception as e:
+        logger.warning(f"Failed to parse structure: {e}")
+        return {
+            "job_id": None,
+            "status": "error",
+            "error": f"Failed to parse structure: {e}",
+        }
+
+    # Validate POTCARs
+    elements = set(str(s) for s in atoms.get_chemical_symbols())
+    valid, potcar_error = validate_potcars(elements)
+    if not valid:
+        return {
+            "job_id": None,
+            "status": "error",
+            "error": potcar_error,
+        }
+
+    # Get runner for configured engine
+    try:
+        runner = get_or_create_runner(engine)
+    except Exception as e:
+        logger.error(f"Failed to create runner for {engine}: {e}")
+        return {
+            "job_id": None,
+            "status": "error",
+            "error": f"Failed to create runner: {e}",
+        }
+
+    # Submit job
+    cluster_name = params.get("cluster", "local")
+    recipe_params = params.get("params", {})
+
+    try:
+        job_id = runner.submit(
+            recipe_fullname=recipe,
+            atoms=atoms,
+            cluster_name=cluster_name,
+            **recipe_params,
+        )
+    except Exception as e:
+        logger.error(f"Job submission failed: {e}")
+        return {
+            "job_id": None,
+            "status": "error",
+            "error": f"Submission failed: {e}",
+        }
+
+    # Store job metadata
+    store = JobStore()
+    job = JobMetadata(
+        id=job_id,
+        recipe=recipe,
+        status=JobStatus.pending,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        cluster=cluster_name,
+        work_dir=None,
+    )
+    store.save_job(job)
+
+    logger.info(f"Submitted job {job_id} for recipe {recipe}")
+
+    return {
+        "job_id": job_id,
+        "status": "pending",
+        "error": None,
+    }
+
+
+@register_handler("jobs.status")
+async def handle_jobs_status(
+    controller: CrystalController | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Get current status of a job.
+
+    Params:
+        job_id (str): Job UUID
+
+    Returns:
+        {
+            "job_id": "uuid",
+            "status": "pending" | "running" | "completed" | "failed" | "cancelled",
+            "error": null | "error message",
+            "result": null | {...}
+        }
+    """
+    from crystalmath.quacc.engines import get_workflow_engine
+    from crystalmath.quacc.runner import get_or_create_runner, JobState
+    from crystalmath.quacc.store import JobStatus, JobStore
+
+    job_id = params.get("job_id")
+    if not job_id:
+        return {"error": "job_id parameter is required"}
+
+    store = JobStore()
+    job = store.get_job(job_id)
+    if job is None:
+        return {"error": f"Job not found: {job_id}"}
+
+    # If already in terminal state, return cached status
+    if job.status in (JobStatus.completed, JobStatus.failed):
+        return {
+            "job_id": job_id,
+            "status": job.status.value,
+            "error": job.error_message,
+            "result": job.results_summary,
+        }
+
+    # Poll live status from runner
+    engine = get_workflow_engine()
+    if engine is None:
+        # No engine - return stored status
+        return {
+            "job_id": job_id,
+            "status": job.status.value,
+            "error": job.error_message,
+            "result": job.results_summary,
+        }
+
+    try:
+        runner = get_or_create_runner(engine)
+        current_state = runner.get_status(job_id)
+    except KeyError:
+        # Job not in runner (orphaned on restart)
+        return {
+            "job_id": job_id,
+            "status": job.status.value,
+            "error": "Job tracking lost (server restart?)",
+            "result": job.results_summary,
+        }
+    except Exception as e:
+        logger.warning(f"Error polling job {job_id}: {e}")
+        return {
+            "job_id": job_id,
+            "status": job.status.value,
+            "error": str(e),
+            "result": job.results_summary,
+        }
+
+    # Map JobState to JobStatus
+    status_map = {
+        JobState.PENDING: JobStatus.pending,
+        JobState.RUNNING: JobStatus.running,
+        JobState.COMPLETED: JobStatus.completed,
+        JobState.FAILED: JobStatus.failed,
+        JobState.CANCELLED: JobStatus.cancelled,
+    }
+    new_status = status_map.get(current_state, JobStatus.pending)
+
+    # Update if status changed
+    if new_status != job.status:
+        job.status = new_status
+        job.updated_at = datetime.now(timezone.utc)
+
+        # Fetch result if complete
+        if current_state == JobState.COMPLETED:
+            try:
+                result = runner.get_result(job_id)
+                if result:
+                    job.results_summary = _summarize_result(result)
+            except Exception as e:
+                logger.warning(f"Failed to get result for {job_id}: {e}")
+
+        # Fetch error if failed
+        elif current_state == JobState.FAILED:
+            try:
+                result = runner.get_result(job_id)
+                if result and "error" in result:
+                    job.error_message = result["error"]
+            except Exception as e:
+                logger.warning(f"Failed to get error for {job_id}: {e}")
+
+        store.save_job(job)
+
+    return {
+        "job_id": job_id,
+        "status": job.status.value,
+        "error": job.error_message,
+        "result": job.results_summary,
+    }
+
+
+@register_handler("jobs.cancel")
+async def handle_jobs_cancel(
+    controller: CrystalController | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Cancel a running job.
+
+    Params:
+        job_id (str): Job UUID
+
+    Returns:
+        {
+            "job_id": "uuid",
+            "cancelled": true | false,
+            "error": null | "error message"
+        }
+    """
+    from crystalmath.quacc.engines import get_workflow_engine
+    from crystalmath.quacc.runner import get_or_create_runner
+    from crystalmath.quacc.store import JobStatus, JobStore
+
+    job_id = params.get("job_id")
+    if not job_id:
+        return {"error": "job_id parameter is required"}
+
+    store = JobStore()
+    job = store.get_job(job_id)
+    if job is None:
+        return {"error": f"Job not found: {job_id}"}
+
+    # Check if already in terminal state
+    if job.status in (JobStatus.completed, JobStatus.failed, JobStatus.cancelled):
+        return {
+            "job_id": job_id,
+            "cancelled": False,
+            "error": f"Job already in terminal state: {job.status.value}",
+        }
+
+    # Get engine and runner
+    engine = get_workflow_engine()
+    if engine is None:
+        return {
+            "job_id": job_id,
+            "cancelled": False,
+            "error": "No workflow engine configured",
+        }
+
+    try:
+        runner = get_or_create_runner(engine)
+        cancelled = runner.cancel(job_id)
+    except KeyError:
+        return {
+            "job_id": job_id,
+            "cancelled": False,
+            "error": "Job not found in runner (may have been orphaned)",
+        }
+    except Exception as e:
+        logger.error(f"Error cancelling job {job_id}: {e}")
+        return {
+            "job_id": job_id,
+            "cancelled": False,
+            "error": str(e),
+        }
+
+    if cancelled:
+        job.status = JobStatus.cancelled
+        job.updated_at = datetime.now(timezone.utc)
+        store.save_job(job)
+        logger.info(f"Cancelled job {job_id}")
+
+    return {
+        "job_id": job_id,
+        "cancelled": cancelled,
+        "error": None,
+    }
+
+
+def _parse_structure(structure_data: str | dict) -> Any:
+    """Parse structure from POSCAR string or ASE Atoms dict.
+
+    Args:
+        structure_data: Either a POSCAR string or an ASE Atoms dict
+
+    Returns:
+        ASE Atoms object
+
+    Raises:
+        ValueError: If structure format is unknown
+    """
+    from ase.io import read
+    from ase import Atoms
+
+    if isinstance(structure_data, str):
+        # POSCAR string
+        return read(StringIO(structure_data), format="vasp")
+    elif isinstance(structure_data, dict):
+        # ASE Atoms dict format
+        return Atoms(**structure_data)
+    else:
+        raise ValueError(f"Unknown structure format: {type(structure_data)}")
+
+
+def _summarize_result(result: dict) -> dict:
+    """Extract key values from quacc result schema.
+
+    Args:
+        result: quacc result dictionary
+
+    Returns:
+        Summary dictionary with key values
+    """
+    summary = {}
+
+    # Energy
+    if "results" in result and "energy" in result["results"]:
+        summary["energy_ev"] = result["results"]["energy"]
+
+    # Forces (max magnitude)
+    if "results" in result and "forces" in result["results"]:
+        try:
+            import numpy as np
+            forces = np.array(result["results"]["forces"])
+            summary["max_force_ev_ang"] = float(np.max(np.linalg.norm(forces, axis=1)))
+        except Exception:
+            pass
+
+    # Formula
+    if "formula_pretty" in result:
+        summary["formula"] = result["formula_pretty"]
+
+    # Working directory
+    if "dir_name" in result:
+        summary["work_dir"] = result["dir_name"]
+
+    return summary
