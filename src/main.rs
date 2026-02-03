@@ -109,20 +109,46 @@ fn configure_python_env() {
             std::env::set_var("PYTHONHOME", &env_info.base_prefix);
             tracing::info!("Using PYTHONHOME={}", env_info.base_prefix);
 
+            // Log venv detection
+            if env_info.is_venv() {
+                tracing::info!(
+                    "Detected venv: prefix={}, base_prefix={}",
+                    env_info.prefix,
+                    env_info.base_prefix
+                );
+            }
+
             // Set PYTHONPATH if not already set
             if std::env::var_os("PYTHONPATH").is_none() && !env_info.path.is_empty() {
+                // Start with paths from Python's sys.path
+                let mut paths = env_info.path.clone();
+
+                // CRITICAL: For venvs, ensure the venv's site-packages is included
+                // This is needed because PYTHONHOME points to base_prefix (system Python)
+                // but we need packages from the venv's site-packages
+                if let Some(venv_site_packages) = env_info.venv_site_packages() {
+                    let site_packages_str = venv_site_packages.display().to_string();
+                    if !paths.contains(&site_packages_str) {
+                        // Prepend venv site-packages so it takes priority
+                        paths.insert(0, site_packages_str.clone());
+                        tracing::info!("Added venv site-packages to PYTHONPATH: {}", site_packages_str);
+                    }
+                }
+
                 // Add project python/ directory for crystalmath.api
-                let mut paths = env_info.path;
                 if let Some(project_root) = find_project_root() {
                     let python_dir = project_root.join("python");
                     if python_dir.is_dir() {
-                        paths.push(python_dir.display().to_string());
+                        let python_dir_str = python_dir.display().to_string();
+                        if !paths.contains(&python_dir_str) {
+                            paths.push(python_dir_str);
+                        }
                     }
                 }
 
                 if let Ok(joined) = std::env::join_paths(&paths) {
                     std::env::set_var("PYTHONPATH", &joined);
-                    tracing::info!("Using PYTHONPATH from Python query");
+                    tracing::info!("Using PYTHONPATH from Python query (venv-aware)");
                 }
             }
             return;
@@ -134,17 +160,48 @@ fn configure_python_env() {
 
 /// Python environment info queried from the interpreter.
 struct PythonEnvInfo {
+    prefix: String,
     base_prefix: String,
     path: Vec<String>,
 }
 
-/// Query Python executable to get sys.prefix and sys.path.
+impl PythonEnvInfo {
+    /// Returns true if this is a virtual environment (prefix != base_prefix).
+    fn is_venv(&self) -> bool {
+        self.prefix != self.base_prefix
+    }
+
+    /// Get the venv site-packages path if this is a venv.
+    fn venv_site_packages(&self) -> Option<PathBuf> {
+        if self.is_venv() {
+            // Standard venv layout: {prefix}/lib/pythonX.Y/site-packages
+            let prefix = Path::new(&self.prefix);
+            let lib_dir = prefix.join("lib");
+            if let Ok(entries) = std::fs::read_dir(&lib_dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with("python") {
+                        let site_packages = entry.path().join("site-packages");
+                        if site_packages.is_dir() {
+                            return Some(site_packages);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Query Python executable to get sys.prefix, sys.base_prefix, and sys.path.
 fn query_python_env(python_exe: &Path) -> Option<PythonEnvInfo> {
     use std::process::Command;
 
     let script = r#"
 import sys, json
 print(json.dumps({
+    "prefix": sys.prefix,
     "base_prefix": sys.base_prefix,
     "path": [p for p in sys.path if p]
 }))
@@ -163,6 +220,7 @@ print(json.dumps({
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).ok()?;
 
     Some(PythonEnvInfo {
+        prefix: parsed["prefix"].as_str()?.to_string(),
         base_prefix: parsed["base_prefix"].as_str()?.to_string(),
         path: parsed["path"]
             .as_array()?
