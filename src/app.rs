@@ -3494,6 +3494,21 @@ impl<'a> App<'a> {
 
         // Submit confirmation timeout
         self.maybe_clear_submit_confirmation();
+
+        // Force redraw when any modal is in loading state (for pulsing animation)
+        if self.has_active_loading() {
+            self.mark_dirty();
+        }
+    }
+
+    /// Check if any modal is currently in a loading state.
+    /// Used to trigger continuous redraws for loading animations.
+    fn has_active_loading(&self) -> bool {
+        self.workflow_state.loading
+            || self.recipe_browser.loading
+            || self.workflow_config.submitting
+            || self.slurm_queue_state.loading
+            || self.cluster_manager.loading
     }
 
     /// Send pending LSP change notification.
