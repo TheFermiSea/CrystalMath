@@ -1,20 +1,20 @@
 # CrystalMath Project State
 
-**Last updated:** 2026-02-03T01:00:00Z
+**Last updated:** 2026-02-03T03:00:00Z
 **Status:** Active development
 
 ## Current Position
 
-**Phase:** 3 of 6 (Structure & Input Handling)
-**Plan:** 2 of 4 complete
-**Status:** IN PROGRESS
-**Last activity:** 2026-02-03 - Wired VASP generation to Rust TUI (03-02)
+**Phase:** 4 of 6 (Workflow Execution)
+**Plan:** 0 of ? complete
+**Status:** READY TO PLAN
+**Last activity:** 2026-02-03 - Completed Phase 3 (Structure & Input Handling)
 
 **Progress:**
 ```
 Phase 1 [##########] 100% (3/3 plans) COMPLETE
 Phase 2 [##########] 100% (4/4 plans) COMPLETE
-Phase 3 [#####-----] 50% (2/4 plans)
+Phase 3 [##########] 100% (4/4 plans) COMPLETE
 Phase 4 [----------] 0%
 Phase 5 [----------] 0%
 Phase 6 [----------] 0%
@@ -51,19 +51,24 @@ Phase 6 [----------] 0%
 | 03-02 | JSON-RPC for VASP generation | Follows thin IPC pattern, no new bridge variants |
 | 03-02 | Combined VASP files in editor | Simple view for initial implementation |
 | 03-02 | 'v' keybinding for VASP | Keep Enter for D12, backwards compatible |
+| 03-03 | 60/40 split for results/preview | Enough room for preview without crowding table |
+| 03-03 | Auto-trigger preview on selection | Reduces user clicks, natural exploration flow |
+| 03-04 | 'p' and 'K' keybindings | Match existing single-key pattern for modal actions |
+| 03-04 | KPPRA cycling (500→1000→2000→4000) | Common values for different accuracy needs |
 
 ## Blockers / Concerns
 
-None currently. Phase 3 in progress:
-- Plans 1-2 complete (Python VASP utilities + Rust TUI wiring)
+None currently. Phase 3 complete:
+- All 4 plans delivered (Python VASP + Rust wiring + Preview UI + Integration tests)
 - VASP generation requires pymatgen (optional dependency)
-- 121 unit tests passing, 1 flaky integration test (pre-existing)
+- 127 tests passing (103 unit + 7 quacc + 6 VASP integration + 11 others)
+- Integration tests gracefully skip when pymatgen not installed
 
 ## Session Continuity
 
-**Last session:** 2026-02-03T01:00:00Z
-**Stopped at:** Completed Plan 03-02 (Rust VASP wiring)
-**Resume with:** Plan 03-03 (Structure preview UI)
+**Last session:** 2026-02-03T03:00:00Z
+**Stopped at:** Completed Phase 3 (all 4 plans)
+**Resume with:** Phase 4 planning (Workflow Execution)
 
 ## Completed Summaries
 
@@ -81,6 +86,8 @@ Phase 2 (quacc Integration):
 Phase 3 (Structure & Input Handling):
 - [03-01-SUMMARY.md](.planning/phases/03-structure-input/03-01-SUMMARY.md) - Python VASP utilities
 - [03-02-PLAN.md](.planning/phases/03-structure-input/03-02-PLAN.md) - Rust TUI VASP wiring (complete)
+- [03-03-PLAN.md](.planning/phases/03-structure-input/03-03-PLAN.md) - Structure preview UI (complete)
+- [03-04-PLAN.md](.planning/phases/03-structure-input/03-04-PLAN.md) - VASP config form and integration tests (complete)
 
 ## Key Files for Context
 
@@ -134,8 +141,19 @@ Created in Phase 3 Plan 2:
 - `src/app.rs` - Added vasp_request_id, request_generate_vasp_from_mp(), VASP response handler
 - `src/main.rs` - Added 'v' keybinding for VASP generation in materials modal
 
+Created in Phase 3 Plan 3:
+- `src/models.rs` - Added VaspPreset::next() cycling method
+- `src/state/mod.rs` - Added preview state fields, clear_preview(), set_preview_loading(), set_preview()
+- `src/app.rs` - Added request_structure_preview(), preview response handler
+- `src/ui/materials.rs` - Added render_preview_panel() with full structure preview display
+
+Created in Phase 3 Plan 4:
+- `src/state/mod.rs` - Added cycle_vasp_preset(), cycle_kppra() methods
+- `src/main.rs` - Added 'p' and 'K' keybindings for config cycling
+- `src/ui/materials.rs` - Added VASP config section to preview panel, updated button hints
+- `tests/vasp_integration.rs` - 6 integration tests for VASP generation and config
+
 ## Next Steps
 
-1. Plan 03-03: Structure preview UI component
-2. Plan 03-04: Integration tests and human verification
-3. Future: Separate files view for POSCAR/INCAR/KPOINTS
+1. Plan Phase 4 (Workflow Execution)
+2. Future: Separate files view for POSCAR/INCAR/KPOINTS
