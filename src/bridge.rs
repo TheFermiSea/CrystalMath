@@ -1209,11 +1209,8 @@ impl BridgeService for BridgeHandle {
 
     fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
         // Use JSON-RPC dispatch (thin IPC pattern)
-        let rpc_request = JsonRpcRequest::new(
-            "fetch_clusters",
-            serde_json::Value::Null,
-            request_id as u64,
-        );
+        let rpc_request =
+            JsonRpcRequest::new("fetch_clusters", serde_json::Value::Null, request_id as u64);
         self.request_rpc(rpc_request, request_id)
     }
 
@@ -1974,7 +1971,10 @@ fn launch_aiida_geopt(py_controller: &Py<PyAny>, config_json: &str) -> Result<St
 ///
 /// This is the core of the thin IPC pattern - instead of calling individual
 /// Python methods, we serialize the request to JSON and call `dispatch`.
-fn dispatch_rpc(py_controller: &Py<PyAny>, rpc_request: &JsonRpcRequest) -> Result<JsonRpcResponse> {
+fn dispatch_rpc(
+    py_controller: &Py<PyAny>,
+    rpc_request: &JsonRpcRequest,
+) -> Result<JsonRpcResponse> {
     Python::attach(|py| {
         let controller = py_controller.bind(py);
 

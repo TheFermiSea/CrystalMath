@@ -138,7 +138,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         render_aux_file(
             frame,
             app,
-            chunks[i + 0],
+            chunks[i],
             NewJobField::AuxF9,
             "Wavefunction (.f9)",
             &app.new_job.aux_f9_path,
@@ -148,7 +148,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         render_aux_file(
             frame,
             app,
-            chunks[i + 0],
+            chunks[i],
             NewJobField::AuxHessopt,
             "Hessian (.hessopt)",
             &app.new_job.aux_hessopt_path,

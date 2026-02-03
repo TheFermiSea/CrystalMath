@@ -204,6 +204,7 @@ impl VaspInputState {
     }
 
     /// Set a status message.
+    #[allow(dead_code)]
     pub fn set_status(&mut self, status: String) {
         self.status = Some(status);
         self.error = None;

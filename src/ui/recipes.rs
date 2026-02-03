@@ -34,6 +34,7 @@ pub struct RecipeBrowserState {
 
 impl RecipeBrowserState {
     /// Create a new recipe browser state.
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -139,13 +140,11 @@ fn render_recipe_list(frame: &mut Frame, area: Rect, state: &mut RecipeBrowserSt
         Style::default().fg(Color::Red)
     };
 
-    let engine_block = Paragraph::new(engine_text)
-        .style(engine_style)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Workflow Engine"),
-        );
+    let engine_block = Paragraph::new(engine_text).style(engine_style).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Workflow Engine"),
+    );
     frame.render_widget(engine_block, chunks[0]);
 
     // Recipe list
@@ -179,7 +178,10 @@ fn render_recipe_list(frame: &mut Frame, area: Rect, state: &mut RecipeBrowserSt
             };
 
             ListItem::new(Line::from(vec![
-                Span::styled(format!("[{}] ", type_icon), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("[{}] ", type_icon),
+                    Style::default().fg(Color::Cyan),
+                ),
                 Span::styled(&recipe.name, style),
                 Span::styled(
                     format!(" ({})", recipe.category()),

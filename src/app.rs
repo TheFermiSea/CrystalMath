@@ -220,7 +220,10 @@ impl<'a> App<'a> {
         let local_bin = local_repo.join("bin/vasp-lsp");
         let local_out = local_repo.join("out/server.js");
         if local_bin.exists() && local_out.exists() {
-            info!("Using bundled vasp-language-server: {}", local_bin.display());
+            info!(
+                "Using bundled vasp-language-server: {}",
+                local_bin.display()
+            );
             return local_bin.to_string_lossy().to_string();
         }
 
@@ -1071,30 +1074,30 @@ impl<'a> App<'a> {
                         }
                     }
                 }
-            BridgeResponse::Templates { request_id, result } => match result {
-                Ok(templates) => {
-                    debug!(
-                        "Received {} templates (request_id={})",
-                        templates.len(),
-                        request_id
-                    );
-                }
-                Err(e) => {
-                    self.set_error(format!("Failed to fetch templates: {}", e));
-                }
-            },
-            BridgeResponse::TemplateRendered { request_id, result } => match result {
-                Ok(rendered) => {
-                    debug!(
-                        "Template rendered ({} bytes, request_id={})",
-                        rendered.len(),
-                        request_id
-                    );
-                }
-                Err(e) => {
-                    self.set_error(format!("Failed to render template: {}", e));
-                }
-            },
+                BridgeResponse::Templates { request_id, result } => match result {
+                    Ok(templates) => {
+                        debug!(
+                            "Received {} templates (request_id={})",
+                            templates.len(),
+                            request_id
+                        );
+                    }
+                    Err(e) => {
+                        self.set_error(format!("Failed to fetch templates: {}", e));
+                    }
+                },
+                BridgeResponse::TemplateRendered { request_id, result } => match result {
+                    Ok(rendered) => {
+                        debug!(
+                            "Template rendered ({} bytes, request_id={})",
+                            rendered.len(),
+                            request_id
+                        );
+                    }
+                    Err(e) => {
+                        self.set_error(format!("Failed to render template: {}", e));
+                    }
+                },
                 // Workflow responses
                 BridgeResponse::WorkflowsAvailable { request_id, result } => {
                     if Some(request_id) == self.workflow_state.request_id {
@@ -1152,15 +1155,21 @@ impl<'a> App<'a> {
                                 match rpc_response.into_result() {
                                     Ok(value) => {
                                         // Deserialize the JSON value into RecipesListResponse
-                                        match serde_json::from_value::<crate::models::RecipesListResponse>(value) {
+                                        match serde_json::from_value::<
+                                            crate::models::RecipesListResponse,
+                                        >(value)
+                                        {
                                             Ok(response) => {
                                                 let count = response.recipes.len();
                                                 // Build WorkflowEngineStatus from response
-                                                let engine_status = crate::models::WorkflowEngineStatus {
-                                                    configured: None,
-                                                    installed: Vec::new(),
-                                                    quacc_installed: response.quacc_version.is_some(),
-                                                };
+                                                let engine_status =
+                                                    crate::models::WorkflowEngineStatus {
+                                                        configured: None,
+                                                        installed: Vec::new(),
+                                                        quacc_installed: response
+                                                            .quacc_version
+                                                            .is_some(),
+                                                    };
                                                 self.recipe_browser.set_data(
                                                     response.recipes,
                                                     engine_status,
@@ -1169,13 +1178,15 @@ impl<'a> App<'a> {
                                                 debug!("Loaded {} recipes via JSON-RPC", count);
                                             }
                                             Err(e) => {
-                                                self.recipe_browser.error = Some(format!("Parse error: {}", e));
+                                                self.recipe_browser.error =
+                                                    Some(format!("Parse error: {}", e));
                                                 error!("Failed to deserialize recipes: {}", e);
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        self.recipe_browser.error = Some(format!("RPC error: {}", e));
+                                        self.recipe_browser.error =
+                                            Some(format!("RPC error: {}", e));
                                         warn!("JSON-RPC error for recipes: {}", e);
                                     }
                                 }
@@ -1195,19 +1206,31 @@ impl<'a> App<'a> {
                                     Ok(value) => {
                                         // Deserialize the JSON value into ApiResponse<Vec<ClusterConfig>>
                                         // Python API returns {"ok": true, "data": [...]} wrapper
-                                        match serde_json::from_value::<ApiResponse<Vec<crate::models::ClusterConfig>>>(value) {
+                                        match serde_json::from_value::<
+                                            ApiResponse<Vec<crate::models::ClusterConfig>>,
+                                        >(value)
+                                        {
                                             Ok(api_response) => match api_response.into_result() {
                                                 Ok(clusters) => {
                                                     let count = clusters.len();
                                                     self.cluster_manager.clusters = clusters;
-                                                    if count > 0 && self.cluster_manager.selected_index.is_none() {
-                                                        self.cluster_manager.selected_index = Some(0);
+                                                    if count > 0
+                                                        && self
+                                                            .cluster_manager
+                                                            .selected_index
+                                                            .is_none()
+                                                    {
+                                                        self.cluster_manager.selected_index =
+                                                            Some(0);
                                                     }
                                                     self.cluster_manager.set_status(
                                                         &format!("Loaded {} clusters", count),
                                                         false,
                                                     );
-                                                    debug!("Loaded {} clusters via JSON-RPC", count);
+                                                    debug!(
+                                                        "Loaded {} clusters via JSON-RPC",
+                                                        count
+                                                    );
                                                 }
                                                 Err(e) => {
                                                     self.cluster_manager.set_status(
@@ -1216,7 +1239,7 @@ impl<'a> App<'a> {
                                                     );
                                                     error!("API error for clusters: {}", e);
                                                 }
-                                            }
+                                            },
                                             Err(e) => {
                                                 self.cluster_manager.set_status(
                                                     &format!("Parse error: {}", e),
@@ -1227,26 +1250,23 @@ impl<'a> App<'a> {
                                         }
                                     }
                                     Err(e) => {
-                                        self.cluster_manager.set_status(
-                                            &format!("RPC error: {}", e),
-                                            true,
-                                        );
+                                        self.cluster_manager
+                                            .set_status(&format!("RPC error: {}", e), true);
                                         warn!("JSON-RPC error for clusters: {}", e);
                                     }
                                 }
                             }
                             Err(e) => {
-                                self.cluster_manager.set_status(
-                                    &format!("Bridge error: {}", e),
-                                    true,
-                                );
+                                self.cluster_manager
+                                    .set_status(&format!("Bridge error: {}", e), true);
                                 error!("Bridge dispatch failed for clusters: {}", e);
                             }
                         }
                     } else if self.pending_request_id == Some(request_id)
                         && matches!(
                             self.pending_bridge_request,
-                            Some(BridgeRequestKind::FetchJobs) | Some(BridgeRequestKind::SyncRemoteJobs)
+                            Some(BridgeRequestKind::FetchJobs)
+                                | Some(BridgeRequestKind::SyncRemoteJobs)
                         )
                     {
                         // Route jobs fetch response
@@ -1257,21 +1277,26 @@ impl<'a> App<'a> {
                             Ok(rpc_response) => {
                                 match rpc_response.into_result() {
                                     Ok(value) => {
-                                        match serde_json::from_value::<Vec<crate::models::JobStatus>>(value) {
+                                        match serde_json::from_value::<Vec<crate::models::JobStatus>>(
+                                            value,
+                                        ) {
                                             Ok(new_jobs) => {
                                                 // Track which jobs changed state since last refresh
                                                 self.jobs_state.changed_pks.clear();
-                                                let old_states: std::collections::HashMap<i32, _> = self
-                                                    .jobs_state
-                                                    .jobs
-                                                    .iter()
-                                                    .map(|j| (j.pk, j.state))
-                                                    .collect();
+                                                let old_states: std::collections::HashMap<i32, _> =
+                                                    self.jobs_state
+                                                        .jobs
+                                                        .iter()
+                                                        .map(|j| (j.pk, j.state))
+                                                        .collect();
 
                                                 for job in &new_jobs {
-                                                    if let Some(old_state) = old_states.get(&job.pk) {
+                                                    if let Some(old_state) = old_states.get(&job.pk)
+                                                    {
                                                         if old_state != &job.state {
-                                                            self.jobs_state.changed_pks.insert(job.pk);
+                                                            self.jobs_state
+                                                                .changed_pks
+                                                                .insert(job.pk);
                                                         }
                                                     } else {
                                                         // New job - highlight it
@@ -1281,15 +1306,23 @@ impl<'a> App<'a> {
 
                                                 let count = new_jobs.len();
                                                 self.jobs_state.jobs = new_jobs;
-                                                self.jobs_state.last_refresh = Some(std::time::Instant::now());
+                                                self.jobs_state.last_refresh =
+                                                    Some(std::time::Instant::now());
 
                                                 // Adjust selection if needed
                                                 if !self.jobs_state.jobs.is_empty() {
                                                     if self.jobs_state.selected_index.is_none() {
                                                         self.jobs_state.selected_index = Some(0);
-                                                    } else if let Some(idx) = self.jobs_state.selected_index {
+                                                    } else if let Some(idx) =
+                                                        self.jobs_state.selected_index
+                                                    {
                                                         if idx >= self.jobs_state.jobs.len() {
-                                                            self.jobs_state.selected_index = Some(self.jobs_state.jobs.len().saturating_sub(1));
+                                                            self.jobs_state.selected_index = Some(
+                                                                self.jobs_state
+                                                                    .jobs
+                                                                    .len()
+                                                                    .saturating_sub(1),
+                                                            );
                                                         }
                                                     }
                                                 } else {
@@ -1299,19 +1332,19 @@ impl<'a> App<'a> {
                                             }
                                             Err(e) => {
                                                 error!("Failed to deserialize jobs: {}", e);
-                                                self.set_error(&format!("Parse error: {}", e));
+                                                self.set_error(format!("Parse error: {}", e));
                                             }
                                         }
                                     }
                                     Err(e) => {
                                         warn!("JSON-RPC error for jobs: {}", e);
-                                        self.set_error(&format!("RPC error: {}", e));
+                                        self.set_error(format!("RPC error: {}", e));
                                     }
                                 }
                             }
                             Err(e) => {
                                 error!("Bridge dispatch failed for jobs: {}", e);
-                                self.set_error(&format!("Bridge error: {}", e));
+                                self.set_error(format!("Bridge error: {}", e));
                             }
                         }
                     } else {
@@ -1331,7 +1364,10 @@ impl<'a> App<'a> {
                                 }
                             }
                             Err(e) => {
-                                error!("Unhandled JSON-RPC dispatch error for request {}: {}", request_id, e);
+                                error!(
+                                    "Unhandled JSON-RPC dispatch error for request {}: {}",
+                                    request_id, e
+                                );
                             }
                         }
                     }
@@ -3023,11 +3059,7 @@ mod tests {
             Ok(())
         }
 
-        fn request_create_eos_workflow(
-            &self,
-            config_json: &str,
-            request_id: usize,
-        ) -> Result<()> {
+        fn request_create_eos_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
             let mut reqs = self.requests.lock().unwrap();
             reqs.push(format!(
                 "CreateEosWorkflow(config_json={}, request_id={})",
@@ -3036,11 +3068,7 @@ mod tests {
             Ok(())
         }
 
-        fn request_launch_aiida_geopt(
-            &self,
-            config_json: &str,
-            request_id: usize,
-        ) -> Result<()> {
+        fn request_launch_aiida_geopt(&self, config_json: &str, request_id: usize) -> Result<()> {
             let mut reqs = self.requests.lock().unwrap();
             reqs.push(format!(
                 "LaunchAiidaGeopt(config_json={}, request_id={})",
@@ -3417,7 +3445,8 @@ mod tests {
         mock.request_render_template("test", "{}", 4).unwrap();
         mock.request_check_workflows_available(5).unwrap();
         mock.request_create_convergence_study("{}", 6).unwrap();
-        mock.request_create_band_structure_workflow("{}", 7).unwrap();
+        mock.request_create_band_structure_workflow("{}", 7)
+            .unwrap();
         mock.request_create_phonon_workflow("{}", 8).unwrap();
         mock.request_create_eos_workflow("{}", 9).unwrap();
         mock.request_launch_aiida_geopt("{}", 10).unwrap();
@@ -3427,7 +3456,10 @@ mod tests {
         assert_eq!(requests[0], "FetchJobs(request_id=1)");
         assert_eq!(requests[1], "FetchJobDetails(pk=42, request_id=2)");
         assert_eq!(requests[2], "FetchTemplates(request_id=3)");
-        assert_eq!(requests[3], "RenderTemplate(name=test, params={}, request_id=4)");
+        assert_eq!(
+            requests[3],
+            "RenderTemplate(name=test, params={}, request_id=4)"
+        );
         assert_eq!(requests[4], "CheckWorkflowsAvailable(request_id=5)");
         assert_eq!(
             requests[5],
@@ -3437,9 +3469,18 @@ mod tests {
             requests[6],
             "CreateBandStructureWorkflow(config_json={}, request_id=7)"
         );
-        assert_eq!(requests[7], "CreatePhononWorkflow(config_json={}, request_id=8)");
-        assert_eq!(requests[8], "CreateEosWorkflow(config_json={}, request_id=9)");
-        assert_eq!(requests[9], "LaunchAiidaGeopt(config_json={}, request_id=10)");
+        assert_eq!(
+            requests[7],
+            "CreatePhononWorkflow(config_json={}, request_id=8)"
+        );
+        assert_eq!(
+            requests[8],
+            "CreateEosWorkflow(config_json={}, request_id=9)"
+        );
+        assert_eq!(
+            requests[9],
+            "LaunchAiidaGeopt(config_json={}, request_id=10)"
+        );
     }
 
     #[test]

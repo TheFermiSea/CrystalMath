@@ -171,7 +171,9 @@ pub fn ensure_server_running(socket_path: &Path) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::piped()) // Pipe stderr for debugging if needed
         .spawn()
-        .context("Failed to start crystalmath-server. Is it installed? (uv pip install -e python/)")?;
+        .context(
+            "Failed to start crystalmath-server. Is it installed? (uv pip install -e python/)",
+        )?;
 
     // Wait for socket to appear (max 5 seconds)
     let max_polls = (SERVER_STARTUP_TIMEOUT_SECS * 1000) / SERVER_POLL_INTERVAL_MS;
@@ -281,7 +283,10 @@ impl IpcClient {
     /// // Try up to 5 times with backoff
     /// let client = IpcClient::connect_with_retry(&socket_path, 5).await?;
     /// ```
-    pub async fn connect_with_retry(socket_path: &Path, max_attempts: u32) -> Result<Self, IpcError> {
+    pub async fn connect_with_retry(
+        socket_path: &Path,
+        max_attempts: u32,
+    ) -> Result<Self, IpcError> {
         let mut last_error = None;
 
         for attempt in 1..=max_attempts {
@@ -326,9 +331,8 @@ impl IpcClient {
     /// println!("Server is responsive, latency: {:?}", latency);
     /// ```
     pub async fn connect_or_start(socket_path: &Path) -> Result<Self, IpcError> {
-        ensure_server_running(socket_path).map_err(|e| {
-            IpcError::Protocol(format!("Failed to start server: {}", e))
-        })?;
+        ensure_server_running(socket_path)
+            .map_err(|e| IpcError::Protocol(format!("Failed to start server: {}", e)))?;
         Self::connect_with_retry(socket_path, 5).await
     }
 
@@ -431,7 +435,10 @@ impl IpcClient {
     }
 
     /// Send a request and receive the response (internal, no timeout).
-    async fn send_receive(&mut self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, IpcError> {
+    async fn send_receive(
+        &mut self,
+        request: &JsonRpcRequest,
+    ) -> Result<JsonRpcResponse, IpcError> {
         // Serialize request
         let request_json = serde_json::to_string(request)
             .map_err(|e| IpcError::Protocol(format!("Failed to serialize request: {}", e)))?;
@@ -454,10 +461,7 @@ impl IpcClient {
     }
 
     /// Process a JSON-RPC response, extracting result or error.
-    fn process_response(
-        &self,
-        response: JsonRpcResponse,
-    ) -> Result<serde_json::Value, IpcError> {
+    fn process_response(&self, response: JsonRpcResponse) -> Result<serde_json::Value, IpcError> {
         // Check for JSON-RPC error
         if let Some(err) = response.error {
             return Err(IpcError::ServerError {
@@ -504,7 +508,10 @@ mod tests {
             message: "Database error".to_string(),
             data: None,
         };
-        assert_eq!(server_err.to_string(), "Server error -32000: Database error");
+        assert_eq!(
+            server_err.to_string(),
+            "Server error -32000: Database error"
+        );
 
         let protocol_err = IpcError::Protocol("Invalid JSON".to_string());
         assert_eq!(protocol_err.to_string(), "Protocol error: Invalid JSON");
@@ -537,7 +544,11 @@ mod tests {
 
         let ipc_err: IpcError = json_err.into();
         match ipc_err {
-            IpcError::ServerError { code, message, data } => {
+            IpcError::ServerError {
+                code,
+                message,
+                data,
+            } => {
                 assert_eq!(code, -32601);
                 assert_eq!(message, "Method not found");
                 assert!(data.is_some());

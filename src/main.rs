@@ -10,7 +10,7 @@ mod state;
 mod ui;
 
 // Re-use modules from lib.rs (exposed for integration tests)
-use crystalmath_tui::{bridge, ipc, models};
+use crystalmath_tui::{bridge, models};
 
 use std::io::{self, Write};
 use std::panic;

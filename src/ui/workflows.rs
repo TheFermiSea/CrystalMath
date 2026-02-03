@@ -32,6 +32,7 @@ pub struct WorkflowState {
     pub request_id: Option<usize>,
 }
 
+#[allow(dead_code)]
 impl WorkflowState {
     /// Create a new workflow state.
     pub fn new() -> Self {

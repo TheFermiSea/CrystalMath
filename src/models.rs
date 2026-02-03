@@ -977,20 +977,15 @@ pub struct WorkflowAvailability {
 }
 
 /// Workflow status from Python backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowStatus {
+    #[default]
     Pending,
     Running,
     Completed,
     Failed,
     Cancelled,
-}
-
-impl Default for WorkflowStatus {
-    fn default() -> Self {
-        WorkflowStatus::Pending
-    }
 }
 
 impl WorkflowStatus {

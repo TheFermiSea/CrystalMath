@@ -194,10 +194,7 @@ mod tests {
         let (server_read, _server_write, _client_read, mut client_write) = socket_pair().await;
 
         // Write raw data without Content-Length header (just an empty line)
-        client_write
-            .write_all(b"\r\n")
-            .await
-            .expect("Write failed");
+        client_write.write_all(b"\r\n").await.expect("Write failed");
 
         // Close write end so reader sees EOF after the empty line
         drop(client_write);
