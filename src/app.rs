@@ -172,6 +172,9 @@ pub struct App<'a> {
 
     /// Request ID for the current recipe fetch (to ignore stale responses).
     pub recipe_request_id: usize,
+
+    /// Request ID for the current workflow availability check.
+    pub workflow_request_id: usize,
 }
 
 impl<'a> App<'a> {
@@ -331,6 +334,7 @@ impl<'a> App<'a> {
             workflow_state: crate::ui::WorkflowState::default(),
             recipe_browser: RecipeBrowserState::default(),
             recipe_request_id: 0,
+            workflow_request_id: 0,
         })
     }
 
@@ -1260,6 +1264,77 @@ impl<'a> App<'a> {
                                 self.cluster_manager
                                     .set_status(&format!("Bridge error: {}", e), true);
                                 error!("Bridge dispatch failed for clusters: {}", e);
+                            }
+                        }
+                    }
+                    // Check if this is a workflow availability response
+                    else if request_id == self.workflow_request_id && self.workflow_state.loading
+                    {
+                        self.workflow_state.set_loading(false);
+                        match result {
+                            Ok(rpc_response) => {
+                                match rpc_response.into_result() {
+                                    Ok(value) => {
+                                        // Parse the availability response
+                                        #[derive(serde::Deserialize)]
+                                        struct WorkflowAvailabilityResponse {
+                                            #[serde(default)]
+                                            available: bool,
+                                            #[serde(default)]
+                                            workflows: Vec<String>,
+                                            #[serde(default)]
+                                            aiida_available: bool,
+                                            #[serde(default)]
+                                            quacc_available: bool,
+                                            error: Option<String>,
+                                        }
+
+                                        match serde_json::from_value::<WorkflowAvailabilityResponse>(
+                                            value,
+                                        ) {
+                                            Ok(response) => {
+                                                self.workflow_state.set_availability(
+                                                    response.available || response.quacc_available,
+                                                    response.aiida_available,
+                                                );
+                                                if let Some(err) = response.error {
+                                                    self.workflow_state.set_status(err, true);
+                                                } else if response.workflows.is_empty() {
+                                                    self.workflow_state.set_status(
+                                                        "No workflows available".to_string(),
+                                                        true,
+                                                    );
+                                                }
+                                                debug!(
+                                                    "Workflow availability: {} workflows, aiida={}, quacc={}",
+                                                    response.workflows.len(),
+                                                    response.aiida_available,
+                                                    response.quacc_available
+                                                );
+                                            }
+                                            Err(e) => {
+                                                self.workflow_state.set_status(
+                                                    format!("Parse error: {}", e),
+                                                    true,
+                                                );
+                                                error!(
+                                                    "Failed to deserialize workflow availability: {}",
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.workflow_state
+                                            .set_status(format!("RPC error: {}", e), true);
+                                        warn!("JSON-RPC error for workflow availability: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.workflow_state
+                                    .set_status(format!("Bridge error: {}", e), true);
+                                error!("Bridge dispatch failed for workflow availability: {}", e);
                             }
                         }
                     } else if self.pending_request_id == Some(request_id)
@@ -2826,9 +2901,11 @@ impl<'a> App<'a> {
         self.workflow_state.active
     }
 
-    /// Open the workflow launcher modal.
+    /// Open the workflow launcher modal and request availability check.
     pub fn open_workflow_modal(&mut self) {
         self.workflow_state.open();
+        self.workflow_state.set_loading(true);
+        self.request_check_workflows();
         self.mark_dirty();
     }
 
@@ -2848,6 +2925,32 @@ impl<'a> App<'a> {
     pub fn select_next_workflow(&mut self) {
         self.workflow_state.select_next();
         self.mark_dirty();
+    }
+
+    /// Request workflow availability check via RPC.
+    fn request_check_workflows(&mut self) {
+        self.workflow_request_id = self.next_request_id();
+
+        let rpc_request = crate::bridge::JsonRpcRequest::new(
+            "check_workflows_available",
+            serde_json::json!({}),
+            self.workflow_request_id as u64,
+        );
+
+        if let Err(e) = self
+            .bridge
+            .request_rpc(rpc_request, self.workflow_request_id)
+        {
+            self.workflow_state.set_loading(false);
+            self.workflow_state
+                .set_status(format!("Failed to check availability: {}", e), true);
+            error!("Failed to send check_workflows_available request: {}", e);
+        } else {
+            debug!(
+                "Sent check_workflows_available request (id={})",
+                self.workflow_request_id
+            );
+        }
     }
 }
 
@@ -3247,6 +3350,7 @@ mod tests {
             workflow_state: crate::ui::WorkflowState::default(),
             recipe_browser: RecipeBrowserState::default(),
             recipe_request_id: 0,
+            workflow_request_id: 0,
         }
     }
 

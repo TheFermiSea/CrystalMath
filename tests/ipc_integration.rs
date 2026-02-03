@@ -62,8 +62,8 @@ fn server_available() -> bool {
     }
 
     // Also check the local venv
-    let venv_server = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(".venv/bin/crystalmath-server");
+    let venv_server =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".venv/bin/crystalmath-server");
     if venv_server.exists() {
         // Add venv to PATH for this process
         if let Ok(path) = std::env::var("PATH") {
@@ -273,11 +273,8 @@ async fn test_connect_to_nonexistent_socket() {
     let _ = std::fs::remove_file(&socket_path);
 
     // Connection should fail (not hang)
-    let result = tokio::time::timeout(
-        Duration::from_secs(2),
-        IpcClient::connect(&socket_path),
-    )
-    .await;
+    let result =
+        tokio::time::timeout(Duration::from_secs(2), IpcClient::connect(&socket_path)).await;
 
     match result {
         Ok(Ok(_)) => panic!("Should not connect to nonexistent socket"),
@@ -340,7 +337,12 @@ async fn test_multiple_sequential_calls() {
     // Multiple pings in sequence
     for i in 0..5 {
         let latency = client.ping().await;
-        assert!(latency.is_ok(), "Ping {} should succeed: {:?}", i, latency.err());
+        assert!(
+            latency.is_ok(),
+            "Ping {} should succeed: {:?}",
+            i,
+            latency.err()
+        );
     }
 
     cleanup_socket(&socket_path);

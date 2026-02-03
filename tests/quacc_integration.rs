@@ -70,8 +70,8 @@ fn server_available() -> bool {
     }
 
     // Also check the local venv
-    let venv_server = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(".venv/bin/crystalmath-server");
+    let venv_server =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".venv/bin/crystalmath-server");
     if venv_server.exists() {
         // Add venv to PATH for this process
         if let Ok(path) = std::env::var("PATH") {
@@ -283,7 +283,11 @@ async fn test_jobs_list_returns_empty_initially() {
         let response = client.call("jobs.list", json!({})).await?;
         let parsed: QuaccJobsListResponse = serde_json::from_value(response)?;
 
-        println!("jobs.list response: {} jobs, total={}", parsed.jobs.len(), parsed.total);
+        println!(
+            "jobs.list response: {} jobs, total={}",
+            parsed.jobs.len(),
+            parsed.total
+        );
 
         // Initially should be empty (no jobs submitted yet)
         assert_eq!(parsed.total, 0, "Expected 0 total jobs initially");

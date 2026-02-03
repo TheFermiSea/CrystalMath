@@ -2396,14 +2396,17 @@ class CrystalController:
 
         Returns:
             JSON string with structure:
-            - Success: {"ok": true, "data": {"available": bool, "workflows": [str, ...]}}
+            - Success: {"ok": true, "data": {"available": bool, "workflows": [str, ...],
+                        "aiida_available": bool, "quacc_available": bool}}
         """
         try:
             from crystalmath.workflows import (
                 WORKFLOWS_AVAILABLE,
+                AIIDA_LAUNCHER_AVAILABLE,
                 ConvergenceWorkflow,
                 BandStructureWorkflow,
                 PhononWorkflow,
+                EOSWorkflow,
             )
 
             available_workflows = []
@@ -2413,19 +2416,44 @@ class CrystalController:
                 available_workflows.append("band_structure")
             if PhononWorkflow is not None:
                 available_workflows.append("phonon")
+            if EOSWorkflow is not None:
+                available_workflows.append("eos")
+            # Geometry optimization requires AiiDA
+            if AIIDA_LAUNCHER_AVAILABLE:
+                available_workflows.append("geometry_optimization")
+
+            # Check quacc availability
+            try:
+                from crystalmath.quacc.discovery import discover_vasp_recipes
+                quacc_available = len(discover_vasp_recipes()) > 0
+            except ImportError:
+                quacc_available = False
 
             return _ok_response(
                 {
-                    "available": WORKFLOWS_AVAILABLE,
+                    "available": WORKFLOWS_AVAILABLE or quacc_available,
                     "workflows": available_workflows,
+                    "aiida_available": AIIDA_LAUNCHER_AVAILABLE,
+                    "quacc_available": quacc_available,
                 }
             )
         except ImportError as e:
+            # Check if at least quacc is available
+            try:
+                from crystalmath.quacc.discovery import discover_vasp_recipes
+                quacc_available = len(discover_vasp_recipes()) > 0
+                quacc_workflows = ["convergence", "band_structure", "phonon", "eos", "geometry_optimization"] if quacc_available else []
+            except ImportError:
+                quacc_available = False
+                quacc_workflows = []
+
             return _ok_response(
                 {
-                    "available": False,
-                    "workflows": [],
-                    "error": str(e),
+                    "available": quacc_available,
+                    "workflows": quacc_workflows,
+                    "aiida_available": False,
+                    "quacc_available": quacc_available,
+                    "error": str(e) if not quacc_available else None,
                 }
             )
 
