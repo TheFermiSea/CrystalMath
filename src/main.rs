@@ -353,6 +353,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                         handle_vasp_input_modal_input(app, key);
                     } else if app.is_recipe_browser_active() {
                         handle_recipe_browser_input(app, key);
+                    } else if app.is_workflow_modal_active() {
+                        handle_workflow_modal_input(app, key);
                     } else {
                         // Global key handlers
                         match (key.code, key.modifiers) {
@@ -413,6 +415,13 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             (KeyCode::Char('r'), KeyModifiers::NONE) => {
                                 if app.current_tab == app::AppTab::Jobs {
                                     app.open_recipe_browser();
+                                }
+                            }
+
+                            // Open Workflow Launcher modal (w from Jobs tab)
+                            (KeyCode::Char('w'), KeyModifiers::NONE) => {
+                                if app.current_tab == app::AppTab::Jobs {
+                                    app.open_workflow_modal();
                                 }
                             }
 
@@ -1162,6 +1171,47 @@ fn handle_recipe_browser_input(app: &mut App, key: event::KeyEvent) {
         // Refresh recipes
         KeyCode::Char('r') => {
             app.refresh_recipes();
+        }
+
+        _ => {}
+    }
+}
+
+/// Handle keyboard input for the workflow launcher modal.
+///
+/// Key bindings:
+/// - Esc: Close modal
+/// - j/Down: Select next workflow
+/// - k/Up: Select previous workflow
+/// - Enter: Launch selected workflow (TODO)
+fn handle_workflow_modal_input(app: &mut App, key: event::KeyEvent) {
+    // Don't process input while loading (except Escape)
+    if app.workflow_state.loading {
+        if key.code == KeyCode::Esc {
+            app.close_workflow_modal();
+        }
+        return;
+    }
+
+    match key.code {
+        // Close modal
+        KeyCode::Esc => {
+            app.close_workflow_modal();
+        }
+
+        // Navigation
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.select_next_workflow();
+            app.mark_dirty();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.select_prev_workflow();
+            app.mark_dirty();
+        }
+
+        // TODO: Enter to launch selected workflow
+        KeyCode::Enter => {
+            // Workflow launching not yet implemented
         }
 
         _ => {}

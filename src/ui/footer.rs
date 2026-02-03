@@ -13,11 +13,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 ("n", "New Job"),
                 ("c", "Clusters"),
                 ("r", "Recipes"),
+                ("w", "Workflows"),
                 ("s", "Queue"),
                 ("v", "VASP"),
                 ("Enter", "Details"),
                 ("L", "Logs"),
-                ("U", "SLURM View"),
                 ("C", "Cancel"),
             ]
         }

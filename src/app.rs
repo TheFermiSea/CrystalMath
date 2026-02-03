@@ -2818,6 +2818,37 @@ impl<'a> App<'a> {
         self.recipe_browser.next();
         self.mark_dirty();
     }
+
+    // ===== Workflow Launcher Modal =====
+
+    /// Check if the workflow launcher modal is active.
+    pub fn is_workflow_modal_active(&self) -> bool {
+        self.workflow_state.active
+    }
+
+    /// Open the workflow launcher modal.
+    pub fn open_workflow_modal(&mut self) {
+        self.workflow_state.open();
+        self.mark_dirty();
+    }
+
+    /// Close the workflow launcher modal.
+    pub fn close_workflow_modal(&mut self) {
+        self.workflow_state.close();
+        self.mark_dirty();
+    }
+
+    /// Select previous workflow in the list.
+    pub fn select_prev_workflow(&mut self) {
+        self.workflow_state.select_previous();
+        self.mark_dirty();
+    }
+
+    /// Select next workflow in the list.
+    pub fn select_next_workflow(&mut self) {
+        self.workflow_state.select_next();
+        self.mark_dirty();
+    }
 }
 
 // =============================================================================
