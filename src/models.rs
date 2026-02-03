@@ -503,6 +503,7 @@ impl JobDetails {
 ///
 /// # Optional Fields
 ///
+/// - `workflow_id`: Parent workflow identifier (for linked workflow jobs)
 /// - `cluster_id`: Remote cluster for SSH/SLURM execution (None = local)
 /// - `runner_type`: Execution backend enum (serializes as snake_case: `"local"`, `"ssh"`, etc.)
 /// - `input_content`: Raw input file content (for editor submissions)
@@ -521,6 +522,9 @@ pub struct JobSubmission {
     pub name: String,
     /// DFT code for the calculation (serializes as snake_case)
     pub dft_code: DftCode,
+    /// Parent workflow ID (for workflow-linked jobs)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
     /// Cluster ID for remote execution (None = local execution)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cluster_id: Option<i32>,
@@ -555,6 +559,7 @@ impl JobSubmission {
         Self {
             name: name.to_string(),
             dft_code,
+            workflow_id: None,
             cluster_id: None,
             parameters: serde_json::json!({}),
             structure_path: None,
@@ -582,6 +587,12 @@ impl JobSubmission {
     /// Set the runner type for job execution.
     pub fn with_runner_type(mut self, runner: RunnerType) -> Self {
         self.runner_type = Some(runner);
+        self
+    }
+
+    /// Set the parent workflow ID.
+    pub fn with_workflow_id(mut self, workflow_id: &str) -> Self {
+        self.workflow_id = Some(workflow_id.to_string());
         self
     }
 

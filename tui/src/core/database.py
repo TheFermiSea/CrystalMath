@@ -47,6 +47,7 @@ class Job:
     name: str
     work_dir: str
     status: str
+    workflow_id: Optional[str] = None
     created_at: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
@@ -126,7 +127,7 @@ class Database:
 
     # Schema version for migrations
     # Note: Must match the highest version after all migrations are applied
-    SCHEMA_VERSION = 8
+    SCHEMA_VERSION = 9
 
     # Base schema (version 1 - Phase 1)
     # Note: CANCELLED added in v4, but included here for new databases
@@ -345,6 +346,11 @@ class Database:
     ALTER TABLE clusters ADD COLUMN setup_commands TEXT;
     """
 
+    # Migration to version 9 (Link jobs to workflows)
+    MIGRATION_V8_TO_V9 = """
+    ALTER TABLE jobs ADD COLUMN workflow_id TEXT;
+    """
+
     def __init__(self, db_path: Path, pool_size: int = 4):
         """
         Initialize database with connection pooling for concurrent access.
@@ -484,6 +490,9 @@ class Database:
 
         if current_version < 8:
             self._migrate_v7_to_v8(conn)
+
+        if current_version < 9:
+            self._migrate_v8_to_v9(conn)
 
     def _get_schema_version(self, conn: sqlite3.Connection) -> int:
         """Get current schema version."""
@@ -770,6 +779,28 @@ class Database:
             if "duplicate column name" not in str(e).lower():
                 raise
 
+    def _migrate_v8_to_v9(self, conn: sqlite3.Connection) -> None:
+        """Migrate from version 8 to version 9 (add workflow_id to jobs)."""
+        try:
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                statements = [
+                    stmt.strip() for stmt in self.MIGRATION_V8_TO_V9.split(';')
+                    if stmt.strip()
+                ]
+                for stmt in statements:
+                    conn.execute(stmt)
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (9,)
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
+
     def get_schema_version(self) -> int:
         """Public method to get current schema version."""
         with self.connection() as conn:
@@ -782,6 +813,7 @@ class Database:
         name: str,
         work_dir: str,
         input_content: str,
+        workflow_id: Optional[str] = None,
         cluster_id: Optional[int] = None,
         runner_type: str = "local",
         parallelism_config: Optional[Dict[str, Any]] = None,
@@ -794,10 +826,10 @@ class Database:
             with conn:
                 cursor = conn.execute(
                     """
-                    INSERT INTO jobs (name, work_dir, status, input_file, cluster_id, runner_type, parallelism_config, dft_code)
-                    VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?)
+                    INSERT INTO jobs (name, work_dir, status, input_file, workflow_id, cluster_id, runner_type, parallelism_config, dft_code)
+                    VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)
                     """,
-                    (name, work_dir, input_content, cluster_id, runner_type, parallelism_json, dft_code)
+                    (name, work_dir, input_content, workflow_id, cluster_id, runner_type, parallelism_json, dft_code)
                 )
                 job_id = cursor.lastrowid
                 if job_id is None:
@@ -969,6 +1001,7 @@ class Database:
             name=row["name"],
             work_dir=row["work_dir"],
             status=row["status"],
+            workflow_id=safe_get("workflow_id"),
             created_at=row["created_at"],
             started_at=row["started_at"],
             completed_at=row["completed_at"],

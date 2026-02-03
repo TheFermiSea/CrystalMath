@@ -23,6 +23,13 @@ pub use crate::state::{
     NewJobState, TemplateBrowserState, WorkflowConfigState,
 };
 
+#[derive(Debug, Clone)]
+struct WorkflowRun {
+    workflow_json: String,
+    job_ids: Vec<i32>,
+    expected_jobs: usize,
+}
+
 /// Main application state.
 pub struct App<'a> {
     /// Flag to exit the application.
@@ -173,6 +180,12 @@ pub struct App<'a> {
 
     /// State for the workflow configuration modal.
     pub workflow_config: WorkflowConfigState,
+
+    /// Workflow runs tracked in this session (workflow_id -> run details).
+    workflow_runs: std::collections::HashMap<String, WorkflowRun>,
+
+    /// Workflow job submissions awaiting job IDs (request_id -> workflow_id).
+    workflow_job_requests: std::collections::HashMap<usize, String>,
 
     // ===== Recipe Browser Modal =====
     /// State for the quacc recipe browser modal.
@@ -375,6 +388,8 @@ impl<'a> App<'a> {
             vasp_input_state: crate::ui::VaspInputState::default(),
             workflow_state: crate::ui::WorkflowState::default(),
             workflow_config: WorkflowConfigState::default(),
+            workflow_runs: std::collections::HashMap::new(),
+            workflow_job_requests: std::collections::HashMap::new(),
             recipe_browser: RecipeBrowserState::default(),
             template_browser: TemplateBrowserState::default(),
             batch_submission: BatchSubmissionState::default(),
@@ -811,15 +826,43 @@ impl<'a> App<'a> {
                         self.set_error(format!("Failed to fetch job details: {}", e));
                     }
                 },
-                BridgeResponse::JobSubmitted { result, .. } => {
+                BridgeResponse::JobSubmitted { request_id, result } => {
+                    let workflow_id = self.workflow_job_requests.remove(&request_id);
                     match result {
                         Ok(pk) => {
+                            if let Some(wf_id) = workflow_id {
+                                if let Some(run) = self.workflow_runs.get_mut(&wf_id) {
+                                    run.job_ids.push(pk);
+                                    if run.job_ids.len() >= run.expected_jobs
+                                        && run.expected_jobs > 0
+                                    {
+                                        self.workflow_state.set_status(
+                                            format!(
+                                                "Workflow {} submitted ({} jobs)",
+                                                wf_id,
+                                                run.job_ids.len()
+                                            ),
+                                            false,
+                                        );
+                                        self.workflow_config.status = Some(format!(
+                                            "Workflow submitted ({} jobs)",
+                                            run.job_ids.len()
+                                        ));
+                                    }
+                                }
+                            }
                             info!("Job submitted with pk: {}", pk);
                             self.clear_error();
                             // Trigger a refresh to show the new job
                             self.request_refresh_jobs();
                         }
                         Err(e) => {
+                            if let Some(wf_id) = workflow_id {
+                                self.workflow_config.error = Some(format!(
+                                    "Workflow {} job submission failed: {}",
+                                    wf_id, e
+                                ));
+                            }
                             self.set_error(format!("Failed to submit job: {}", e));
                         }
                     }
@@ -1197,8 +1240,28 @@ impl<'a> App<'a> {
                         self.workflow_state.set_loading(false);
                         match result {
                             Ok(workflow_json) => {
-                                // Parse the response to extract useful info
-                                if let Ok(response) = serde_json::from_str::<serde_json::Value>(&workflow_json) {
+                                // Parse the response to extract inputs + workflow JSON
+                                let mut workflow_json_str = workflow_json.clone();
+                                let mut inputs: Vec<serde_json::Value> = Vec::new();
+
+                                if let Ok(response) =
+                                    serde_json::from_str::<serde_json::Value>(&workflow_json)
+                                {
+                                    if response.get("ok").and_then(|v| v.as_bool()) == Some(false)
+                                    {
+                                        let msg = response
+                                            .get("error")
+                                            .and_then(|e| e.get("message"))
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("Workflow creation failed");
+                                        self.workflow_state
+                                            .set_status(format!("Failed: {}", msg), true);
+                                        self.workflow_config.error =
+                                            Some(format!("Failed: {}", msg));
+                                        self.mark_dirty();
+                                        continue;
+                                    }
+
                                     // Check if this is an ApiResponse wrapper
                                     let data = if response.get("ok").is_some() {
                                         response.get("data").cloned().unwrap_or(response.clone())
@@ -1206,33 +1269,194 @@ impl<'a> App<'a> {
                                         response
                                     };
 
-                                    // Count generated inputs
-                                    let input_count = data.get("inputs")
-                                        .and_then(|i| i.as_array())
-                                        .map(|arr| arr.len())
-                                        .unwrap_or(0);
-
-                                    if input_count > 0 {
-                                        self.workflow_state.set_status(
-                                            format!("Created {} input files. Use Job tab to submit.", input_count),
-                                            false,
-                                        );
-                                        info!("Workflow created with {} inputs", input_count);
-                                    } else {
-                                        self.workflow_state.set_status(
-                                            "Workflow created (no inputs generated - check config)".to_string(),
-                                            false,
-                                        );
+                                    if let Some(wf) = data
+                                        .get("workflow_json")
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        workflow_json_str = wf.to_string();
                                     }
-                                } else {
-                                    self.workflow_state
-                                        .set_status("Workflow created".to_string(), false);
-                                    info!("Workflow created (couldn't parse response)");
+
+                                    if let Some(arr) =
+                                        data.get("inputs").and_then(|i| i.as_array())
+                                    {
+                                        inputs = arr.clone();
+                                    }
                                 }
+
+                                let input_count = inputs.len();
+                                let workflow_id = format!("wf_{}", request_id);
+
+                                // Extract config details for job submissions
+                                let (dft_code, config_cluster_id) =
+                                    match serde_json::from_str::<serde_json::Value>(
+                                        &workflow_json_str,
+                                    ) {
+                                        Ok(wf) => {
+                                            let config = wf.get("config");
+                                            let dft = config
+                                                .and_then(|c| c.get("dft_code"))
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("crystal");
+                                            let dft_code = match dft {
+                                                "vasp" => crate::models::DftCode::Vasp,
+                                                "quantum_espresso" | "qe" => {
+                                                    crate::models::DftCode::QuantumEspresso
+                                                }
+                                                _ => crate::models::DftCode::Crystal,
+                                            };
+                                            let cluster_id = config
+                                                .and_then(|c| c.get("cluster_id"))
+                                                .and_then(|v| v.as_i64())
+                                                .map(|v| v as i32);
+                                            (dft_code, cluster_id)
+                                        }
+                                        Err(_) => (crate::models::DftCode::Crystal, None),
+                                    };
+
+                                // Determine cluster selection (config -> selected cluster -> local)
+                                let mut cluster_id = config_cluster_id;
+                                let mut runner_type = crate::models::RunnerType::Local;
+                                if let Some(cid) = cluster_id {
+                                    if let Some(cluster) = self
+                                        .cluster_manager
+                                        .clusters
+                                        .iter()
+                                        .find(|c| c.id == Some(cid))
+                                    {
+                                        runner_type = match cluster.cluster_type {
+                                            crate::models::ClusterType::Ssh => {
+                                                crate::models::RunnerType::Ssh
+                                            }
+                                            crate::models::ClusterType::Slurm => {
+                                                crate::models::RunnerType::Slurm
+                                            }
+                                        };
+                                    } else {
+                                        warn!(
+                                            "Workflow cluster_id {} not found, defaulting to local",
+                                            cid
+                                        );
+                                        cluster_id = None;
+                                    }
+                                } else if let Some(cluster) = self.cluster_manager.selected_cluster() {
+                                    if let Some(cid) = cluster.id {
+                                        cluster_id = Some(cid);
+                                        runner_type = match cluster.cluster_type {
+                                            crate::models::ClusterType::Ssh => {
+                                                crate::models::RunnerType::Ssh
+                                            }
+                                            crate::models::ClusterType::Slurm => {
+                                                crate::models::RunnerType::Slurm
+                                            }
+                                        };
+                                    }
+                                }
+
+                                self.workflow_runs.insert(
+                                    workflow_id.clone(),
+                                    WorkflowRun {
+                                        workflow_json: workflow_json_str.clone(),
+                                        job_ids: Vec::new(),
+                                        expected_jobs: input_count,
+                                    },
+                                );
+
+                                if input_count == 0 {
+                                    self.workflow_state.set_status(
+                                        "Workflow created (no inputs generated - check config)"
+                                            .to_string(),
+                                        false,
+                                    );
+                                    self.workflow_config.status = Some(
+                                        "Workflow created (no inputs generated)".to_string(),
+                                    );
+                                    self.mark_dirty();
+                                    continue;
+                                }
+
+                                // Submit jobs for each generated input
+                                let mut submitted = 0usize;
+                                for (idx, input) in inputs.iter().enumerate() {
+                                    let name = input
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .filter(|s| !s.trim().is_empty())
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| {
+                                            format!("{}_{}", workflow_id, idx + 1)
+                                        });
+                                    let content = input
+                                        .get("content")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+
+                                    if content.trim().is_empty() {
+                                        warn!(
+                                            "Skipping empty workflow input {} for {}",
+                                            idx + 1,
+                                            workflow_id
+                                        );
+                                        continue;
+                                    }
+
+                                    let mut submission = crate::models::JobSubmission::new(
+                                        &name,
+                                        dft_code,
+                                    )
+                                    .with_input_content(content)
+                                    .with_workflow_id(&workflow_id);
+
+                                    if runner_type != crate::models::RunnerType::Local {
+                                        submission = submission.with_runner_type(runner_type);
+                                    }
+                                    if let Some(cid) = cluster_id {
+                                        submission = submission.with_cluster_id(cid);
+                                    }
+
+                                    let submit_request_id = self.next_request_id();
+                                    self.workflow_job_requests
+                                        .insert(submit_request_id, workflow_id.clone());
+                                    if let Err(e) = self
+                                        .bridge
+                                        .request_submit_job(&submission, submit_request_id)
+                                    {
+                                        self.workflow_job_requests.remove(&submit_request_id);
+                                        warn!(
+                                            "Failed to submit workflow job {}: {}",
+                                            name, e
+                                        );
+                                    } else {
+                                        submitted += 1;
+                                    }
+                                }
+
+                                if let Some(run) = self.workflow_runs.get_mut(&workflow_id) {
+                                    run.expected_jobs = submitted;
+                                }
+
+                                self.workflow_state.set_status(
+                                    format!(
+                                        "Submitting {} jobs for workflow {}",
+                                        submitted, workflow_id
+                                    ),
+                                    false,
+                                );
+                                self.workflow_config.status = Some(format!(
+                                    "Submitting {} jobs...",
+                                    submitted
+                                ));
+                                info!(
+                                    "Workflow {} created with {} inputs (submitted {})",
+                                    workflow_id, input_count, submitted
+                                );
+                                self.mark_dirty();
                             }
                             Err(e) => {
                                 self.workflow_state
                                     .set_status(format!("Failed: {}", e), true);
+                                self.workflow_config.error =
+                                    Some(format!("Failed to create workflow: {}", e));
+                                self.mark_dirty();
                             }
                         }
                     }
@@ -4593,6 +4817,8 @@ mod tests {
             vasp_input_state: crate::ui::VaspInputState::default(),
             workflow_state: crate::ui::WorkflowState::default(),
             workflow_config: WorkflowConfigState::default(),
+            workflow_runs: std::collections::HashMap::new(),
+            workflow_job_requests: std::collections::HashMap::new(),
             recipe_browser: RecipeBrowserState::default(),
             template_browser: TemplateBrowserState::default(),
             batch_submission: BatchSubmissionState::default(),

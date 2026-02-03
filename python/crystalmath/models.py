@@ -163,6 +163,9 @@ class JobSubmission(BaseModel):
 
     name: str = Field(..., min_length=3, max_length=100, description="Job display name")
     dft_code: DftCode = Field(default=DftCode.CRYSTAL, description="DFT code to use")
+    workflow_id: Optional[str] = Field(
+        default=None, description="Parent workflow ID (for workflow-linked jobs)"
+    )
     cluster_id: Optional[int] = Field(
         default=None, description="Target cluster ID (None for local)"
     )

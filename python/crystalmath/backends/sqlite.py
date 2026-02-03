@@ -181,6 +181,7 @@ class SQLiteBackend(Backend):
             name=submission.name,
             work_dir=str(work_dir.absolute()),
             input_content=final_input_content,
+            workflow_id=submission.workflow_id,
             cluster_id=submission.cluster_id,
             runner_type=submission.runner_type.value,
             dft_code=submission.dft_code.value,
