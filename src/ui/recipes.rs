@@ -50,6 +50,7 @@ impl RecipeBrowserState {
     pub fn open(&mut self) {
         self.active = true;
         self.closing = false;
+        self.loading = true; // Mark as loading to trigger fetch
         self.selected = 0;
         self.list_state.select(Some(0));
         self.error = None;
