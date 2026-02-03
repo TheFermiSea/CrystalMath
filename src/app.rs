@@ -20,7 +20,7 @@ use tachyonfx::{fx, Effect};
 // Re-export state types for backward compatibility with existing imports from crate::app
 pub use crate::state::{
     Action, AppTab, BatchSubmissionState, JobsState, MaterialsSearchState, NewJobField,
-    NewJobState, TemplateBrowserState,
+    NewJobState, TemplateBrowserState, WorkflowConfigState,
 };
 
 /// Main application state.
@@ -170,6 +170,9 @@ pub struct App<'a> {
     // ===== Workflow Launcher Modal =====
     /// State for the workflow launcher modal.
     pub workflow_state: crate::ui::WorkflowState,
+
+    /// State for the workflow configuration modal.
+    pub workflow_config: WorkflowConfigState,
 
     // ===== Recipe Browser Modal =====
     /// State for the quacc recipe browser modal.
@@ -371,6 +374,7 @@ impl<'a> App<'a> {
             last_slurm_cluster_id: None,
             vasp_input_state: crate::ui::VaspInputState::default(),
             workflow_state: crate::ui::WorkflowState::default(),
+            workflow_config: WorkflowConfigState::default(),
             recipe_browser: RecipeBrowserState::default(),
             template_browser: TemplateBrowserState::default(),
             batch_submission: BatchSubmissionState::default(),
@@ -3612,6 +3616,27 @@ impl<'a> App<'a> {
 
     // ===== Workflow Launcher Modal =====
 
+    /// Check if the workflow config modal is active.
+    pub fn is_workflow_config_active(&self) -> bool {
+        self.workflow_config.active
+    }
+
+    /// Open the workflow config modal for a workflow type.
+    pub fn open_workflow_config_modal(&mut self, workflow_type: crate::models::WorkflowType) {
+        self.workflow_config.open(workflow_type);
+        // Close workflow modal immediately to avoid stacking.
+        self.workflow_state.active = false;
+        self.workflow_state.closing = false;
+        self.workflow_state.effect = None;
+        self.mark_dirty();
+    }
+
+    /// Close the workflow config modal.
+    pub fn close_workflow_config_modal(&mut self) {
+        self.workflow_config.close();
+        self.mark_dirty();
+    }
+
     /// Check if the workflow launcher modal is active.
     pub fn is_workflow_modal_active(&self) -> bool {
         self.workflow_state.active
@@ -3648,121 +3673,105 @@ impl<'a> App<'a> {
     /// This validates that workflows are available, gets the selected workflow type,
     /// and initiates the appropriate workflow creation via the bridge.
     ///
-    /// NOTE: Full workflow configuration UI is not yet implemented.
-    /// Currently shows what workflow would be created with default parameters.
     pub fn launch_selected_workflow(&mut self) {
         use crate::models::WorkflowType;
 
-        // Check if workflows are available
-        if !self.workflow_state.workflows_available {
-            self.workflow_state
-                .set_status("Workflows not available".to_string(), true);
+        if !self.workflow_config.active {
+            self.workflow_state.set_status(
+                "Open workflow config to launch".to_string(),
+                true,
+            );
             self.mark_dirty();
             return;
         }
 
-        let workflow_type = self.workflow_state.selected_workflow();
+        // Check if workflows are available
+        if !self.workflow_state.workflows_available {
+            self.workflow_config.error = Some("Workflows not available".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        let workflow_type = self.workflow_config.workflow_type;
         let workflow_name = workflow_type.as_str();
 
-        // For now, show info about the workflow since config UI isn't implemented
-        // A full implementation would show a configuration form before creating
-        let info_msg = match workflow_type {
-            WorkflowType::Convergence => {
-                "Convergence: Tests k-point/cutoff convergence. Needs base .d12 input."
-            }
-            WorkflowType::BandStructure => {
-                "Band Structure: Calculates bands along k-path. Needs structure file."
-            }
-            WorkflowType::Phonon => {
-                "Phonon: Finite-displacement phonons. Needs structure + supercell config."
-            }
-            WorkflowType::Eos => {
-                "EOS: Equation of state fitting. Needs structure + strain range."
-            }
-            WorkflowType::GeometryOptimization => {
-                "Geometry Opt: Relaxes structure. Requires AiiDA backend."
-            }
-        };
-
-        // Show workflow info (config UI not yet available)
-        self.workflow_state.set_status(
-            format!("{} - Config UI coming soon!", info_msg),
-            false,
-        );
-        info!("Workflow selected: {} - {}", workflow_name, info_msg);
-        self.mark_dirty();
-
-        // Don't actually send request until config UI exists
-        // The code below is ready but needs proper config input
-        return;
-
-        #[allow(unreachable_code)]
-        {
-            // Show "launching" status
-            self.workflow_state.set_loading(true);
-            self.workflow_state
-                .set_status(format!("Launching {}...", workflow_name), false);
+        if workflow_type != WorkflowType::Convergence {
+            self.workflow_config.error = Some(
+                "Only Convergence workflow is supported in the config UI yet.".to_string(),
+            );
             self.mark_dirty();
-
-            // Generate a default config for the workflow
-            // (In a full implementation, this would prompt for parameters)
-            let config = match workflow_type {
-                WorkflowType::Convergence => serde_json::json!({
-                    "parameter": "shrink",
-                    "values": [4, 6, 8, 10, 12],
-                    "base_input": ""
-                }),
-                WorkflowType::BandStructure => serde_json::json!({
-                    "structure_file": "",
-                    "k_path": "auto"
-                }),
-                WorkflowType::Phonon => serde_json::json!({
-                    "structure_file": "",
-                    "supercell": [2, 2, 2]
-                }),
-                WorkflowType::Eos => serde_json::json!({
-                    "structure_file": "",
-                    "strains": [-0.06, -0.04, -0.02, 0.0, 0.02, 0.04, 0.06]
-                }),
-                WorkflowType::GeometryOptimization => serde_json::json!({
-                    "structure_file": "",
-                    "fmax": 0.01
-                }),
-            };
-            let config_json = config.to_string();
-
-            // Get request ID for tracking
-            let request_id = self.next_request_id();
-            self.workflow_state.request_id = Some(request_id);
-
-            // Call the appropriate bridge method
-            let result = match workflow_type {
-                WorkflowType::Convergence => self
-                    .bridge
-                    .request_create_convergence_study(&config_json, request_id),
-                WorkflowType::BandStructure => self
-                    .bridge
-                    .request_create_band_structure_workflow(&config_json, request_id),
-                WorkflowType::Phonon => self
-                    .bridge
-                    .request_create_phonon_workflow(&config_json, request_id),
-                WorkflowType::Eos => self
-                    .bridge
-                    .request_create_eos_workflow(&config_json, request_id),
-                WorkflowType::GeometryOptimization => self
-                    .bridge
-                    .request_launch_aiida_geopt(&config_json, request_id),
-            };
-
-            if let Err(e) = result {
-                self.workflow_state.set_loading(false);
-                self.workflow_state
-                    .set_status(format!("Failed to launch: {}", e), true);
-            } else {
-                info!("Workflow {} launch request sent (id={})", workflow_name, request_id);
-            }
-            self.mark_dirty();
+            return;
         }
+
+        let base_input = self.workflow_config.convergence.base_input.lines().join("\n");
+        if base_input.trim().is_empty() {
+            self.workflow_config
+                .error = Some("Base input (.d12) is required".to_string());
+            self.mark_dirty();
+            return;
+        }
+
+        let values_raw = self.workflow_config.convergence.values.clone();
+        let values: Vec<f64> = values_raw
+            .split(',')
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.parse::<f64>())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "Values must be a comma-separated list of numbers")
+            .unwrap_or_else(|err| {
+                self.workflow_config.error = Some(err.to_string());
+                Vec::new()
+            });
+
+        if values.is_empty() {
+            if self.workflow_config.error.is_none() {
+                self.workflow_config
+                    .error = Some("Values cannot be empty".to_string());
+            }
+            self.mark_dirty();
+            return;
+        }
+
+        let config = serde_json::json!({
+            "parameter": self.workflow_config.convergence.parameter.as_str(),
+            "values": values,
+            "base_input": base_input,
+            "dft_code": "crystal",
+            "name_prefix": "conv",
+        });
+        let config_json = config.to_string();
+
+        let request_id = self.next_request_id();
+        self.workflow_state.request_id = Some(request_id);
+        self.workflow_state.set_loading(true);
+        self.workflow_state
+            .set_status(format!("Launching {}...", workflow_name), false);
+
+        self.workflow_config.error = None;
+        self.workflow_config.status = Some("Launching workflow...".to_string());
+        self.workflow_config.submitting = true;
+        self.workflow_config.request_id = request_id;
+
+        let result = self
+            .bridge
+            .request_create_convergence_study(&config_json, request_id);
+
+        if let Err(e) = result {
+            self.workflow_state.set_loading(false);
+            self.workflow_state
+                .set_status(format!("Failed to launch: {}", e), true);
+            self.workflow_config.submitting = false;
+            self.workflow_config.error = Some(format!("Failed to launch: {}", e));
+        } else {
+            info!(
+                "Workflow {} launch request sent (id={})",
+                workflow_name, request_id
+            );
+            self.workflow_config.submitting = false;
+            self.workflow_config.status = Some("Launch request sent".to_string());
+        }
+        self.mark_dirty();
     }
 
     // ===== Template Browser Modal =====
@@ -4309,6 +4318,7 @@ mod tests {
             last_slurm_cluster_id: None,
             vasp_input_state: crate::ui::VaspInputState::default(),
             workflow_state: crate::ui::WorkflowState::default(),
+            workflow_config: WorkflowConfigState::default(),
             recipe_browser: RecipeBrowserState::default(),
             template_browser: TemplateBrowserState::default(),
             batch_submission: BatchSubmissionState::default(),

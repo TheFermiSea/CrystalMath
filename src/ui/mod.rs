@@ -13,6 +13,7 @@ mod new_job;
 pub mod recipes;
 mod results;
 mod slurm_queue;
+mod workflow_config;
 mod templates;
 mod vasp_input;
 mod workflows;
@@ -232,6 +233,28 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
                     app.workflow_state.effect = None;
                 } else {
                     app.workflow_state.effect = None;
+                }
+            } else {
+                app.mark_dirty();
+            }
+        }
+    }
+
+    if app.workflow_config.active {
+        workflow_config::render(frame, &app.workflow_config);
+
+        if let Some(ref mut effect) = app.workflow_config.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let modal_area = centered_rect(80, 85, frame.area());
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+
+            if !effect.running() {
+                if app.workflow_config.closing {
+                    app.workflow_config.active = false;
+                    app.workflow_config.closing = false;
+                    app.workflow_config.effect = None;
+                } else {
+                    app.workflow_config.effect = None;
                 }
             } else {
                 app.mark_dirty();

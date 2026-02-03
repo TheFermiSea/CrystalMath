@@ -13,7 +13,7 @@ use ratatui::style::Color;
 
 use crate::models::{
     D12GenerationConfig, DftCode, JobStatus, MaterialResult, RunnerType, StructurePreview, Template,
-    VaspGenerationConfig,
+    VaspGenerationConfig, WorkflowType,
 };
 
 pub mod actions;
@@ -854,6 +854,393 @@ impl TemplateBrowserState {
     /// Get the currently selected template.
     pub fn selected_template(&self) -> Option<&Template> {
         self.selected_index.and_then(|i| self.templates.get(i))
+    }
+}
+
+// =============================================================================
+// Workflow Configuration Modal State
+// =============================================================================
+
+/// Workflow config form fields (union across workflows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowConfigField {
+    // Convergence
+    ConvergenceParameter,
+    ConvergenceValues,
+    ConvergenceBaseInput,
+    // Band Structure
+    BandSourceJob,
+    BandPathPreset,
+    BandCustomPath,
+    // Phonon
+    PhononSupercellA,
+    PhononSupercellB,
+    PhononSupercellC,
+    PhononDisplacement,
+    // EOS
+    EosStrainMin,
+    EosStrainMax,
+    EosStrainSteps,
+    // Geometry Optimization
+    GeomFmax,
+    GeomMaxSteps,
+    // Buttons
+    BtnLaunch,
+    BtnCancel,
+}
+
+/// Convergence study parameter options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConvergenceParameter {
+    Kpoints,
+    Shrink,
+    Basis,
+    Encut,
+    Ecutwfc,
+}
+
+impl ConvergenceParameter {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Kpoints => "kpoints",
+            Self::Shrink => "shrink",
+            Self::Basis => "basis",
+            Self::Encut => "encut",
+            Self::Ecutwfc => "ecutwfc",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Kpoints => Self::Shrink,
+            Self::Shrink => Self::Basis,
+            Self::Basis => Self::Encut,
+            Self::Encut => Self::Ecutwfc,
+            Self::Ecutwfc => Self::Kpoints,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Kpoints => Self::Ecutwfc,
+            Self::Shrink => Self::Kpoints,
+            Self::Basis => Self::Shrink,
+            Self::Encut => Self::Basis,
+            Self::Ecutwfc => Self::Encut,
+        }
+    }
+}
+
+/// Band structure k-path presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BandPathPreset {
+    Auto,
+    Cubic,
+    Fcc,
+    Bcc,
+    Hexagonal,
+    Tetragonal,
+    Custom,
+}
+
+impl BandPathPreset {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Cubic => "cubic",
+            Self::Fcc => "fcc",
+            Self::Bcc => "bcc",
+            Self::Hexagonal => "hexagonal",
+            Self::Tetragonal => "tetragonal",
+            Self::Custom => "custom",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Auto => Self::Cubic,
+            Self::Cubic => Self::Fcc,
+            Self::Fcc => Self::Bcc,
+            Self::Bcc => Self::Hexagonal,
+            Self::Hexagonal => Self::Tetragonal,
+            Self::Tetragonal => Self::Custom,
+            Self::Custom => Self::Auto,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Auto => Self::Custom,
+            Self::Cubic => Self::Auto,
+            Self::Fcc => Self::Cubic,
+            Self::Bcc => Self::Fcc,
+            Self::Hexagonal => Self::Bcc,
+            Self::Tetragonal => Self::Hexagonal,
+            Self::Custom => Self::Tetragonal,
+        }
+    }
+}
+
+impl Default for BandPathPreset {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+/// Convergence workflow config state.
+#[derive(Debug)]
+pub struct ConvergenceConfigState {
+    pub parameter: ConvergenceParameter,
+    pub values: String,
+    pub base_input: TextArea<'static>,
+}
+
+impl Default for ConvergenceConfigState {
+    fn default() -> Self {
+        let mut base_input = TextArea::default();
+        base_input.set_placeholder_text("Paste base .d12 input here");
+        Self {
+            parameter: ConvergenceParameter::Shrink,
+            values: "4,6,8,10,12".to_string(),
+            base_input,
+        }
+    }
+}
+
+impl ConvergenceConfigState {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Band structure workflow config state.
+#[derive(Debug, Default)]
+pub struct BandStructureConfigState {
+    pub source_job_pk: String,
+    pub path_preset: BandPathPreset,
+    pub custom_path: String,
+}
+
+/// Phonon workflow config state.
+#[derive(Debug, Default)]
+pub struct PhononConfigState {
+    pub supercell_a: String,
+    pub supercell_b: String,
+    pub supercell_c: String,
+    pub displacement: String,
+}
+
+/// Equation of state workflow config state.
+#[derive(Debug, Default)]
+pub struct EosConfigState {
+    pub strain_min: String,
+    pub strain_max: String,
+    pub strain_steps: String,
+}
+
+/// Geometry optimization workflow config state.
+#[derive(Debug, Default)]
+pub struct GeometryOptConfigState {
+    pub fmax: String,
+    pub max_steps: String,
+}
+
+/// State for the workflow configuration modal.
+#[derive(Debug)]
+pub struct WorkflowConfigState {
+    /// Whether the modal is active.
+    pub active: bool,
+    /// Selected workflow type for configuration.
+    pub workflow_type: WorkflowType,
+    /// Currently focused field.
+    pub focused_field: WorkflowConfigField,
+    /// Error message (validation).
+    pub error: Option<String>,
+    /// Status message (info/success).
+    pub status: Option<String>,
+    /// Whether submission is in progress.
+    pub submitting: bool,
+    /// Request ID for async operations.
+    pub request_id: usize,
+    /// Animation effect for open/close.
+    pub effect: Option<Effect>,
+    /// Whether the modal is closing.
+    pub closing: bool,
+    /// Convergence config.
+    pub convergence: ConvergenceConfigState,
+    /// Band structure config.
+    pub band_structure: BandStructureConfigState,
+    /// Phonon config.
+    pub phonon: PhononConfigState,
+    /// EOS config.
+    pub eos: EosConfigState,
+    /// Geometry optimization config.
+    pub geometry_opt: GeometryOptConfigState,
+}
+
+impl Default for WorkflowConfigState {
+    fn default() -> Self {
+        Self {
+            active: false,
+            workflow_type: WorkflowType::Convergence,
+            focused_field: WorkflowConfigField::ConvergenceParameter,
+            error: None,
+            status: None,
+            submitting: false,
+            request_id: 0,
+            effect: None,
+            closing: false,
+            convergence: ConvergenceConfigState::default(),
+            band_structure: BandStructureConfigState::default(),
+            phonon: PhononConfigState::default(),
+            eos: EosConfigState::default(),
+            geometry_opt: GeometryOptConfigState::default(),
+        }
+    }
+}
+
+impl WorkflowConfigState {
+    /// Open the workflow config modal for the given workflow type.
+    pub fn open(&mut self, workflow_type: WorkflowType) {
+        self.active = true;
+        self.closing = false;
+        self.workflow_type = workflow_type;
+        self.focused_field = Self::default_field(workflow_type);
+        self.error = None;
+        self.status = None;
+        self.submitting = false;
+        self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
+        self.reset_for(workflow_type);
+    }
+
+    /// Close the workflow config modal.
+    pub fn close(&mut self) {
+        self.closing = true;
+        self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
+        self.request_id += 1;
+    }
+
+    /// Reset the config for the specified workflow type.
+    pub fn reset_for(&mut self, workflow_type: WorkflowType) {
+        match workflow_type {
+            WorkflowType::Convergence => self.convergence.reset(),
+            WorkflowType::BandStructure => self.band_structure = BandStructureConfigState::default(),
+            WorkflowType::Phonon => self.phonon = PhononConfigState::default(),
+            WorkflowType::Eos => self.eos = EosConfigState::default(),
+            WorkflowType::GeometryOptimization => {
+                self.geometry_opt = GeometryOptConfigState::default();
+            }
+        }
+    }
+
+    /// Move focus to the next field (workflow-specific order).
+    pub fn focus_next(&mut self) {
+        self.focused_field = self.next_field(self.focused_field);
+    }
+
+    /// Move focus to the previous field (workflow-specific order).
+    pub fn focus_prev(&mut self) {
+        self.focused_field = self.prev_field(self.focused_field);
+    }
+
+    fn next_field(&self, current: WorkflowConfigField) -> WorkflowConfigField {
+        match self.workflow_type {
+            WorkflowType::Convergence => match current {
+                WorkflowConfigField::ConvergenceParameter => WorkflowConfigField::ConvergenceValues,
+                WorkflowConfigField::ConvergenceValues => WorkflowConfigField::ConvergenceBaseInput,
+                WorkflowConfigField::ConvergenceBaseInput => WorkflowConfigField::BtnLaunch,
+                WorkflowConfigField::BtnLaunch => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::ConvergenceParameter,
+                _ => WorkflowConfigField::ConvergenceParameter,
+            },
+            WorkflowType::BandStructure => match current {
+                WorkflowConfigField::BandSourceJob => WorkflowConfigField::BandPathPreset,
+                WorkflowConfigField::BandPathPreset => WorkflowConfigField::BandCustomPath,
+                WorkflowConfigField::BandCustomPath => WorkflowConfigField::BtnLaunch,
+                WorkflowConfigField::BtnLaunch => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::BandSourceJob,
+                _ => WorkflowConfigField::BandSourceJob,
+            },
+            WorkflowType::Phonon => match current {
+                WorkflowConfigField::PhononSupercellA => WorkflowConfigField::PhononSupercellB,
+                WorkflowConfigField::PhononSupercellB => WorkflowConfigField::PhononSupercellC,
+                WorkflowConfigField::PhononSupercellC => WorkflowConfigField::PhononDisplacement,
+                WorkflowConfigField::PhononDisplacement => WorkflowConfigField::BtnLaunch,
+                WorkflowConfigField::BtnLaunch => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::PhononSupercellA,
+                _ => WorkflowConfigField::PhononSupercellA,
+            },
+            WorkflowType::Eos => match current {
+                WorkflowConfigField::EosStrainMin => WorkflowConfigField::EosStrainMax,
+                WorkflowConfigField::EosStrainMax => WorkflowConfigField::EosStrainSteps,
+                WorkflowConfigField::EosStrainSteps => WorkflowConfigField::BtnLaunch,
+                WorkflowConfigField::BtnLaunch => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::EosStrainMin,
+                _ => WorkflowConfigField::EosStrainMin,
+            },
+            WorkflowType::GeometryOptimization => match current {
+                WorkflowConfigField::GeomFmax => WorkflowConfigField::GeomMaxSteps,
+                WorkflowConfigField::GeomMaxSteps => WorkflowConfigField::BtnLaunch,
+                WorkflowConfigField::BtnLaunch => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::GeomFmax,
+                _ => WorkflowConfigField::GeomFmax,
+            },
+        }
+    }
+
+    fn prev_field(&self, current: WorkflowConfigField) -> WorkflowConfigField {
+        match self.workflow_type {
+            WorkflowType::Convergence => match current {
+                WorkflowConfigField::ConvergenceParameter => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::ConvergenceValues => WorkflowConfigField::ConvergenceParameter,
+                WorkflowConfigField::ConvergenceBaseInput => WorkflowConfigField::ConvergenceValues,
+                WorkflowConfigField::BtnLaunch => WorkflowConfigField::ConvergenceBaseInput,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::BtnLaunch,
+                _ => WorkflowConfigField::ConvergenceParameter,
+            },
+            WorkflowType::BandStructure => match current {
+                WorkflowConfigField::BandSourceJob => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::BandPathPreset => WorkflowConfigField::BandSourceJob,
+                WorkflowConfigField::BandCustomPath => WorkflowConfigField::BandPathPreset,
+                WorkflowConfigField::BtnLaunch => WorkflowConfigField::BandCustomPath,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::BtnLaunch,
+                _ => WorkflowConfigField::BandSourceJob,
+            },
+            WorkflowType::Phonon => match current {
+                WorkflowConfigField::PhononSupercellA => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::PhononSupercellB => WorkflowConfigField::PhononSupercellA,
+                WorkflowConfigField::PhononSupercellC => WorkflowConfigField::PhononSupercellB,
+                WorkflowConfigField::PhononDisplacement => WorkflowConfigField::PhononSupercellC,
+                WorkflowConfigField::BtnLaunch => WorkflowConfigField::PhononDisplacement,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::BtnLaunch,
+                _ => WorkflowConfigField::PhononSupercellA,
+            },
+            WorkflowType::Eos => match current {
+                WorkflowConfigField::EosStrainMin => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::EosStrainMax => WorkflowConfigField::EosStrainMin,
+                WorkflowConfigField::EosStrainSteps => WorkflowConfigField::EosStrainMax,
+                WorkflowConfigField::BtnLaunch => WorkflowConfigField::EosStrainSteps,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::BtnLaunch,
+                _ => WorkflowConfigField::EosStrainMin,
+            },
+            WorkflowType::GeometryOptimization => match current {
+                WorkflowConfigField::GeomFmax => WorkflowConfigField::BtnCancel,
+                WorkflowConfigField::GeomMaxSteps => WorkflowConfigField::GeomFmax,
+                WorkflowConfigField::BtnLaunch => WorkflowConfigField::GeomMaxSteps,
+                WorkflowConfigField::BtnCancel => WorkflowConfigField::BtnLaunch,
+                _ => WorkflowConfigField::GeomFmax,
+            },
+        }
+    }
+
+    fn default_field(workflow_type: WorkflowType) -> WorkflowConfigField {
+        match workflow_type {
+            WorkflowType::Convergence => WorkflowConfigField::ConvergenceParameter,
+            WorkflowType::BandStructure => WorkflowConfigField::BandSourceJob,
+            WorkflowType::Phonon => WorkflowConfigField::PhononSupercellA,
+            WorkflowType::Eos => WorkflowConfigField::EosStrainMin,
+            WorkflowType::GeometryOptimization => WorkflowConfigField::GeomFmax,
+        }
     }
 }
 

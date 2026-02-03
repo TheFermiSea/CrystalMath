@@ -30,7 +30,7 @@ use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use app::App;
-use crate::state::BatchSubmissionField;
+use crate::state::{BatchSubmissionField, WorkflowConfigField};
 use models::ClusterType;
 
 /// Global flag to track if terminal is in raw mode (for panic cleanup)
@@ -451,6 +451,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                     } else if app.is_recipe_browser_active() {
                         if !app.recipe_browser.closing {
                             handle_recipe_browser_input(app, key);
+                        }
+                    } else if app.is_workflow_config_active() {
+                        if !app.workflow_config.closing {
+                            handle_workflow_config_input(app, key);
                         }
                     } else if app.is_workflow_modal_active() {
                         if !app.workflow_state.closing {
@@ -1351,7 +1355,7 @@ fn handle_recipe_browser_input(app: &mut App, key: event::KeyEvent) {
 /// - Esc: Close modal
 /// - j/Down: Select next workflow
 /// - k/Up: Select previous workflow
-/// - Enter: Launch selected workflow (TODO)
+/// - Enter: Open workflow config
 fn handle_workflow_modal_input(app: &mut App, key: event::KeyEvent) {
     // Don't process input while loading (except Escape)
     if app.workflow_state.loading {
@@ -1377,13 +1381,232 @@ fn handle_workflow_modal_input(app: &mut App, key: event::KeyEvent) {
             app.mark_dirty();
         }
 
-        // Launch selected workflow
+        // Open workflow config
         KeyCode::Enter => {
-            app.launch_selected_workflow();
+            if app.workflow_state.workflows_available {
+                let workflow_type = app.workflow_state.selected_workflow();
+                app.open_workflow_config_modal(workflow_type);
+            } else {
+                app.workflow_state
+                    .set_status("Workflows not available".to_string(), true);
+            }
             app.mark_dirty();
         }
 
         _ => {}
+    }
+}
+
+/// Handle keyboard input for the workflow config modal.
+///
+/// Key bindings:
+/// - Esc: Close modal
+/// - Tab/Shift+Tab: Next/Previous field
+/// - Space: Cycle dropdowns
+/// - Enter: Launch (or insert newline for base input)
+/// - Backspace/Chars: Edit active field
+fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
+    let focused = app.workflow_config.focused_field;
+
+    // Don't process input while submitting (except Escape)
+    if app.workflow_config.submitting {
+        if key.code == KeyCode::Esc {
+            app.close_workflow_config_modal();
+        }
+        return;
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            app.close_workflow_config_modal();
+        }
+        KeyCode::Tab => {
+            app.workflow_config.focus_next();
+            app.workflow_config.error = None;
+            app.workflow_config.status = None;
+            app.mark_dirty();
+        }
+        KeyCode::BackTab => {
+            app.workflow_config.focus_prev();
+            app.workflow_config.error = None;
+            app.workflow_config.status = None;
+            app.mark_dirty();
+        }
+        KeyCode::Enter => {
+            if focused == WorkflowConfigField::ConvergenceBaseInput {
+                if app.workflow_config.convergence.base_input.input(key) {
+                    app.mark_dirty();
+                }
+                return;
+            }
+
+            if focused == WorkflowConfigField::BtnCancel {
+                app.close_workflow_config_modal();
+            } else {
+                app.launch_selected_workflow();
+            }
+            app.mark_dirty();
+        }
+        KeyCode::Backspace => {
+            if focused == WorkflowConfigField::ConvergenceBaseInput {
+                if app.workflow_config.convergence.base_input.input(key) {
+                    app.mark_dirty();
+                }
+                return;
+            }
+
+            match focused {
+                WorkflowConfigField::ConvergenceValues => {
+                    app.workflow_config.convergence.values.pop();
+                }
+                WorkflowConfigField::BandSourceJob => {
+                    app.workflow_config.band_structure.source_job_pk.pop();
+                }
+                WorkflowConfigField::BandCustomPath => {
+                    app.workflow_config.band_structure.custom_path.pop();
+                }
+                WorkflowConfigField::PhononSupercellA => {
+                    app.workflow_config.phonon.supercell_a.pop();
+                }
+                WorkflowConfigField::PhononSupercellB => {
+                    app.workflow_config.phonon.supercell_b.pop();
+                }
+                WorkflowConfigField::PhononSupercellC => {
+                    app.workflow_config.phonon.supercell_c.pop();
+                }
+                WorkflowConfigField::PhononDisplacement => {
+                    app.workflow_config.phonon.displacement.pop();
+                }
+                WorkflowConfigField::EosStrainMin => {
+                    app.workflow_config.eos.strain_min.pop();
+                }
+                WorkflowConfigField::EosStrainMax => {
+                    app.workflow_config.eos.strain_max.pop();
+                }
+                WorkflowConfigField::EosStrainSteps => {
+                    app.workflow_config.eos.strain_steps.pop();
+                }
+                WorkflowConfigField::GeomFmax => {
+                    app.workflow_config.geometry_opt.fmax.pop();
+                }
+                WorkflowConfigField::GeomMaxSteps => {
+                    app.workflow_config.geometry_opt.max_steps.pop();
+                }
+                _ => {}
+            }
+            app.workflow_config.error = None;
+            app.workflow_config.status = None;
+            app.mark_dirty();
+        }
+        KeyCode::Char(c) => {
+            if focused == WorkflowConfigField::ConvergenceBaseInput {
+                if app.workflow_config.convergence.base_input.input(key) {
+                    app.mark_dirty();
+                }
+                return;
+            }
+
+            let allow_float = |ch: char| ch.is_ascii_digit() || matches!(ch, '.' | '-' | 'e' | 'E');
+            let allow_values = |ch: char| {
+                ch.is_ascii_digit() || matches!(ch, '.' | '-' | 'e' | 'E' | ',' | ' ')
+            };
+
+            if c == ' ' {
+                match focused {
+                    WorkflowConfigField::ConvergenceParameter => {
+                        app.workflow_config.convergence.parameter =
+                            app.workflow_config.convergence.parameter.next();
+                        app.workflow_config.error = None;
+                        app.workflow_config.status = None;
+                        app.mark_dirty();
+                        return;
+                    }
+                    WorkflowConfigField::BandPathPreset => {
+                        app.workflow_config.band_structure.path_preset =
+                            app.workflow_config.band_structure.path_preset.next();
+                        app.workflow_config.error = None;
+                        app.workflow_config.status = None;
+                        app.mark_dirty();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
+            match focused {
+                WorkflowConfigField::ConvergenceValues => {
+                    if allow_values(c) {
+                        app.workflow_config.convergence.values.push(c);
+                    }
+                }
+                WorkflowConfigField::BandSourceJob => {
+                    if c.is_ascii_digit() {
+                        app.workflow_config.band_structure.source_job_pk.push(c);
+                    }
+                }
+                WorkflowConfigField::BandCustomPath => {
+                    if !c.is_control() {
+                        app.workflow_config.band_structure.custom_path.push(c);
+                    }
+                }
+                WorkflowConfigField::PhononSupercellA => {
+                    if c.is_ascii_digit() {
+                        app.workflow_config.phonon.supercell_a.push(c);
+                    }
+                }
+                WorkflowConfigField::PhononSupercellB => {
+                    if c.is_ascii_digit() {
+                        app.workflow_config.phonon.supercell_b.push(c);
+                    }
+                }
+                WorkflowConfigField::PhononSupercellC => {
+                    if c.is_ascii_digit() {
+                        app.workflow_config.phonon.supercell_c.push(c);
+                    }
+                }
+                WorkflowConfigField::PhononDisplacement => {
+                    if allow_float(c) {
+                        app.workflow_config.phonon.displacement.push(c);
+                    }
+                }
+                WorkflowConfigField::EosStrainMin => {
+                    if allow_float(c) {
+                        app.workflow_config.eos.strain_min.push(c);
+                    }
+                }
+                WorkflowConfigField::EosStrainMax => {
+                    if allow_float(c) {
+                        app.workflow_config.eos.strain_max.push(c);
+                    }
+                }
+                WorkflowConfigField::EosStrainSteps => {
+                    if c.is_ascii_digit() {
+                        app.workflow_config.eos.strain_steps.push(c);
+                    }
+                }
+                WorkflowConfigField::GeomFmax => {
+                    if allow_float(c) {
+                        app.workflow_config.geometry_opt.fmax.push(c);
+                    }
+                }
+                WorkflowConfigField::GeomMaxSteps => {
+                    if c.is_ascii_digit() {
+                        app.workflow_config.geometry_opt.max_steps.push(c);
+                    }
+                }
+                _ => {}
+            }
+            app.workflow_config.error = None;
+            app.workflow_config.status = None;
+            app.mark_dirty();
+        }
+        _ => {
+            if focused == WorkflowConfigField::ConvergenceBaseInput {
+                if app.workflow_config.convergence.base_input.input(key) {
+                    app.mark_dirty();
+                }
+            }
+        }
     }
 }
 
