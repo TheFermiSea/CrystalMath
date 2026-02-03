@@ -51,20 +51,32 @@ pub fn render(frame: &mut Frame, app: &App) {
     let inner_area = block.inner(modal_area);
     frame.render_widget(block, modal_area);
 
-    // Layout: Search row, Status, Results table, Button hints
+    // Layout: Search row, Status, Results + Preview, Button hints
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Search input
             Constraint::Length(2), // Status message
-            Constraint::Min(5),    // Results table
+            Constraint::Min(5),    // Results + Preview
             Constraint::Length(2), // Button hints
         ])
         .split(inner_area);
 
     render_search_input(frame, &app.materials, chunks[0]);
     render_status(frame, &app.materials, chunks[1]);
-    render_results_table(frame, &app.materials, chunks[2]);
+
+    // Split the middle area into results table and preview panel
+    let content_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(60), // Results table
+            Constraint::Percentage(40), // Preview panel
+        ])
+        .split(chunks[2]);
+
+    render_results_table(frame, &app.materials, content_chunks[0]);
+    render_preview_panel(frame, &app.materials, content_chunks[1]);
+
     render_button_hints(frame, &app.materials, chunks[3]);
 }
 
@@ -221,6 +233,176 @@ fn render_results_table(frame: &mut Frame, state: &MaterialsSearchState, area: R
     frame.render_stateful_widget(table, area, &mut table_state);
 }
 
+/// Render the structure preview panel.
+fn render_preview_panel(frame: &mut Frame, state: &MaterialsSearchState, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta))
+        .title(" Structure Preview ")
+        .title_style(Style::default().fg(Color::Magenta));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Check if we have a selection
+    if state.table_state.selected().is_none() {
+        let msg = Paragraph::new("Select a structure to preview")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    // Check if loading
+    if state.preview_loading {
+        let spinner = ['◐', '◓', '◑', '◒'];
+        let idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            / 200) as usize
+            % spinner.len();
+        let msg = Paragraph::new(format!("{} Loading preview...", spinner[idx]))
+            .style(Style::default().fg(Color::Yellow))
+            .alignment(Alignment::Center);
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    // Check if we have preview data
+    let Some(preview) = &state.preview else {
+        // Selection but no preview yet - show waiting state
+        let msg = Paragraph::new("Fetching structure info...")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center);
+        frame.render_widget(msg, inner);
+        return;
+    };
+
+    // Build preview lines
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                &preview.formula,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+    ];
+
+    // Space group
+    if let Some(ref sym) = preview.symmetry {
+        if let Some(ref sg) = sym.space_group {
+            lines.push(Line::from(vec![
+                Span::styled("Space Group: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(sg.as_str(), Style::default().fg(Color::Cyan)),
+            ]));
+        }
+        if let Some(ref cs) = sym.crystal_system {
+            lines.push(Line::from(vec![
+                Span::styled("System: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(cs.as_str(), Style::default().fg(Color::White)),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+
+    // Lattice parameters
+    lines.push(Line::from(vec![
+        Span::styled("Lattice (Å):", Style::default().fg(Color::DarkGray)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(" a=", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:.3}", preview.lattice.a),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(" b=", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:.3}", preview.lattice.b),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(" c=", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:.3}", preview.lattice.c),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(" α=", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:.1}°", preview.lattice.alpha),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(" β=", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:.1}°", preview.lattice.beta),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(" γ=", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:.1}°", preview.lattice.gamma),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+
+    // Volume and atoms
+    lines.push(Line::from(vec![
+        Span::styled("Volume: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:.2} Å³", preview.volume),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Atoms: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{}", preview.num_sites),
+            Style::default().fg(Color::Green),
+        ),
+    ]));
+
+    // Elements
+    if !preview.species.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("Elements: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                preview.species.join(", "),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]));
+    }
+
+    // VASP config section
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("─── VASP Config ───", Style::default().fg(Color::DarkGray)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Preset [p]: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{}", state.vasp_config.preset),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("K-pts [k]: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{} KPPRA", state.vasp_config.kppra),
+            Style::default().fg(Color::Cyan),
+        ),
+    ]));
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: true });
+    frame.render_widget(para, inner);
+}
+
 /// Render keyboard shortcuts / button hints.
 fn render_button_hints(frame: &mut Frame, state: &MaterialsSearchState, area: Rect) {
     let hints = if state.loading {
@@ -250,9 +432,13 @@ fn render_button_hints(frame: &mut Frame, state: &MaterialsSearchState, area: Re
                 " Enter ",
                 Style::default().bg(Color::Green).fg(Color::Black),
             ),
-            Span::raw(" Import  "),
-            Span::styled(" ↑↓ ", Style::default().bg(Color::Blue).fg(Color::White)),
-            Span::raw(" Navigate  "),
+            Span::raw(" D12 "),
+            Span::styled(" v ", Style::default().bg(Color::Cyan).fg(Color::Black)),
+            Span::raw(" VASP "),
+            Span::styled(" p ", Style::default().bg(Color::Magenta).fg(Color::White)),
+            Span::raw(" Preset "),
+            Span::styled(" K ", Style::default().bg(Color::Magenta).fg(Color::White)),
+            Span::raw(" K-pts "),
             Span::styled(
                 " Esc ",
                 Style::default().bg(Color::DarkGray).fg(Color::White),

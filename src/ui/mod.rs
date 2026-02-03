@@ -26,11 +26,52 @@ pub use workflows::WorkflowState;
 // VaspInputFiles is now in crate::models
 
 use ratatui::prelude::*;
+use tachyonfx::Shader;
 
 use crate::app::App;
 
 /// Main render function - called every frame.
 pub fn render(frame: &mut Frame, app: &mut App) {
+    // Check if we have an active startup effect
+    // We take it out of the app to avoid borrow checker issues with the closure
+    let mut startup_effect = app.startup_effect.take();
+    let area = frame.area();
+
+    // Helper to render the actual UI content
+    // We need to use RefCell or internal mutability if we were strictly capturing,
+    // but since we took the effect out, app is free to be borrowed in the closure.
+    // However, FnMut closure capturing &mut App can be tricky.
+    // A simpler way is to just define a function and call it.
+    let mut render_content = |frame: &mut Frame, _area: Rect| {
+        render_app_ui(frame, app);
+    };
+
+    // Render content first
+    render_content(frame, area);
+
+    // Apply startup effect over the content
+    if let Some(ref mut effect) = startup_effect {
+        // Assume ~60FPS (16ms per frame)
+        let delta = std::time::Duration::from_millis(16);
+        effect.process(delta.into(), frame.buffer_mut(), area);
+    }
+
+    // Put effect back if it's still running
+    if let Some(effect) = startup_effect {
+        if effect.running() {
+            app.startup_effect = Some(effect);
+            // Ensure we keep redrawing while effect is running
+            app.mark_dirty();
+        } else {
+            // Effect finished
+            app.startup_effect = None;
+            app.mark_dirty();
+        }
+    }
+}
+
+/// Render the core application UI (without top-level effects).
+fn render_app_ui(frame: &mut Frame, app: &mut App) {
     // Main layout: Header, Content, Footer
     let chunks = Layout::default()
         .direction(Direction::Vertical)

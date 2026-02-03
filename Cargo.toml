@@ -43,6 +43,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Platform directories (XDG on Linux, Library on macOS)
 dirs = "5.0"
+tachyonfx = "0.10.1"
 
 [dev-dependencies]
 pretty_assertions = "1.4"

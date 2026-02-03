@@ -529,13 +529,28 @@ fn handle_materials_modal_input(app: &mut App, key: event::KeyEvent) {
             app.request_generate_vasp_from_mp();
         }
 
+        // 'p' key: Cycle VASP preset (requires selection)
+        KeyCode::Char('p') if app.materials.table_state.selected().is_some() => {
+            app.materials.cycle_vasp_preset();
+            app.mark_dirty();
+        }
+
+        // 'K' key (shift+k): Cycle k-point density (requires selection)
+        // Note: lowercase 'k' is used for navigation
+        KeyCode::Char('K') if app.materials.table_state.selected().is_some() => {
+            app.materials.cycle_kppra();
+            app.mark_dirty();
+        }
+
         // Navigate results table
         KeyCode::Up | KeyCode::Char('k') if !app.materials.results.is_empty() => {
             app.materials.select_prev();
+            app.request_structure_preview();
             app.mark_dirty();
         }
         KeyCode::Down | KeyCode::Char('j') if !app.materials.results.is_empty() => {
             app.materials.select_next();
+            app.request_structure_preview();
             app.mark_dirty();
         }
 

@@ -15,6 +15,8 @@ use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
 use crate::models::{ApiResponse, JobDetails, JobStatus, SlurmQueueEntry};
 use crate::ui::{ClusterManagerState, RecipeBrowserState, SlurmQueueState};
 
+use tachyonfx::{fx, Effect, EffectTimer, Interpolation};
+
 // Re-export state types for backward compatibility with existing imports from crate::app
 pub use crate::state::{Action, AppTab, JobsState, MaterialsSearchState, NewJobField, NewJobState};
 
@@ -178,6 +180,9 @@ pub struct App<'a> {
 
     /// Request ID for the current VASP generation (to ignore stale responses).
     pub vasp_request_id: usize,
+
+    /// Startup animation effect.
+    pub startup_effect: Option<Effect>,
 }
 
 impl<'a> App<'a> {
@@ -339,6 +344,7 @@ impl<'a> App<'a> {
             recipe_request_id: 0,
             workflow_request_id: 0,
             vasp_request_id: 0,
+            startup_effect: Some(fx::coalesce(EffectTimer::from_ms(1500, Interpolation::SineOut))),
         })
     }
 
@@ -826,8 +832,11 @@ impl<'a> App<'a> {
                                     self.materials.table_state.select(Some(0));
                                     self.materials
                                         .set_status(&format!("Found {} structures", count), false);
+                                    // Trigger preview for the first result
+                                    self.request_structure_preview();
                                 } else {
                                     self.materials.set_status("No structures found", true);
+                                    self.materials.clear_preview();
                                 }
                             }
                             Err(e) => {
@@ -1503,6 +1512,52 @@ impl<'a> App<'a> {
                                     .set_status(&format!("Bridge error: {}", e), true);
                                 self.materials.selected_for_import = None;
                                 error!("Bridge dispatch failed for VASP generation: {}", e);
+                            }
+                        }
+                    }
+                    // Check if this is a structure preview response
+                    else if request_id == self.materials.preview_request_id
+                        && self.materials.preview_loading
+                    {
+                        self.materials.preview_loading = false;
+                        match result {
+                            Ok(rpc_response) => {
+                                match rpc_response.into_result() {
+                                    Ok(value) => {
+                                        // Parse the preview response (wrapped in ApiResponse)
+                                        match serde_json::from_value::<
+                                            ApiResponse<crate::models::StructurePreview>,
+                                        >(value)
+                                        {
+                                            Ok(api_response) => match api_response.into_result() {
+                                                Ok(preview) => {
+                                                    debug!(
+                                                        "Structure preview loaded: {} ({} sites)",
+                                                        preview.formula, preview.num_sites
+                                                    );
+                                                    self.materials.set_preview(preview);
+                                                }
+                                                Err(e) => {
+                                                    // API error - not critical, just clear preview
+                                                    debug!("Structure preview API error: {}", e);
+                                                    self.materials.preview = None;
+                                                }
+                                            },
+                                            Err(e) => {
+                                                debug!("Failed to deserialize structure preview: {}", e);
+                                                self.materials.preview = None;
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        debug!("JSON-RPC error for structure preview: {}", e);
+                                        self.materials.preview = None;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                debug!("Bridge dispatch failed for structure preview: {}", e);
+                                self.materials.preview = None;
                             }
                         }
                     } else {
@@ -2487,6 +2542,53 @@ impl<'a> App<'a> {
                 self.materials
                     .set_status(&format!("Generation failed: {}", e), true);
             }
+        }
+    }
+
+    /// Request structure preview for the selected material (non-blocking).
+    ///
+    /// Fetches detailed structure information (formula, lattice, symmetry) for display
+    /// in the materials modal preview panel.
+    pub fn request_structure_preview(&mut self) {
+        use crate::bridge::JsonRpcRequest;
+
+        let Some(material) = self.materials.selected_material() else {
+            // No selection, clear any existing preview
+            self.materials.clear_preview();
+            self.mark_dirty();
+            return;
+        };
+
+        let mp_id = material.material_id.clone();
+
+        // Set up preview request
+        self.materials.preview_request_id = self.next_request_id();
+        self.materials.set_preview_loading(true);
+        self.mark_dirty();
+
+        // Build JSON-RPC request params
+        let params = serde_json::json!({
+            "source_type": "mp_id",
+            "source_data": mp_id
+        });
+
+        let rpc_request = JsonRpcRequest::new(
+            "structures.preview",
+            params,
+            self.materials.preview_request_id as u64,
+        );
+
+        if let Err(e) = self
+            .bridge
+            .request_rpc(rpc_request, self.materials.preview_request_id)
+        {
+            self.materials.preview_loading = false;
+            debug!("Structure preview request failed: {}", e);
+        } else {
+            debug!(
+                "Structure preview requested for {} (id={})",
+                mp_id, self.materials.preview_request_id
+            );
         }
     }
 
@@ -3503,6 +3605,7 @@ mod tests {
             recipe_request_id: 0,
             workflow_request_id: 0,
             vasp_request_id: 0,
+            startup_effect: None, // No effect in tests
         }
     }
 

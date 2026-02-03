@@ -946,6 +946,19 @@ impl std::fmt::Display for VaspPreset {
     }
 }
 
+impl VaspPreset {
+    /// Cycle to the next preset.
+    pub fn next(self) -> Self {
+        match self {
+            VaspPreset::Relax => VaspPreset::Static,
+            VaspPreset::Static => VaspPreset::Bands,
+            VaspPreset::Bands => VaspPreset::Dos,
+            VaspPreset::Dos => VaspPreset::Convergence,
+            VaspPreset::Convergence => VaspPreset::Relax,
+        }
+    }
+}
+
 /// Configuration for VASP input generation.
 ///
 /// Matches the parameters expected by Python's `vasp.generate_from_mp` RPC.

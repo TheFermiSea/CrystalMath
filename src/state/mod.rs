@@ -10,7 +10,8 @@ use ratatui::widgets::TableState;
 use tui_textarea::TextArea;
 
 use crate::models::{
-    D12GenerationConfig, DftCode, JobStatus, MaterialResult, RunnerType, VaspGenerationConfig,
+    D12GenerationConfig, DftCode, JobStatus, MaterialResult, RunnerType, StructurePreview,
+    VaspGenerationConfig,
 };
 
 pub mod actions;
@@ -57,6 +58,15 @@ pub struct MaterialsSearchState<'a> {
 
     /// VASP generation config.
     pub vasp_config: VaspGenerationConfig,
+
+    /// Structure preview data for selected material.
+    pub preview: Option<StructurePreview>,
+
+    /// Whether a preview is being fetched.
+    pub preview_loading: bool,
+
+    /// Request ID for the current preview fetch.
+    pub preview_request_id: usize,
 }
 
 impl<'a> Default for MaterialsSearchState<'a> {
@@ -76,6 +86,9 @@ impl<'a> Default for MaterialsSearchState<'a> {
             selected_for_import: None,
             d12_config: D12GenerationConfig::default(),
             vasp_config: VaspGenerationConfig::default(),
+            preview: None,
+            preview_loading: false,
+            preview_request_id: 0,
         }
     }
 }
@@ -90,6 +103,8 @@ impl<'a> MaterialsSearchState<'a> {
         self.status = Some("Enter a formula and press Enter to search".to_string());
         self.status_is_error = false;
         self.selected_for_import = None;
+        self.preview = None;
+        self.preview_loading = false;
         // Clear input for fresh search
         self.input = TextArea::default();
         self.input
@@ -101,6 +116,7 @@ impl<'a> MaterialsSearchState<'a> {
         self.active = false;
         // Increment request_id to ignore any pending responses
         self.request_id += 1;
+        self.preview_request_id += 1;
     }
 
     /// Get the current search query.
@@ -145,6 +161,41 @@ impl<'a> MaterialsSearchState<'a> {
     pub fn set_status(&mut self, message: &str, is_error: bool) {
         self.status = Some(message.to_string());
         self.status_is_error = is_error;
+    }
+
+    /// Clear the structure preview (call when selection changes).
+    pub fn clear_preview(&mut self) {
+        self.preview = None;
+        self.preview_loading = false;
+    }
+
+    /// Set preview loading state.
+    pub fn set_preview_loading(&mut self, loading: bool) {
+        self.preview_loading = loading;
+        if loading {
+            self.preview = None;
+        }
+    }
+
+    /// Set the preview data.
+    pub fn set_preview(&mut self, preview: StructurePreview) {
+        self.preview = Some(preview);
+        self.preview_loading = false;
+    }
+
+    /// Cycle to the next VASP preset.
+    pub fn cycle_vasp_preset(&mut self) {
+        self.vasp_config.preset = self.vasp_config.preset.next();
+    }
+
+    /// Cycle through k-point density options: 500 → 1000 → 2000 → 500
+    pub fn cycle_kppra(&mut self) {
+        self.vasp_config.kppra = match self.vasp_config.kppra {
+            500 => 1000,
+            1000 => 2000,
+            2000 => 4000,
+            _ => 500,
+        };
     }
 }
 
