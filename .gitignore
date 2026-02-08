@@ -101,6 +101,7 @@ calculations/*/
 .beads/bd.sock
 .beads/*.left.jsonl
 .beads/*.left.meta.json
+.beads/sync-state.json
 
 # Logs
 *.log

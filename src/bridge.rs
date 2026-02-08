@@ -487,7 +487,7 @@ pub enum BridgeResponse {
     },
     ClusterUpdated {
         request_id: usize,
-        result: Result<ClusterConfig>,
+        result: Result<()>,
     },
     ClusterDeleted {
         request_id: usize,
@@ -1148,16 +1148,18 @@ fn route_rpc_response(
             request_id,
             result: rpc_result.and_then(|resp| {
                 let value = resp.into_result()?;
-                let api_resp: ApiResponse<ClusterConfig> = serde_json::from_value(value)?;
-                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+                let api_resp: ApiResponse<serde_json::Value> = serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))?;
+                Ok(())
             }),
         },
         "delete_cluster" => BridgeResponse::ClusterDeleted {
             request_id,
             result: rpc_result.and_then(|resp| {
                 let value = resp.into_result()?;
-                let api_resp: ApiResponse<bool> = serde_json::from_value(value)?;
-                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+                let api_resp: ApiResponse<serde_json::Value> = serde_json::from_value(value)?;
+                let data = api_resp.into_result().map_err(|e| anyhow::anyhow!(e))?;
+                Ok(data.get("success").and_then(|v| v.as_bool()).unwrap_or(false))
             }),
         },
         "test_cluster_connection" => BridgeResponse::ClusterConnectionTested {
@@ -1185,8 +1187,8 @@ fn route_rpc_response(
             request_id,
             result: rpc_result.and_then(|resp| {
                 let value = resp.into_result()?;
-                // The dispatch already parsed the JSON string to a Value. Re-serialize it.
-                Ok(serde_json::to_string(&value).unwrap_or_default())
+                serde_json::to_string(&value)
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize workflow response: {}", e))
             }),
         },
         _ => {

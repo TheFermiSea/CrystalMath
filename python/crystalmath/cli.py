@@ -6,7 +6,6 @@ This module provides a Typer-based CLI wrapper around the CrystalController API.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -24,10 +23,20 @@ app = typer.Typer(
 )
 console = Console()
 
+# Global state set by --db-path callback
+_db_path: Optional[str] = None
+
+
+def _db_path_callback(value: Optional[str]) -> Optional[str]:
+    """Store the db-path for use by _get_controller."""
+    global _db_path
+    _db_path = value
+    return value
+
 
 def _get_controller(use_aiida: bool = False) -> CrystalController:
-    """Create a CrystalController instance with auto-detected database."""
-    return CrystalController(use_aiida=use_aiida, db_path=None)
+    """Create a CrystalController instance."""
+    return CrystalController(use_aiida=use_aiida, db_path=_db_path)
 
 
 @app.command()
@@ -37,6 +46,7 @@ def run(
     explain: bool = typer.Option(False, "--explain", help="Show execution plan without running"),
     dft_code: str = typer.Option("crystal", help="DFT code to use (crystal, vasp, quantum_espresso)"),
     runner: str = typer.Option("local", help="Execution backend (local, ssh, slurm)"),
+    db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
 ) -> None:
     """
     Submit a calculation job.
@@ -118,9 +128,10 @@ def run(
         raise typer.Exit(1)
 
 
-@app.command()
-def list(
+@app.command(name="list")
+def list_jobs(
     limit: int = typer.Option(100, help="Maximum number of jobs to show"),
+    db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
 ) -> None:
     """
     List all jobs.
@@ -181,6 +192,7 @@ def list(
 @app.command()
 def status(
     pk: int = typer.Argument(..., help="Job ID"),
+    db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
 ) -> None:
     """
     Show detailed job status.
@@ -247,6 +259,7 @@ def status(
 def log(
     pk: int = typer.Argument(..., help="Job ID"),
     lines: int = typer.Option(100, "--lines", "-n", help="Number of lines to show"),
+    db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
 ) -> None:
     """
     View job output log.
@@ -285,6 +298,7 @@ def log(
 @app.command()
 def cancel(
     pk: int = typer.Argument(..., help="Job ID"),
+    db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
 ) -> None:
     """
     Cancel a running job.
