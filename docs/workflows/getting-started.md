@@ -1,340 +1,260 @@
 # Getting Started with CrystalMath
 
-This guide will help you install CrystalMath and run your first materials analysis workflow in under 5 minutes.
+This guide will help you install CrystalMath and run your first calculation in under 5 minutes.
 
 ## Prerequisites
 
 - **Python 3.10+** - CrystalMath requires Python 3.10 or later
-- **pip or uv** - Package manager for installation
-- **pymatgen** - Required for structure handling (installed automatically)
-
-### Optional Dependencies
-
-Depending on your use case, you may also want:
-
-- **AiiDA** - For provenance-tracked workflow execution
-- **atomate2/jobflow** - For atomate2 workflow integration
-- **mp-api** - For Materials Project structure fetching
-- **matplotlib/plotly** - For visualization
+- **uv** - Fast Python package manager (recommended) or pip
 
 ## Installation
 
-### Using pip (recommended)
+CrystalMath uses **uv workspaces** for unified dependency management. The repository contains multiple packages that work together.
+
+### Using uv (recommended)
 
 ```bash
-# Basic installation
-pip install crystalmath
-
-# With VASP support
-pip install crystalmath[vasp]
-
-# With Quantum ESPRESSO support
-pip install crystalmath[qe]
-
-# Full installation with all optional dependencies
-pip install crystalmath[all]
-```
-
-### Using uv (faster)
-
-```bash
-# Basic installation
-uv pip install crystalmath
-
-# With all features
-uv pip install crystalmath[all]
-```
-
-### From Source (development)
-
-```bash
-git clone https://github.com/your-org/crystalmath.git
+# Clone the repository
+git clone <repository-url> crystalmath
 cd crystalmath
-pip install -e ".[dev]"
+
+# Install core + TUI packages
+uv sync
+
+# Install with all extras (dev tools, AiiDA, Materials Project API)
+uv sync --all-extras
 ```
 
-## Quick Start Example
+### Available extras
 
-Here is a complete example that loads a structure and calculates its electronic properties:
-
-```python
-from crystalmath.high_level import HighThroughput
-
-# One-liner analysis from a CIF file
-results = HighThroughput.run_standard_analysis(
-    structure="NbOCl2.cif",
-    properties=["bands", "dos"],
-    codes={"dft": "vasp"},
-    cluster="beefcake2"
-)
-
-# Access computed properties
-print(f"Band gap: {results.band_gap_ev:.2f} eV")
-print(f"Direct gap: {results.is_direct_gap}")
-print(f"Metal: {results.is_metal}")
-
-# Export to CSV
-results.to_dataframe().to_csv("results.csv")
-
-# Generate publication-quality plot
-fig = results.plot_bands_dos()
-fig.savefig("electronic_structure.png", dpi=300)
+```bash
+uv sync --extra dev        # Development tools (pytest, ruff, black)
+uv sync --extra aiida      # AiiDA integration (PostgreSQL workflow engine)
+uv sync --extra materials  # Materials Project API integration
 ```
 
-## Your First Workflow in 5 Minutes
+## Quick Start - Python API
 
-### Step 1: Import the Module
+The `CrystalController` class is the primary entry point for Python users.
+
+### Basic Job Submission
 
 ```python
-from crystalmath.high_level import HighThroughput, WorkflowBuilder
+from crystalmath.api import CrystalController
+from crystalmath.models import JobSubmission, DftCode, RunnerType
+
+# Initialize controller (uses SQLite database)
+ctrl = CrystalController(db_path="my_jobs.db")
+
+# Submit a job
+job = JobSubmission(
+    name="mgo_scf",
+    dft_code=DftCode.CRYSTAL,
+    input_content=open("mgo.d12").read(),
+)
+pk = ctrl.submit_job(job)
+print(f"Submitted job {pk}")
+
+# Check status
+details = ctrl.get_job_details(pk)
+print(f"State: {details.state}")
+print(f"Runner: {details.runner_type}")
+
+# Get results when complete
+if details.state == "finished":
+    results = details.results
+    print(f"Energy: {results.get('energy')} eV")
 ```
 
-### Step 2: Load a Structure
-
-CrystalMath supports multiple structure input formats:
+### Fetching Jobs
 
 ```python
-# From a local file (CIF, POSCAR, XYZ, etc.)
-results = HighThroughput.run_standard_analysis(
-    structure="my_structure.cif",
-    properties=["scf"]
-)
+# Get all jobs
+jobs = ctrl.get_jobs(limit=10)
+for job in jobs:
+    print(f"{job.pk}: {job.name} - {job.state}")
 
-# From Materials Project
-results = HighThroughput.from_mp(
-    "mp-149",  # Silicon
-    properties=["bands", "dos"]
-)
-
-# From a POSCAR file
-results = HighThroughput.from_poscar(
-    "POSCAR",
-    properties=["relax", "bands"]
-)
-
-# From a pymatgen Structure object
-from pymatgen.core import Structure
-struct = Structure.from_file("POSCAR")
-results = HighThroughput.from_structure(struct, properties=["scf"])
+# Filter by state
+running_jobs = ctrl.get_jobs(state="running")
 ```
 
-### Step 3: Choose Properties to Calculate
+## Quick Start - CLI
 
-Available properties include:
+The CLI tool provides a simple command-line interface for running calculations.
 
-| Property | Description | Default Code |
-|----------|-------------|--------------|
-| `scf` | Self-consistent field (single point) | VASP |
-| `relax` | Geometry optimization | VASP |
-| `bands` | Band structure | VASP |
-| `dos` | Density of states | VASP |
-| `phonon` | Phonon dispersion | VASP |
-| `elastic` | Elastic constants | VASP |
-| `dielectric` | Dielectric tensor | VASP |
-| `gw` | GW quasiparticle corrections | YAMBO |
-| `bse` | BSE optical properties | YAMBO |
+```bash
+# From the cli/ directory
+cd cli
 
-### Step 4: Run the Workflow
+# Run a calculation (serial mode with auto-threading)
+bin/runcrystal mgo
 
-```python
-# Simple calculation
-results = HighThroughput.run_standard_analysis(
-    structure="Si.cif",
-    properties=["relax", "bands", "dos"],
-    protocol="moderate"
-)
+# Run with MPI parallelism (14 ranks)
+bin/runcrystal mgo 14
+
+# See what would run without executing
+bin/runcrystal --explain mgo
 ```
 
-### Step 5: Access and Export Results
+## Quick Start - TUI
 
-```python
-# Scalar properties
-print(f"Formula: {results.formula}")
-print(f"Band gap: {results.band_gap_ev:.3f} eV")
-print(f"Space group: {results.space_group}")
+The Textual-based TUI provides an interactive interface for job management.
 
-# Export to various formats
-df = results.to_dataframe()           # pandas DataFrame
-json_str = results.to_json()           # JSON string
-results.to_json("results.json")        # JSON file
-latex = results.to_latex_table()       # LaTeX table
-
-# Plotting
-fig = results.plot_bands()             # Band structure
-fig = results.plot_dos()               # Density of states
-fig = results.plot_bands_dos()         # Combined plot
-fig = results.plot_phonons()           # Phonon dispersion
-
-# Interactive plots (Jupyter)
-fig = results.iplot_bands()            # Plotly interactive
-fig.show()
+```bash
+# Launch the TUI
+uv run crystal-tui
 ```
 
-## Protocol Levels
+**TUI Features:**
+- Visual job browser with status monitoring
+- Template-based job creation
+- Cluster configuration (SSH/SLURM)
+- Workflow orchestration
+- Materials Project structure search
 
-CrystalMath uses protocol levels to control calculation accuracy:
+## Workflow Classes
 
-| Protocol | k-density | Energy Convergence | Use Case |
-|----------|-----------|-------------------|----------|
-| `fast` | 0.08 /A | 10^-4 eV | Quick screening |
-| `moderate` | 0.04 /A | 10^-5 eV | Production (default) |
-| `precise` | 0.02 /A | 10^-6 eV | Publication quality |
+CrystalMath provides working workflow classes for common multi-step calculations. See the [Workflow Classes Reference](high-level-api.md) for detailed documentation.
+
+### Convergence Studies
+
+Test parameter convergence (k-points, basis sets, cutoffs):
 
 ```python
-# Fast screening
-results = HighThroughput.run_standard_analysis(
-    structure="struct.cif",
-    properties=["bands"],
-    protocol="fast"
+from crystalmath.workflows.convergence import (
+    ConvergenceStudy, ConvergenceStudyConfig, ConvergenceParameter
 )
 
-# Publication quality
-results = HighThroughput.run_standard_analysis(
-    structure="struct.cif",
-    properties=["bands"],
-    protocol="precise"
+config = ConvergenceStudyConfig(
+    parameter=ConvergenceParameter.SHRINK,
+    values=[4, 6, 8, 10, 12, 14],
+    base_input=open("mgo.d12").read(),
+    energy_threshold=0.001,  # eV/atom
+    dft_code="crystal",
 )
+
+study = ConvergenceStudy(config)
+inputs = study.generate_inputs()  # List of (name, input_content) tuples
+
+# Submit each input to controller
+for name, content in inputs:
+    job = JobSubmission(name=name, input_content=content, dft_code=DftCode.CRYSTAL)
+    ctrl.submit_job(job)
+```
+
+### Band Structure Calculations
+
+```python
+from crystalmath.workflows.bands import (
+    BandStructureWorkflow, BandStructureConfig, BandPathPreset
+)
+
+config = BandStructureConfig(
+    source_job_pk=1,  # PK of converged SCF job
+    band_path=BandPathPreset.AUTO,
+    kpoints_per_segment=50,
+    compute_dos=True,
+    dos_mesh=[12, 12, 12],
+)
+
+workflow = BandStructureWorkflow(config)
+```
+
+### VASP Input Generation
+
+Generate complete VASP input files from structures:
+
+```python
+from crystalmath.vasp.generator import VaspInputGenerator, IncarPreset
+
+gen = VaspInputGenerator()
+inputs = gen.generate_from_structure(
+    structure,  # pymatgen Structure object
+    preset=IncarPreset.RELAX,
+    kpoints_density=0.04,
+)
+
+print(inputs.poscar)
+print(inputs.incar)
+print(inputs.kpoints)
+```
+
+## Templates
+
+CrystalMath includes a template library for common calculations:
+
+```python
+from crystalmath.templates import list_templates, get_template_dir
+
+# List available templates
+for template in list_templates(category="basic"):
+    print(f"{template.category}/{template.name}: {template.description}")
+
+# Get template directory path
+templates_dir = get_template_dir()
+print(f"Templates location: {templates_dir}")
 ```
 
 ## Cluster Configuration
 
-For HPC execution, specify a cluster profile:
+For remote execution on HPC clusters, configure SSH or SLURM runners via the TUI or programmatically.
+
+### Python API - Cluster Setup
 
 ```python
-# Run on beefcake2 cluster
-results = HighThroughput.run_standard_analysis(
-    structure="struct.cif",
-    properties=["bands", "dos"],
-    cluster="beefcake2"
+from crystalmath.models import ClusterConfig, ClusterType
+
+# Create cluster configuration
+cluster = ClusterConfig(
+    name="beefcake2",
+    hostname="10.0.0.10",
+    username="ubuntu",
+    cluster_type=ClusterType.SSH,
+    max_concurrent_jobs=4,
 )
 
-# Local execution (development/testing)
-results = HighThroughput.run_standard_analysis(
-    structure="struct.cif",
-    properties=["scf"],
-    cluster="local"
-)
+# Submit to database (via controller)
+cluster_id = ctrl.create_cluster(cluster)
 ```
 
-## Using the Fluent Builder API
-
-For more control over workflow construction, use `WorkflowBuilder`:
-
-```python
-from crystalmath.high_level import WorkflowBuilder
-
-workflow = (
-    WorkflowBuilder()
-    .from_file("NbOCl2.cif")
-    .relax(code="vasp", protocol="moderate")
-    .then_bands(kpath="auto", kpoints_per_segment=50)
-    .then_dos(mesh=[12, 12, 12], projected=True)
-    .on_cluster("beefcake2")
-    .with_progress()
-    .build()
-)
-
-result = workflow.run()
-```
-
-## Checking Supported Properties
-
-```python
-# List all supported properties
-properties = HighThroughput.get_supported_properties()
-print(properties)
-# ['scf', 'relax', 'bands', 'dos', 'phonon', 'elastic', 'dielectric', 'gw', 'bse', 'eos', 'neb']
-
-# Get info about a specific property
-info = HighThroughput.get_property_info("gw")
-print(info)
-# {'name': 'gw', 'workflow_type': 'gw', 'default_code': 'yambo', 'dependencies': ['scf']}
-```
-
-## Common Workflows
-
-### Electronic Structure
-
-```python
-results = HighThroughput.run_standard_analysis(
-    structure="Si.cif",
-    properties=["relax", "bands", "dos"],
-    protocol="moderate",
-    cluster="beefcake2"
-)
-```
-
-### Optical Properties (GW+BSE)
-
-```python
-results = HighThroughput.run_standard_analysis(
-    structure="NbOCl2.cif",
-    properties=["bands", "gw", "bse"],
-    codes={"dft": "vasp", "gw": "yambo"},
-    cluster="beefcake2"
-)
-
-print(f"DFT gap: {results.band_gap_ev:.2f} eV")
-print(f"GW gap: {results.gw_gap_ev:.2f} eV")
-print(f"Optical gap: {results.optical_gap_ev:.2f} eV")
-print(f"Exciton binding: {results.exciton_binding_ev:.3f} eV")
-```
-
-### Mechanical Properties
-
-```python
-results = HighThroughput.run_standard_analysis(
-    structure="TiO2.cif",
-    properties=["relax", "elastic"],
-    cluster="beefcake2"
-)
-
-print(f"Bulk modulus: {results.bulk_modulus_gpa:.1f} GPa")
-print(f"Shear modulus: {results.shear_modulus_gpa:.1f} GPa")
-print(f"Young's modulus: {results.youngs_modulus_gpa:.1f} GPa")
-```
+See [Cluster Setup](cluster-setup.md) for detailed SSH and SLURM configuration.
 
 ## Next Steps
 
-- **[High-Level API Guide](high-level-api.md)** - Deep dive into the HighThroughput class and WorkflowBuilder
-- **[Cluster Setup](cluster-setup.md)** - Configure the beefcake2 cluster and AiiDA integration
-- **[Advanced Workflows](advanced-workflows.md)** - Multi-code workflows and error recovery
-- **[atomate2 Integration](atomate2-integration.md)** - Using atomate2 Makers with CrystalMath
+- **[Workflow Classes Reference](high-level-api.md)** - Convergence studies, band structure, phonons, EOS
+- **[Cluster Setup](cluster-setup.md)** - Configure SSH/SLURM for remote execution
+- **[Advanced Workflows](advanced-workflows.md)** - Multi-step workflow orchestration
 
 ## Troubleshooting
 
-### ImportError: No module named 'crystalmath'
+### Module Not Found
 
-Ensure CrystalMath is installed in your active Python environment:
-
-```bash
-pip install crystalmath
-# or
-uv pip install crystalmath
-```
-
-### Materials Project API Error
-
-Set your Materials Project API key:
+Ensure packages are installed in your active environment:
 
 ```bash
-export MP_API_KEY="your-api-key"
+uv sync
 ```
 
-Or in Python:
+### Database Path Issues
+
+By default, the TUI creates `.crystal_tui.db` in the project root. The Rust TUI shares this database. To specify a custom path:
 
 ```python
-import os
-os.environ["MP_API_KEY"] = "your-api-key"
+ctrl = CrystalController(db_path="/path/to/custom.db")
+```
+
+Or set the environment variable:
+
+```bash
+export CRYSTAL_TUI_DB=/path/to/custom.db
 ```
 
 ### Cluster Connection Failed
 
-Verify SSH connectivity to the cluster:
+Test SSH connectivity manually:
 
 ```bash
-ssh ubuntu@10.0.0.10  # For QE nodes
-ssh root@10.0.0.20    # For VASP nodes (with password)
+ssh ubuntu@10.0.0.10
 ```
 
-See [Cluster Setup](cluster-setup.md) for detailed configuration.
+Ensure host keys are added to `~/.ssh/known_hosts` before using the TUI.

@@ -1,658 +1,564 @@
-# Advanced Workflows Guide
+# Advanced Workflows & Orchestration
 
-This guide covers advanced CrystalMath features including multi-code workflows, specialized runners, error recovery strategies, custom workflow creation, and PWD interoperability.
+This guide covers advanced CrystalMath features including multi-step workflows, VASP input generation, template-based workflows, and remote execution patterns.
 
-## Multi-Code Workflows
+## Multi-Step Workflow Pattern
 
-Many materials science calculations require multiple DFT codes. CrystalMath handles code handoffs automatically.
+Chain workflow classes together using `CrystalController` to orchestrate complex calculations.
 
-### VASP -> YAMBO Workflow
-
-The most common multi-code workflow combines VASP ground-state calculations with YAMBO for GW/BSE:
+### Example: Convergence → Band Structure Pipeline
 
 ```python
-from crystalmath.high_level import WorkflowBuilder
-
-workflow = (
-    WorkflowBuilder()
-    .from_file("NbOCl2.cif")
-    .relax(code="vasp", protocol="moderate")
-    .scf(code="vasp")
-    .with_gw(code="yambo", protocol="gw0", n_bands=100)
-    .with_bse(code="yambo", n_valence=4, n_conduction=4)
-    .on_cluster("beefcake2", partition="gpu")
-    .build()
+from crystalmath.api import CrystalController
+from crystalmath.models import JobSubmission, DftCode
+from crystalmath.workflows.convergence import (
+    ConvergenceStudy, ConvergenceStudyConfig, ConvergenceParameter
+)
+from crystalmath.workflows.bands import (
+    BandStructureWorkflow, BandStructureConfig, BandPathPreset
 )
 
-results = workflow.run()
+# Initialize controller
+ctrl = CrystalController(db_path="project.db")
 
-print(f"DFT gap: {results.band_gap_ev:.3f} eV")
-print(f"GW gap: {results.gw_gap_ev:.3f} eV")
-print(f"Optical gap: {results.optical_gap_ev:.3f} eV")
-print(f"Exciton binding: {results.exciton_binding_ev:.3f} eV")
-```
-
-### Data Handoff Details
-
-When switching between codes, CrystalMath handles:
-
-1. **Wavefunction conversion:** VASP `WAVECAR` -> QE `save/` -> YAMBO database
-2. **Structure transfer:** Consistent atomic positions and lattice
-3. **k-point mapping:** Ensures consistent Brillouin zone sampling
-
-### Quantum ESPRESSO -> YAMBO
-
-```python
-workflow = (
-    WorkflowBuilder()
-    .from_file("MoS2.cif")
-    .relax(code="quantum_espresso")
-    .scf(code="quantum_espresso")
-    .with_gw(code="yambo", protocol="g0w0")
-    .with_bse(code="yambo", n_valence=3, n_conduction=3)
-    .on_cluster("beefcake2")
-    .build()
+# Step 1: Convergence study for k-points
+conv_config = ConvergenceStudyConfig(
+    parameter=ConvergenceParameter.SHRINK,
+    values=[4, 6, 8, 10, 12],
+    base_input=open("si.d12").read(),
+    energy_threshold=0.001,
+    dft_code="crystal",
 )
-```
 
-### CRYSTAL23 -> Wannier90
+study = ConvergenceStudy(conv_config)
+inputs = study.generate_inputs()
 
-```python
-workflow = (
-    WorkflowBuilder()
-    .from_file("Si.cif")
-    .relax(code="crystal23")
-    .scf(code="crystal23")
-    .then_bands(code="wannier90", n_wannier=8)
-    .on_cluster("beefcake2")
-    .build()
-)
-```
+# Submit convergence jobs
+conv_pks = []
+for name, content in inputs:
+    job = JobSubmission(
+        name=name,
+        input_content=content,
+        dft_code=DftCode.CRYSTAL,
+    )
+    conv_pks.append(ctrl.submit_job(job))
 
-## Specialized Analysis Runners
+print(f"Submitted {len(conv_pks)} convergence jobs")
 
-CrystalMath provides specialized runner classes for different analysis types.
+# ... wait for completion (polling or callback) ...
 
-### StandardAnalysis
+# Collect results and determine best k-point setting
+energies = []
+for pk in conv_pks:
+    details = ctrl.get_job_details(pk)
+    if details.state == "finished":
+        energies.append(details.results.get("energy"))
 
-For electronic structure calculations (SCF, relax, bands, DOS):
+result = study.analyze_results(energies)
+print(f"Converged at SHRINK={result.converged_value}")
 
-```python
-from crystalmath.high_level.runners import StandardAnalysis
-from crystalmath.high_level.clusters import get_cluster_profile
-
-cluster = get_cluster_profile("beefcake2")
-
-runner = StandardAnalysis(
-    cluster=cluster,
-    protocol="moderate",
-    include_relax=True,
-    include_bands=True,
-    include_dos=True,
-    kpath="auto",
+# Step 2: Band structure with converged parameters
+best_pk = conv_pks[result.converged_at_index]
+bands_config = BandStructureConfig(
+    source_job_pk=best_pk,
+    band_path=BandPathPreset.AUTO,
+    kpoints_per_segment=50,
+    compute_dos=True,
     dos_mesh=[12, 12, 12],
-    dft_code="vasp",
-    output_dir="./results/Si"
 )
 
-results = runner.run("mp-149")  # Silicon from Materials Project
-
-print(f"Band gap: {results.band_gap_ev:.2f} eV")
-fig = results.plot_bands_dos()
+bands_wf = BandStructureWorkflow(bands_config)
+# ... generate and submit band structure jobs ...
 ```
 
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `include_relax` | bool | True | Relax structure before SCF |
-| `include_bands` | bool | True | Calculate band structure |
-| `include_dos` | bool | True | Calculate DOS |
-| `kpath` | str/list | "auto" | K-point path specification |
-| `dos_mesh` | list | None | DOS k-mesh (auto if None) |
-| `dft_code` | str | None | DFT code preference |
-
-### OpticalAnalysis
-
-For many-body perturbation theory (GW, BSE):
-
-```python
-from crystalmath.high_level.runners import OpticalAnalysis
-
-runner = OpticalAnalysis(
-    cluster=get_cluster_profile("beefcake2"),
-    protocol="moderate",
-    dft_code="vasp",
-    gw_code="yambo",
-    gw_protocol="gw0",
-    n_bands_gw=100,
-    n_valence_bse=4,
-    n_conduction_bse=4,
-    include_bse=True,
-)
-
-results = runner.run("NbOCl2.cif")
-
-print(f"GW gap: {results.gw_gap_ev:.2f} eV")
-print(f"Optical gap: {results.optical_gap_ev:.2f} eV")
-print(f"Exciton binding: {results.exciton_binding_ev:.3f} eV")
-```
-
-**GW Protocols:**
-
-| Protocol | Method | Cost | Accuracy |
-|----------|--------|------|----------|
-| `g0w0` | Single-shot | Low | Good |
-| `gw0` | Partial self-consistency | Medium | Better |
-| `evgw` | Eigenvalue self-consistent | High | Best |
-
-### PhononAnalysis
-
-For phonon dispersion and thermodynamics:
-
-```python
-from crystalmath.high_level.runners import PhononAnalysis
-
-runner = PhononAnalysis(
-    cluster=get_cluster_profile("beefcake2"),
-    protocol="moderate",
-    supercell=[2, 2, 2],
-    displacement=0.01,
-    include_thermodynamics=True,
-    temperature_range=(0, 1000, 10),
-    dft_code="vasp",
-)
-
-results = runner.run("Si.cif")
-
-if results.has_imaginary_modes:
-    print("Structure is dynamically unstable!")
-else:
-    fig = results.plot_phonons()
-```
-
-### ElasticAnalysis
-
-For elastic constants and mechanical properties:
-
-```python
-from crystalmath.high_level.runners import ElasticAnalysis
-
-runner = ElasticAnalysis(
-    cluster=get_cluster_profile("beefcake2"),
-    protocol="moderate",
-    strain_magnitude=0.01,
-    num_strains=6,
-    dft_code="vasp",
-)
-
-results = runner.run("TiO2.cif")
-
-print(f"Bulk modulus: {results.bulk_modulus_gpa:.1f} GPa")
-print(f"Shear modulus: {results.shear_modulus_gpa:.1f} GPa")
-print(f"Young's modulus: {results.youngs_modulus_gpa:.1f} GPa")
-print(f"Poisson ratio: {results.poisson_ratio:.3f}")
-```
-
-### TransportAnalysis
-
-For BoltzTraP2 transport calculations:
-
-```python
-from crystalmath.high_level.runners import TransportAnalysis
-
-runner = TransportAnalysis(
-    cluster=get_cluster_profile("beefcake2"),
-    protocol="moderate",
-    doping_levels=[1e18, 1e19, 1e20],  # cm^-3
-    temperature_range=(300, 800, 50),   # K
-    interpolation_factor=5,
-    dft_code="vasp",
-)
-
-results = runner.run("Bi2Te3.cif")
-
-print(f"Seebeck: {results.seebeck_coefficient} uV/K")
-```
-
-## Error Recovery Strategies
-
-CrystalMath implements multiple error recovery strategies to handle calculation failures gracefully.
-
-### Available Strategies
-
-```python
-from crystalmath.protocols import ErrorRecoveryStrategy
-
-# Stop immediately on error
-ErrorRecoveryStrategy.FAIL_FAST
-
-# Retry with same parameters
-ErrorRecoveryStrategy.RETRY
-
-# Self-healing parameter adjustment
-ErrorRecoveryStrategy.ADAPTIVE
-
-# Restart from last checkpoint
-ErrorRecoveryStrategy.CHECKPOINT
-```
-
-### Using Recovery Strategies
-
-```python
-from crystalmath.high_level import WorkflowBuilder
-from crystalmath.protocols import ErrorRecoveryStrategy
-
-workflow = (
-    WorkflowBuilder()
-    .from_file("tricky_structure.cif")
-    .relax()
-    .then_bands()
-    .with_recovery(ErrorRecoveryStrategy.ADAPTIVE)
-    .build()
-)
-```
-
-### Adaptive Recovery Behavior
-
-When `ADAPTIVE` strategy is used, CrystalMath:
-
-1. **Memory errors:** Reduces MPI parallelization
-2. **Convergence failures:** Relaxes energy/force thresholds
-3. **Timeout errors:** Increases walltime
-4. **SLURM failures:** Adjusts partition/resources
-
-Example:
-
-```python
-# Original parameters
-# energy_convergence = 1e-5 eV
-
-# After SCF convergence failure:
-# energy_convergence = 1e-4 eV (10x relaxed)
-```
-
-### Custom Recovery Logic
-
-```python
-from crystalmath.high_level.runners import BaseAnalysisRunner
-
-class MyRunner(BaseAnalysisRunner):
-    def _attempt_adaptive_recovery(self, step, failed_result):
-        error_text = " ".join(failed_result.errors).lower()
-
-        if "memory" in error_text:
-            # Reduce parallelization
-            step.resources.num_mpi_ranks //= 2
-
-        elif "convergence" in error_text:
-            # Relax convergence criteria
-            step.parameters["energy_convergence"] *= 10
-
-        elif "timeout" in error_text:
-            # Extend walltime
-            step.resources.walltime_hours *= 1.5
-
-        return self._execute_step(step)
-```
-
-## Custom Workflow Creation
-
-### Subclassing BaseAnalysisRunner
-
-Create custom runners by subclassing `BaseAnalysisRunner`:
-
-```python
-from crystalmath.high_level.runners import BaseAnalysisRunner
-from crystalmath.protocols import (
-    WorkflowStep,
-    WorkflowType,
-    ResourceRequirements,
-)
-
-class MyCustomRunner(BaseAnalysisRunner):
-    """Custom workflow for specialized analysis."""
-
-    def __init__(self, my_parameter=None, **kwargs):
-        super().__init__(**kwargs)
-        self._my_parameter = my_parameter
-
-    def _build_workflow_steps(self):
-        steps = []
-
-        # Add relaxation
-        steps.append(WorkflowStep(
-            name="relax",
-            workflow_type=WorkflowType.RELAX,
-            code="vasp",
-            parameters=self._get_parameters(WorkflowType.RELAX, "vasp"),
-        ))
-
-        # Add custom step
-        steps.append(WorkflowStep(
-            name="my_analysis",
-            workflow_type=WorkflowType.SCF,  # Or custom type
-            code="vasp",
-            parameters={
-                "custom_param": self._my_parameter,
-                **self._get_parameters(WorkflowType.SCF, "vasp"),
-            },
-            depends_on=["relax"],
-        ))
-
-        return steps
-
-    def _get_default_resources(self):
-        return ResourceRequirements(
-            num_nodes=1,
-            num_mpi_ranks=20,
-            walltime_hours=12,
-        )
-
-# Usage
-runner = MyCustomRunner(
-    cluster=get_cluster_profile("beefcake2"),
-    my_parameter="value",
-    protocol="moderate"
-)
-results = runner.run("structure.cif")
-```
-
-### Custom Parameter Generation
-
-```python
-class MyRunner(BaseAnalysisRunner):
-
-    def _get_parameters(self, workflow_type, code, **overrides):
-        # Get base parameters from protocol
-        params = self._get_protocol_parameters(workflow_type)
-
-        # Add code-specific parameters
-        if code == "vasp":
-            params.update({
-                "prec": "Accurate",
-                "algo": "Normal",
-                "ismear": 0,
-                "sigma": 0.05,
-            })
-
-        # Apply custom logic
-        if self._structure_info and self._structure_info.is_magnetic:
-            params["ispin"] = 2
-
-        # Apply overrides
-        params.update(overrides)
-
-        return params
-```
-
-## Asynchronous Execution
-
-### Progress Tracking in Jupyter
-
-```python
-from crystalmath.high_level import WorkflowBuilder
-
-workflow = (
-    WorkflowBuilder()
-    .from_file("structure.cif")
-    .relax()
-    .then_bands()
-    .on_cluster("beefcake2")
-    .with_progress()
-    .build()
-)
-
-# Async execution with progress updates
-async for update in workflow.run_async():
-    print(f"[{update.percent:.0f}%] {update.step_name}: {update.message}")
-
-    if update.has_intermediate_result:
-        # Access partial results for live plotting
-        partial = update.intermediate_result
-        display(partial.plot_bands())
-
-    if update.status == "completed":
-        final_results = update.intermediate_result
-```
-
-### Non-Blocking Submission
+### Polling for Completion
 
 ```python
 import time
 
-# Submit without waiting
-workflow_id = workflow.submit()
-print(f"Submitted: {workflow_id}")
+def wait_for_jobs(ctrl, pks, timeout=3600, poll_interval=10):
+    """Wait for jobs to complete with timeout."""
+    start = time.time()
+    while time.time() - start < timeout:
+        states = [ctrl.get_job_details(pk).state for pk in pks]
 
-# Poll for completion
-from crystalmath.high_level.builder import Workflow
+        if all(s in ("finished", "failed") for s in states):
+            finished = sum(1 for s in states if s == "finished")
+            failed = sum(1 for s in states if s == "failed")
+            print(f"Complete: {finished} finished, {failed} failed")
+            return True
 
-while True:
-    status = Workflow.get_status(workflow_id)
-    print(f"State: {status.state}, Progress: {status.progress_percent:.0f}%")
+        print(f"Status: {states.count('running')} running, {states.count('pending')} pending")
+        time.sleep(poll_interval)
 
-    if status.state in ("completed", "failed"):
-        break
+    print("Timeout reached")
+    return False
 
-    time.sleep(60)
+# Usage
+if wait_for_jobs(ctrl, conv_pks):
+    # Proceed to next step
+    pass
+```
 
-# Get result
-if status.state == "completed":
-    results = Workflow.get_result(workflow_id)
+## VASP Input Generation
+
+CrystalMath provides utilities for generating complete VASP input file sets.
+
+### From pymatgen Structure
+
+```python
+from crystalmath.vasp.generator import VaspInputGenerator, IncarPreset
+from pymatgen.core import Structure
+
+# Load structure
+structure = Structure.from_file("POSCAR")
+
+# Generate inputs with preset
+gen = VaspInputGenerator()
+inputs = gen.generate_from_structure(
+    structure,
+    preset=IncarPreset.RELAX,
+    kpoints_density=0.04,  # 1/A
+)
+
+# Access generated files
+print(inputs.poscar)
+print(inputs.incar)
+print(inputs.kpoints)
+print(inputs.potcar_symbols)
+
+# Write to directory
+inputs.write_to_directory("vasp_relax/")
+```
+
+### Available IncarPreset Values
+
+| Preset | Description | Use Case |
+|--------|-------------|----------|
+| `RELAX` | Geometry optimization | Structure relaxation |
+| `STATIC` | Single-point SCF | Energy, DOS |
+| `BANDS` | Band structure | Electronic structure |
+| `MD` | Molecular dynamics | AIMD simulation |
+| `HSE` | Hybrid functional (HSE06) | Accurate band gaps |
+
+### Custom INCAR Parameters
+
+```python
+from crystalmath.vasp.incar import IncarBuilder
+
+# Build custom INCAR
+incar = (
+    IncarBuilder()
+    .set_preset(IncarPreset.RELAX)
+    .set_electronic_structure(
+        prec="Accurate",
+        algo="Normal",
+        nelm=100,
+    )
+    .set_ionic_relaxation(
+        ibrion=2,
+        isif=3,
+        nsw=200,
+        ediffg=-0.01,
+    )
+    .set_magnetic(
+        ispin=2,
+        magmom=[5.0, 5.0, -5.0, -5.0],  # Per atom
+    )
+    .build()
+)
+
+print(incar.to_string())
+```
+
+### KPOINTS Generation
+
+```python
+from crystalmath.vasp.kpoints import KpointsBuilder, KpointsMesh
+
+# Gamma-centered mesh
+kpoints = KpointsBuilder.gamma_centered_mesh(
+    kpoints=[8, 8, 8],
+    shift=[0, 0, 0],
+)
+
+# Monkhorst-Pack mesh
+kpoints = KpointsBuilder.monkhorst_pack_mesh(
+    kpoints=[6, 6, 4],
+)
+
+# From k-point density
+kpoints = KpointsBuilder.from_density(
+    structure=structure,
+    density=0.04,  # 1/A
+    gamma_centered=True,
+)
+
+print(kpoints.to_string())
+```
+
+### From Materials Project
+
+```python
+from crystalmath.vasp.generator import generate_vasp_inputs_from_mp
+
+# Generate VASP inputs directly from MP ID
+inputs = generate_vasp_inputs_from_mp(
+    mp_id="mp-149",  # Silicon
+    preset=IncarPreset.RELAX,
+    api_key="your-api-key",  # Or set MP_API_KEY env var
+)
+
+inputs.write_to_directory("si_relax/")
+```
+
+## EOS Workflow - Complete Example
+
+Determine bulk modulus and equilibrium volume via equation of state fitting.
+
+```python
+from crystalmath.api import CrystalController
+from crystalmath.models import JobSubmission, DftCode
+from crystalmath.workflows.eos import EOSWorkflow, EOSConfig
+
+ctrl = CrystalController(db_path="eos_study.db")
+
+# Step 1: Submit relaxation job for reference structure
+relax_job = JobSubmission(
+    name="mgo_relax",
+    input_content=open("mgo_relax.d12").read(),
+    dft_code=DftCode.CRYSTAL,
+)
+relax_pk = ctrl.submit_job(relax_job)
+
+# ... wait for relaxation to complete ...
+
+# Step 2: Extract optimized structure
+relax_details = ctrl.get_job_details(relax_pk)
+cell = relax_details.results.get("final_cell")
+positions = relax_details.results.get("final_positions")
+symbols = relax_details.results.get("symbols", ["Mg", "O"])
+
+# Step 3: Create EOS workflow
+config = EOSConfig(
+    source_job_pk=relax_pk,
+    volume_range=(0.90, 1.10),
+    num_points=7,
+    eos_type="birch_murnaghan",
+)
+
+workflow = EOSWorkflow(config)
+
+# Step 4: Generate volume-scaled structures
+structures = workflow.generate_volume_points(cell, positions, symbols)
+print(f"Generated {len(structures)} volume points")
+
+# Step 5: Submit SCF calculations
+for i, struct in enumerate(structures):
+    job = JobSubmission(
+        name=f"eos_vol_{i}",
+        input_content=struct["input_content"],
+        dft_code=DftCode.CRYSTAL,
+    )
+    workflow.result.points[i].job_pk = ctrl.submit_job(job)
+
+# ... wait for all EOS jobs to complete ...
+
+# Step 6: Collect energies and fit EOS
+for i, point in enumerate(workflow.result.points):
+    details = ctrl.get_job_details(point.job_pk)
+    if details.state == "finished":
+        point.energy = details.results.get("energy")
+        point.status = "completed"
+
+# Step 7: Fit equation of state
+result = workflow.fit_eos()
+
+print(f"Equilibrium volume: {result.v0:.2f} A^3")
+print(f"Bulk modulus: {result.b0:.1f} GPa")
+print(f"B' (pressure derivative): {result.bp:.2f}")
+print(f"Fitting residual: {result.residual:.6f}")
+
+# Save results
+import json
+with open("eos_results.json", "w") as f:
+    json.dump(result.to_dict(), f, indent=2)
+```
+
+## Template-Based Workflows
+
+Use the template library for standardized input generation.
+
+### Listing Templates
+
+```python
+from crystalmath.templates import list_templates, get_template_dir
+
+# List all templates
+for template in list_templates():
+    print(f"{template.category}/{template.name}")
+    print(f"  Code: {template.dft_code}")
+    print(f"  Description: {template.description}")
+    print(f"  Tags: {template.tags}")
+
+# Filter by category
+for template in list_templates(category="advanced"):
+    print(f"{template.name}: {template.description}")
+
+# Filter by DFT code
+for template in list_templates(dft_code="vasp"):
+    print(f"{template.category}/{template.name}")
+```
+
+### Template Directory Structure
+
+```
+templates/
+├── basic/           # Single-point, optimization
+│   ├── scf.d12
+│   ├── relax.d12
+│   └── ...
+├── advanced/        # Band structure, DOS, elastic
+│   ├── bands.d12
+│   ├── dos.d12
+│   └── ...
+├── workflows/       # Multi-step workflows
+│   ├── convergence.yaml
+│   └── ...
+├── vasp/            # VASP-specific
+│   ├── INCAR_relax
+│   └── ...
+├── qe/              # Quantum Espresso
+│   └── ...
+└── slurm/           # SLURM batch scripts
+    └── ...
+```
+
+### Using Templates
+
+```python
+from pathlib import Path
+from crystalmath.templates import get_template_dir
+
+templates_dir = get_template_dir()
+
+# Load a template
+template_path = templates_dir / "basic" / "scf.d12"
+with open(template_path) as f:
+    template_content = f.read()
+
+# Customize for your structure
+input_content = template_content.replace("{{SHRINK}}", "8")
+
+# Submit job
+job = JobSubmission(
+    name="custom_scf",
+    input_content=input_content,
+    dft_code=DftCode.CRYSTAL,
+)
+ctrl.submit_job(job)
+```
+
+## Remote Execution Patterns
+
+### SSH Runner
+
+Execute jobs on remote machines via SSH.
+
+```python
+from crystalmath.models import JobSubmission, RunnerType, ClusterConfig, ClusterType
+
+# Configure SSH cluster
+cluster = ClusterConfig(
+    name="beefcake2",
+    hostname="10.0.0.10",
+    username="ubuntu",
+    cluster_type=ClusterType.SSH,
+    max_concurrent_jobs=4,
+)
+
+cluster_id = ctrl.create_cluster(cluster)
+
+# Submit job to SSH runner
+job = JobSubmission(
+    name="remote_scf",
+    input_content=open("input.d12").read(),
+    dft_code=DftCode.CRYSTAL,
+    runner_type=RunnerType.SSH,
+    cluster_id=cluster_id,
+)
+
+pk = ctrl.submit_job(job)
+```
+
+### SLURM Runner
+
+Submit batch jobs to SLURM clusters.
+
+```python
+# Configure SLURM cluster
+cluster = ClusterConfig(
+    name="hpc_cluster",
+    hostname="login.hpc.university.edu",
+    username="myuser",
+    cluster_type=ClusterType.SLURM,
+    max_concurrent_jobs=10,
+)
+
+cluster_id = ctrl.create_cluster(cluster)
+
+# Submit SLURM batch job
+job = JobSubmission(
+    name="slurm_calc",
+    input_content=open("large_calc.d12").read(),
+    dft_code=DftCode.CRYSTAL,
+    runner_type=RunnerType.SLURM,
+    cluster_id=cluster_id,
+    slurm_options={
+        "partition": "general",
+        "nodes": 2,
+        "ntasks_per_node": 20,
+        "time": "24:00:00",
+        "mem": "64G",
+    },
+)
+
+pk = ctrl.submit_job(job)
+```
+
+## Phonon Workflow - Complete Example
+
+Calculate phonon dispersion and thermodynamic properties.
+
+```python
+from crystalmath.workflows.phonon import (
+    PhononWorkflow, PhononConfig, PhononMethod, PhononDFTCode
+)
+
+# Step 1: Optimize structure (prerequisite)
+relax_pk = ctrl.submit_job(
+    JobSubmission(
+        name="si_relax",
+        input_content=open("si_relax.d12").read(),
+        dft_code=DftCode.CRYSTAL,
+    )
+)
+
+# ... wait for optimization ...
+
+# Step 2: Configure phonon workflow
+config = PhononConfig(
+    source_job_pk=relax_pk,
+    method=PhononMethod.PHONOPY,
+    supercell_dim=[2, 2, 2],
+    displacement_distance=0.01,
+    use_symmetry=True,
+    mesh=[20, 20, 20],
+    band_path="AUTO",
+    compute_thermal=True,
+    tmin=0.0,
+    tmax=1000.0,
+    tstep=10.0,
+    dft_code=PhononDFTCode.CRYSTAL,
+)
+
+workflow = PhononWorkflow(config)
+
+# Step 3: Generate displacements
+displacements = workflow.generate_displacements()
+print(f"Phonopy generated {len(displacements)} displacements")
+
+# Step 4: Submit force calculations
+for disp in displacements:
+    job = JobSubmission(
+        name=f"phonon_disp_{disp.index}",
+        input_content=disp.input_content,
+        dft_code=DftCode.CRYSTAL,
+    )
+    disp.job_pk = ctrl.submit_job(job)
+
+# ... wait for all force calculations ...
+
+# Step 5: Collect forces and analyze
+for disp in displacements:
+    details = ctrl.get_job_details(disp.job_pk)
+    if details.state == "finished":
+        disp.forces = details.results.get("forces")
+        disp.status = "completed"
+
+result = workflow.collect_forces_and_analyze()
+
+# Step 6: Check stability
+if result.has_imaginary:
+    print("WARNING: Imaginary frequencies detected!")
+    print(f"Minimum frequency: {result.min_frequency:.2f} cm^-1")
+    print("Structure may be dynamically unstable")
 else:
-    print(f"Workflow failed: {status.errors}")
+    print("Structure is dynamically stable")
+    print(f"Acoustic mode frequencies at Gamma: {result.frequencies_at_gamma[:3]}")
+
+# Step 7: Analyze thermal properties
+if result.thermal_properties:
+    temps = result.thermal_properties["temperatures"]
+    free_energy = result.thermal_properties["free_energy"]
+    heat_capacity = result.thermal_properties["heat_capacity"]
+
+    print(f"Zero-point energy: {result.zero_point_energy_ev:.4f} eV")
+    print(f"Free energy at 300 K: {free_energy[30]:.4f} eV")
+    print(f"Heat capacity at 300 K: {heat_capacity[30]:.2f} J/mol·K")
 ```
 
-## PWD Interoperability
+## Error Handling and Recovery
 
-PWD (Python Workflow Definition) enables workflow exchange with other engines (AiiDA, jobflow, pyiron).
-
-### Exporting to PWD
+### Robust Job Submission
 
 ```python
-from crystalmath.integrations.pwd_bridge import PWDConverter, export_to_pwd
-from crystalmath.protocols import WorkflowStep, WorkflowType
+def submit_with_retry(ctrl, job, max_retries=3):
+    """Submit job with automatic retry on failure."""
+    for attempt in range(max_retries):
+        try:
+            pk = ctrl.submit_job(job)
+            print(f"Job submitted: PK={pk}")
+            return pk
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(5)
 
-# Create workflow steps
-steps = [
-    WorkflowStep(
-        name="relax",
-        workflow_type=WorkflowType.RELAX,
-        code="vasp",
-        parameters={"force_threshold": 0.01},
-    ),
-    WorkflowStep(
-        name="bands",
-        workflow_type=WorkflowType.BANDS,
-        code="vasp",
-        depends_on=["relax"],
-    ),
-]
-
-# Quick export
-pwd_json = export_to_pwd(steps)
-print(pwd_json)
-
-# Export with CrystalMath extensions
-converter = PWDConverter()
-pwd_json, extensions = converter.to_pwd_with_extensions(steps)
-
-# Save as PWD package
-converter.save_pwd(steps, Path("./output"), "my_workflow")
-# Creates:
-#   ./output/my_workflow/
-#     - workflow.json
-#     - workflow.py
-#     - environment.yml
-#     - extensions.json
+# Usage
+pk = submit_with_retry(ctrl, job)
 ```
 
-### Importing from PWD
+### Job Status Monitoring
 
 ```python
-from crystalmath.integrations.pwd_bridge import PWDConverter, import_from_pwd
+def monitor_job(ctrl, pk, max_wait=3600, poll_interval=10):
+    """Monitor job until completion."""
+    start = time.time()
+    while time.time() - start < max_wait:
+        details = ctrl.get_job_details(pk)
+        print(f"Job {pk}: {details.state}")
 
-# From PWD directory
-steps = import_from_pwd(Path("./my_workflow"))
+        if details.state == "finished":
+            return details.results
+        elif details.state == "failed":
+            print(f"Job failed: {details.error_message}")
+            return None
 
-# From JSON dict
-pwd_json = {
-    "nodes": [...],
-    "edges": [...],
-}
-steps = import_from_pwd(pwd_json)
+        time.sleep(poll_interval)
 
-# Run imported workflow
-from crystalmath.high_level.runners import StandardAnalysis
+    print(f"Job {pk} timed out after {max_wait}s")
+    return None
 
-runner = StandardAnalysis(
-    cluster=get_cluster_profile("beefcake2"),
-)
-# Configure runner with imported steps...
+# Usage
+results = monitor_job(ctrl, pk)
+if results:
+    print(f"Energy: {results.get('energy')} eV")
 ```
 
-### PWD Extensions
+## Next Steps
 
-CrystalMath extensions capture additional information:
-
-```python
-converter = PWDConverter()
-pwd_json, extensions = converter.to_pwd_with_extensions(steps)
-
-print(extensions)
-# {
-#     "crystalmath_version": "1.0.0",
-#     "extensions": {
-#         "func_relax": {
-#             "resources": {
-#                 "num_nodes": 1,
-#                 "num_mpi_ranks": 20,
-#                 ...
-#             },
-#             "code": "vasp",
-#             "workflow_type": "relax",
-#             "protocol_level": "moderate",
-#             "error_recovery": "adaptive"
-#         },
-#         ...
-#     }
-# }
-```
-
-## Checkpointing and Recovery
-
-### Automatic Checkpointing
-
-```python
-from crystalmath.high_level.runners import StandardAnalysis
-
-runner = StandardAnalysis(
-    cluster=get_cluster_profile("beefcake2"),
-    checkpoint_interval=1,  # Checkpoint after each step
-    preserve_intermediates=True,  # Keep intermediate files
-)
-```
-
-### Resuming from Checkpoint
-
-```python
-from crystalmath.protocols import ErrorRecoveryStrategy
-
-workflow = (
-    WorkflowBuilder()
-    .from_file("structure.cif")
-    .relax()
-    .then_phonon(supercell=[3, 3, 3])  # Long calculation
-    .with_recovery(ErrorRecoveryStrategy.CHECKPOINT)
-    .build()
-)
-
-# If interrupted, resume from last checkpoint
-results = workflow.run()
-```
-
-## Complete Advanced Example
-
-```python
-from crystalmath.high_level import WorkflowBuilder
-from crystalmath.high_level.runners import OpticalAnalysis
-from crystalmath.high_level.clusters import get_cluster_profile, get_optimal_resources
-from crystalmath.protocols import ErrorRecoveryStrategy
-from crystalmath.integrations.pwd_bridge import PWDConverter
-
-# Define material
-structure_file = "NbOCl2.cif"
-cluster = get_cluster_profile("beefcake2")
-
-# Estimate resources
-resources = get_optimal_resources(
-    code="yambo",
-    system_size=12,  # atoms
-    calculation_type="gw",
-    use_gpu=True
-)
-
-# Method 1: Using OpticalAnalysis runner
-runner = OpticalAnalysis(
-    cluster=cluster,
-    protocol="moderate",
-    dft_code="vasp",
-    gw_code="yambo",
-    gw_protocol="gw0",
-    n_bands_gw=100,
-    n_valence_bse=4,
-    n_conduction_bse=4,
-    output_dir="./results/NbOCl2",
-    recovery_strategy=ErrorRecoveryStrategy.ADAPTIVE,
-    preserve_intermediates=True,
-)
-
-results = runner.run(structure_file)
-
-# Method 2: Using WorkflowBuilder for more control
-workflow = (
-    WorkflowBuilder()
-    .from_file(structure_file)
-    .relax(code="vasp", force_threshold=0.005)
-    .scf(code="vasp")
-    .then_bands(kpath="auto", kpoints_per_segment=100)
-    .then_dos(mesh=[16, 16, 16], projected=True)
-    .with_gw(code="yambo", protocol="gw0", n_bands=100)
-    .with_bse(code="yambo", n_valence=6, n_conduction=6)
-    .on_cluster("beefcake2", partition="gpu", resources=resources)
-    .with_progress()
-    .with_output("./results/NbOCl2_full")
-    .with_recovery(ErrorRecoveryStrategy.ADAPTIVE)
-    .build()
-)
-
-# Execute asynchronously
-async for update in workflow.run_async():
-    print(f"[{update.percent:.0f}%] {update.step_name}")
-
-results = Workflow.get_result(workflow.workflow_id)
-
-# Export results
-results.to_dataframe().to_csv("properties.csv")
-results.to_latex_table("table.tex")
-results.to_json("results.json")
-
-# Generate figures
-fig = results.plot_bands_dos()
-fig.savefig("electronic_structure.png", dpi=300)
-
-fig = results.plot_optical()
-fig.savefig("optical_absorption.png", dpi=300)
-
-# Export workflow for sharing
-converter = PWDConverter()
-converter.save_pwd(runner.steps, Path("./exports"), "NbOCl2_workflow")
-
-print(f"Formula: {results.formula}")
-print(f"DFT gap: {results.band_gap_ev:.3f} eV")
-print(f"GW gap: {results.gw_gap_ev:.3f} eV")
-print(f"Optical gap: {results.optical_gap_ev:.3f} eV")
-print(f"Exciton binding: {results.exciton_binding_ev:.3f} eV")
-print(f"CPU hours: {results.total_cpu_hours:.1f}")
-```
+- **[Workflow Classes Reference](high-level-api.md)** - Detailed API documentation
+- **[Cluster Setup](cluster-setup.md)** - SSH and SLURM configuration
+- **[Getting Started](getting-started.md)** - Installation and basics

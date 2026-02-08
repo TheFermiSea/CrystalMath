@@ -1,603 +1,428 @@
-# High-Level API Reference
+# Workflow Classes Reference
 
-This guide covers the CrystalMath high-level API, including the `HighThroughput` class, `WorkflowBuilder` fluent API, and `AnalysisResults` export methods.
+This document covers CrystalMath's workflow classes for automated multi-step calculations. These classes are production-ready and provide JSON-serializable interfaces.
 
-## HighThroughput Class
+## Overview
 
-The `HighThroughput` class provides one-liner methods for complete materials analysis workflows.
+CrystalMath provides four working workflow classes:
 
-### Basic Usage
+| Workflow | Purpose | Key Features |
+|----------|---------|-------------|
+| `ConvergenceStudy` | Parameter convergence testing | k-points, basis sets, cutoffs |
+| `BandStructureWorkflow` | Electronic structure | Band structure + DOS calculation |
+| `PhononWorkflow` | Phonon properties | Phonopy integration, thermal properties |
+| `EOSWorkflow` | Equation of state | Bulk modulus determination |
+
+All workflow classes:
+- Generate input files for job submission
+- Track calculation status
+- Analyze results when complete
+- Return JSON-serializable result objects
+
+## ConvergenceStudy
+
+Test convergence of total energy with respect to computational parameters.
+
+### Configuration
 
 ```python
-from crystalmath.high_level import HighThroughput
+from crystalmath.workflows.convergence import (
+    ConvergenceStudy, ConvergenceStudyConfig, ConvergenceParameter
+)
 
-# Complete analysis from CIF file
-results = HighThroughput.run_standard_analysis(
-    structure="NbOCl2.cif",
-    properties=["bands", "dos", "phonon", "bse"],
-    codes={"dft": "vasp", "gw": "yambo"},
-    cluster="beefcake2"
+config = ConvergenceStudyConfig(
+    parameter=ConvergenceParameter.SHRINK,
+    values=[4, 6, 8, 10, 12, 14],
+    base_input=open("mgo.d12").read(),
+    energy_threshold=0.001,  # eV/atom
+    dft_code="crystal",
+    cluster_id=None,  # Local execution
+    name_prefix="conv",
 )
 ```
 
-### run_standard_analysis()
+### ConvergenceParameter Enum
 
-The primary entry point for high-throughput analysis.
+| Parameter | Description | Applicable Codes |
+|-----------|-------------|------------------|
+| `KPOINTS` | K-point mesh density | VASP, QE |
+| `SHRINK` | CRYSTAL SHRINK parameter | CRYSTAL |
+| `BASIS` | Basis set quality | CRYSTAL |
+| `ENCUT` | Plane-wave cutoff | VASP |
+| `ECUTWFC` | Wavefunction cutoff | QE |
+
+### Usage Example
 
 ```python
-results = HighThroughput.run_standard_analysis(
-    structure,              # Input structure (file path, MP ID, or Structure)
-    properties,             # List of properties to calculate
-    codes=None,             # Code selection override
-    cluster=None,           # Cluster profile name
-    protocol="moderate",    # Accuracy level
-    progress_callback=None, # Progress notification handler
-    output_dir=None,        # Output directory
-    **kwargs                # Additional workflow options
+study = ConvergenceStudy(config)
+
+# Generate input files
+inputs = study.generate_inputs()  # List of (name, input_content) tuples
+
+# Submit jobs (using CrystalController)
+from crystalmath.api import CrystalController
+from crystalmath.models import JobSubmission, DftCode
+
+ctrl = CrystalController(db_path="convergence.db")
+pks = []
+
+for name, content in inputs:
+    job = JobSubmission(
+        name=name,
+        input_content=content,
+        dft_code=DftCode.CRYSTAL,
+    )
+    pks.append(ctrl.submit_job(job))
+
+print(f"Submitted {len(pks)} convergence jobs")
+
+# ... wait for jobs to complete ...
+
+# Collect energies from completed jobs
+energies = []
+for pk in pks:
+    details = ctrl.get_job_details(pk)
+    if details.state == "finished":
+        energies.append(details.results.get("energy"))
+
+# Analyze convergence
+result = study.analyze_results(energies)
+print(f"Converged at {result.parameter.value}={result.converged_value}")
+print(f"Recommendation: {result.recommendation}")
+```
+
+### ConvergenceStudyResult
+
+```python
+@dataclass
+class ConvergenceStudyResult:
+    parameter: ConvergenceParameter
+    points: list[ConvergencePoint]
+    converged_value: int | float | str | None
+    converged_at_index: int | None
+    recommendation: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dict."""
+```
+
+Each `ConvergencePoint` contains:
+- `parameter_value`: The tested parameter value
+- `energy`: Total energy (eV or Hartree)
+- `energy_per_atom`: Energy per atom
+- `wall_time_seconds`: Calculation time
+- `job_pk`: Job primary key
+- `status`: "pending", "running", "completed", "failed"
+
+## BandStructureWorkflow
+
+Calculate electronic band structure and density of states from a converged SCF wavefunction.
+
+### Configuration
+
+```python
+from crystalmath.workflows.bands import (
+    BandStructureWorkflow, BandStructureConfig, BandPathPreset
+)
+
+config = BandStructureConfig(
+    source_job_pk=1,  # PK of converged SCF job
+    band_path=BandPathPreset.AUTO,  # Auto-detect from structure
+    custom_path=None,  # Or specify: "Gamma X M Gamma"
+    kpoints_per_segment=50,
+    compute_dos=True,
+    dos_mesh=[12, 12, 12],
+    first_band=1,
+    last_band=-1,  # All bands
+    dft_code="crystal",
+    cluster_id=None,
+    name_prefix="bands",
 )
 ```
 
-**Parameters:**
+### BandPathPreset Enum
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `structure` | str, Path, Structure | Input structure source |
-| `properties` | List[str] | Properties to calculate |
-| `codes` | Dict[str, str] | Code overrides, e.g., `{"dft": "vasp", "gw": "yambo"}` |
-| `cluster` | str | Cluster profile: "beefcake2", "local", or None |
-| `protocol` | str | Accuracy: "fast", "moderate", "precise" |
-| `progress_callback` | ProgressCallback | Progress handler |
-| `output_dir` | str, Path | Output directory |
+| Preset | Description | Path |
+|--------|-------------|------|
+| `AUTO` | Auto-detect from structure symmetry | Varies |
+| `CUBIC` | Simple cubic lattice | Gamma-X-M-Gamma-R-X |
+| `FCC` | Face-centered cubic | Gamma-X-W-K-Gamma-L-U-W-L-K |
+| `BCC` | Body-centered cubic | Gamma-H-N-Gamma-P-H |
+| `HEXAGONAL` | Hexagonal lattice | Gamma-M-K-Gamma-A-L-H-A |
+| `TETRAGONAL` | Tetragonal lattice | Gamma-X-M-Gamma-Z-R-A-Z |
+| `CUSTOM` | User-specified path | Set via `custom_path` |
 
-**Returns:** `AnalysisResults` with all computed properties
-
-### Structure Input Methods
+### Usage Example
 
 ```python
-# From Materials Project ID
-results = HighThroughput.from_mp("mp-149", properties=["bands"])
+workflow = BandStructureWorkflow(config)
 
-# From POSCAR file
-results = HighThroughput.from_poscar("POSCAR", properties=["relax"])
+# Generate band structure input
+band_input = workflow.generate_band_input()
+print(f"Band structure job: {band_input}")
 
-# From pymatgen Structure
-from pymatgen.core import Structure
-struct = Structure.from_file("struct.cif")
-results = HighThroughput.from_structure(struct, properties=["scf"])
+# Generate DOS input (if compute_dos=True)
+if config.compute_dos:
+    dos_input = workflow.generate_dos_input()
+    print(f"DOS job: {dos_input}")
 
-# From AiiDA database
-results = HighThroughput.from_aiida(12345, properties=["bands"])
-results = HighThroughput.from_aiida("a1b2c3d4-e5f6-...", properties=["bands"])
+# After jobs complete, analyze results
+result = workflow.analyze_results(band_data, dos_data)
+print(f"Band gap: {result.band_gap_ev:.3f} eV")
+print(f"Gap type: {result.band_gap_type}")  # "direct" or "indirect"
+print(f"Metal: {result.is_metal}")
 ```
 
-### Property Discovery
+### BandStructureResult
 
 ```python
-# List all supported properties
-props = HighThroughput.get_supported_properties()
-# ['scf', 'relax', 'bands', 'dos', 'phonon', 'elastic', 'dielectric', 'gw', 'bse', 'eos', 'neb']
+@dataclass
+class BandStructureResult:
+    status: str  # "pending", "running", "completed", "failed"
+    band_job_pk: int | None
+    dos_job_pk: int | None
+    fermi_energy_ev: float | None
+    band_gap_ev: float | None
+    band_gap_type: str | None  # "direct" or "indirect"
+    is_metal: bool | None
+    vbm_ev: float | None  # Valence band maximum
+    cbm_ev: float | None  # Conduction band minimum
+    n_bands: int | None
+    kpath_labels: list[str]
+    error_message: str | None
 
-# Get details about a property
-info = HighThroughput.get_property_info("gw")
-# {
-#     'name': 'gw',
-#     'workflow_type': 'gw',
-#     'default_code': 'yambo',
-#     'dependencies': ['scf']
-# }
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dict."""
 ```
 
-## WorkflowBuilder Fluent API
+## PhononWorkflow
 
-For fine-grained control, use the `WorkflowBuilder` with method chaining.
+Calculate phonon dispersion and thermodynamic properties using finite displacements.
 
-### Basic Usage
+### Configuration
 
 ```python
-from crystalmath.high_level import WorkflowBuilder
-
-workflow = (
-    WorkflowBuilder()
-    .from_file("NbOCl2.cif")
-    .relax(code="vasp", protocol="moderate")
-    .then_bands(kpath="auto", kpoints_per_segment=50)
-    .then_dos(mesh=[12, 12, 12])
-    .on_cluster("beefcake2")
-    .build()
+from crystalmath.workflows.phonon import (
+    PhononWorkflow, PhononConfig, PhononMethod, PhononDFTCode
 )
 
-result = workflow.run()
-```
-
-### Structure Input Methods
-
-```python
-builder = WorkflowBuilder()
-
-# From file
-builder.from_file("structure.cif")
-builder.from_file("POSCAR")
-builder.from_file("/path/to/structure.xyz")
-
-# From Materials Project
-builder.from_mp("mp-149")      # Silicon
-builder.from_mp("mp-2815")     # MoS2
-
-# From pymatgen Structure
-struct = Structure.from_file("POSCAR")
-builder.from_structure(struct)
-
-# From AiiDA
-builder.from_aiida(12345)                  # By PK
-builder.from_aiida("a1b2c3d4-e5f6-...")    # By UUID
-```
-
-### DFT Workflow Steps
-
-#### relax() - Geometry Optimization
-
-```python
-builder.relax(
-    code=None,              # DFT code (auto-selected if None)
-    protocol="moderate",     # fast, moderate, precise
-    force_threshold=0.01,    # eV/Angstrom
-    stress_threshold=0.1,    # kbar
-    max_steps=200,           # Maximum ionic steps
+config = PhononConfig(
+    source_job_pk=1,  # PK of optimized structure
+    method=PhononMethod.PHONOPY,  # phonopy, crystal_fd, crystal_dfpt
+    supercell_dim=[2, 2, 2],
+    displacement_distance=0.01,  # Angstrom
+    use_symmetry=True,
+    mesh=[20, 20, 20],  # Q-point mesh for DOS
+    band_path="AUTO",  # Or explicit path
+    compute_thermal=True,
+    tmin=0.0,
+    tmax=1000.0,
+    tstep=10.0,
+    dft_code=PhononDFTCode.CRYSTAL,
+    cluster_id=None,
+    name_prefix="phonon",
 )
 ```
 
-#### scf() - Single Point
+### PhononMethod Enum
+
+| Method | Description | Requirements |
+|--------|-------------|--------------|
+| `PHONOPY` | Phonopy with finite displacements | phonopy package |
+| `CRYSTAL_FD` | CRYSTAL finite displacement | CRYSTAL23 |
+| `CRYSTAL_DFPT` | CRYSTAL DFPT (linear response) | CRYSTAL23 |
+
+### Usage Example
 
 ```python
-builder.scf(
-    code=None,
-    protocol="moderate",
+workflow = PhononWorkflow(config)
+
+# Generate supercell and displacements
+displacements = workflow.generate_displacements()
+print(f"Need {len(displacements)} displacement calculations")
+
+# Submit force calculations for each displacement
+for disp in displacements:
+    job = JobSubmission(
+        name=f"phonon_disp_{disp.index}",
+        input_content=disp.input_content,
+        dft_code=DftCode.CRYSTAL,
+    )
+    disp.job_pk = ctrl.submit_job(job)
+
+# After all force calculations complete
+result = workflow.collect_forces_and_analyze()
+
+if result.has_imaginary:
+    print("WARNING: Structure is dynamically unstable!")
+    print(f"Minimum frequency: {result.min_frequency:.2f} cm^-1")
+else:
+    print("Structure is dynamically stable")
+    print(f"Frequencies at Gamma: {result.frequencies_at_gamma}")
+
+# Thermal properties
+if result.thermal_properties:
+    T = result.thermal_properties["temperatures"]
+    F = result.thermal_properties["free_energy"]
+    print(f"Free energy at 300 K: {F[30]:.3f} eV")
+```
+
+### PhononResult
+
+```python
+@dataclass
+class PhononResult:
+    status: str
+    n_displacements: int
+    displacements: list[DisplacementPoint]
+    force_sets_ready: bool
+    frequencies_at_gamma: list[float]  # cm^-1
+    has_imaginary: bool
+    min_frequency: float | None
+    band_yaml: str | None  # Path to phonopy band.yaml
+    thermal_properties: dict[str, Any] | None
+    zero_point_energy_ev: float | None
+    error_message: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dict."""
+
+    @property
+    def completed_count(self) -> int:
+        """Number of completed displacement calculations."""
+
+    @property
+    def failed_count(self) -> int:
+        """Number of failed displacement calculations."""
+```
+
+## EOSWorkflow
+
+Fit equation of state (Birch-Murnaghan) to determine bulk modulus and equilibrium volume.
+
+### Configuration
+
+```python
+from crystalmath.workflows.eos import EOSWorkflow, EOSConfig
+
+config = EOSConfig(
+    source_job_pk=1,  # PK of optimized structure
+    volume_range=(0.90, 1.10),  # +/- 10% volume
+    num_points=7,
+    eos_type="birch_murnaghan",  # birch_murnaghan, murnaghan, vinet
+    dft_code="crystal",
+    cluster_id=None,
+    name_prefix="eos",
 )
 ```
 
-#### then_bands() - Band Structure
+### Usage Example
 
 ```python
-builder.then_bands(
-    kpath="auto",              # "auto", "hexagonal", or custom list
-    kpoints_per_segment=50,    # Points per path segment
+workflow = EOSWorkflow(config)
+
+# Get reference structure from source job
+source_job = ctrl.get_job_details(config.source_job_pk)
+# Extract cell, positions, symbols from source_job.results
+
+# Generate volume-scaled structures
+structures = workflow.generate_volume_points(
+    cell=[[a, 0, 0], [0, b, 0], [0, 0, c]],
+    positions=[[0, 0, 0], [0.5, 0.5, 0.5]],
+    symbols=["Mg", "O"],
 )
 
-# Custom k-path
-builder.then_bands(
-    kpath=[
-        ("Gamma", [0, 0, 0]),
-        ("X", [0.5, 0, 0]),
-        ("M", [0.5, 0.5, 0]),
-        ("Gamma", [0, 0, 0]),
-    ]
-)
+print(f"Generated {len(structures)} volume points")
+
+# Submit SCF calculations for each volume
+for i, struct in enumerate(structures):
+    job = JobSubmission(
+        name=f"eos_vol_{i}",
+        input_content=struct["input_content"],
+        dft_code=DftCode.CRYSTAL,
+    )
+    workflow.result.points[i].job_pk = ctrl.submit_job(job)
+
+# After all calculations complete, fit EOS
+result = workflow.fit_eos()
+print(f"Equilibrium volume: {result.v0:.2f} A^3")
+print(f"Bulk modulus: {result.b0:.1f} GPa")
+print(f"B': {result.bp:.2f}")
+print(f"Fitting residual: {result.residual:.6f}")
 ```
 
-#### then_dos() - Density of States
+### EOSResult
 
 ```python
-builder.then_dos(
-    mesh=None,          # K-point mesh (auto if None)
-    smearing=0.05,      # Gaussian smearing (eV)
-    projected=False,    # Orbital-projected DOS
-)
+@dataclass
+class EOSResult:
+    status: str
+    points: list[EOSPoint]
+    v0: float | None  # Equilibrium volume (A^3)
+    e0: float | None  # Equilibrium energy (eV)
+    b0: float | None  # Bulk modulus (GPa)
+    bp: float | None  # Bulk modulus pressure derivative
+    eos_type: str  # birch_murnaghan, murnaghan, vinet
+    residual: float | None
+    error_message: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dict."""
 ```
 
-#### then_phonon() - Phonon Dispersion
+Each `EOSPoint` contains:
+- `volume_scale`: V/V0 scaling factor
+- `volume`: Absolute volume (A^3)
+- `energy`: Total energy (eV or Hartree)
+- `pressure`: Pressure (GPa)
+- `job_pk`: Job primary key
+- `status`: "pending", "running", "completed", "failed"
+
+## Integration with CrystalController
+
+All workflow classes integrate seamlessly with `CrystalController`:
 
 ```python
-builder.then_phonon(
-    supercell=None,        # [nx, ny, nz] (auto if None)
-    displacement=0.01,     # Angstrom
-)
+from crystalmath.api import CrystalController
+from crystalmath.workflows.convergence import ConvergenceStudy, ConvergenceStudyConfig
+from crystalmath.models import JobSubmission, DftCode
+
+# Initialize controller
+ctrl = CrystalController(db_path="workflows.db")
+
+# Create convergence study
+config = ConvergenceStudyConfig(...)
+study = ConvergenceStudy(config)
+
+# Submit jobs
+for name, content in study.generate_inputs():
+    job = JobSubmission(name=name, input_content=content, dft_code=DftCode.CRYSTAL)
+    ctrl.submit_job(job)
+
+# Monitor jobs
+jobs = ctrl.get_jobs()
+for job in jobs:
+    print(f"{job.name}: {job.state}")
 ```
 
-#### then_elastic() - Elastic Constants
+## JSON Serialization
+
+All result classes provide `to_dict()` methods for JSON serialization:
 
 ```python
-builder.then_elastic()
+result = study.analyze_results(energies)
+
+# Serialize to JSON
+import json
+json_data = json.dumps(result.to_dict(), indent=2)
+
+# Save to file
+with open("convergence_result.json", "w") as f:
+    json.dump(result.to_dict(), f, indent=2)
 ```
 
-#### then_dielectric() - Dielectric Tensor
-
-```python
-builder.then_dielectric()
-```
-
-### Many-Body Methods
-
-#### with_gw() - GW Corrections
-
-```python
-builder.with_gw(
-    code="yambo",           # yambo or berkeleygw
-    protocol="gw0",         # g0w0, gw0, evgw
-    n_bands=None,           # Bands for GW (auto if None)
-)
-```
-
-**GW Protocols:**
-
-| Protocol | Description | Cost |
-|----------|-------------|------|
-| `g0w0` | Single-shot G0W0 | Lowest |
-| `gw0` | Partially self-consistent | Moderate |
-| `evgw` | Eigenvalue self-consistent | Highest |
-
-#### with_bse() - BSE Optical
-
-```python
-builder.with_bse(
-    code="yambo",
-    n_valence=4,        # Valence bands to include
-    n_conduction=4,     # Conduction bands to include
-)
-```
-
-### Execution Configuration
-
-#### on_cluster() - Cluster Selection
-
-```python
-builder.on_cluster(
-    cluster="beefcake2",     # Cluster profile name
-    partition=None,          # SLURM partition override
-    resources=None,          # Custom ResourceRequirements
-)
-```
-
-#### with_progress() - Progress Tracking
-
-```python
-# Console progress
-builder.with_progress()
-
-# Custom callback
-builder.with_progress(callback=my_progress_handler)
-```
-
-#### with_output() - Output Directory
-
-```python
-builder.with_output("./results/NbOCl2")
-```
-
-#### with_recovery() - Error Recovery
-
-```python
-from crystalmath.protocols import ErrorRecoveryStrategy
-
-builder.with_recovery(ErrorRecoveryStrategy.ADAPTIVE)
-```
-
-**Recovery Strategies:**
-
-| Strategy | Behavior |
-|----------|----------|
-| `FAIL_FAST` | Stop on first error |
-| `RETRY` | Retry with same parameters |
-| `ADAPTIVE` | Self-healing parameter adjustment |
-| `CHECKPOINT` | Restart from last checkpoint |
-
-### Build and Validate
-
-```python
-# Validate without building
-is_valid, issues = builder.validate()
-if not is_valid:
-    print("Issues:", issues)
-
-# Build executable workflow
-workflow = builder.build()
-```
-
-## Workflow Execution
-
-### Synchronous Execution
-
-```python
-workflow = builder.build()
-result = workflow.run()
-```
-
-### Asynchronous Execution (Jupyter)
-
-```python
-async for update in workflow.run_async():
-    print(f"Step: {update.step_name}")
-    print(f"Progress: {update.percent:.1f}%")
-
-    if update.has_intermediate_result:
-        # Access partial results for live plotting
-        partial = update.intermediate_result
-```
-
-### Non-Blocking Submission
-
-```python
-# Submit and return immediately
-workflow_id = workflow.submit()
-print(f"Submitted: {workflow_id}")
-
-# Check status later
-from crystalmath.high_level import Workflow
-
-status = Workflow.get_status(workflow_id)
-print(f"State: {status.state}")
-print(f"Progress: {status.progress_percent}%")
-
-# Get result when complete
-if status.state == "completed":
-    result = Workflow.get_result(workflow_id)
-
-# Cancel if needed
-Workflow.cancel(workflow_id)
-```
-
-## AnalysisResults
-
-The `AnalysisResults` class contains all computed properties with export methods.
-
-### Scalar Properties
-
-```python
-# Electronic
-results.band_gap_ev           # DFT band gap (eV)
-results.is_direct_gap         # Direct or indirect
-results.fermi_energy_ev       # Fermi energy (eV)
-results.is_metal              # Metallic?
-
-# GW/BSE
-results.gw_gap_ev             # GW gap (eV)
-results.optical_gap_ev        # BSE optical gap (eV)
-results.exciton_binding_ev    # Exciton binding (eV)
-
-# Mechanical
-results.bulk_modulus_gpa      # Bulk modulus (GPa)
-results.shear_modulus_gpa     # Shear modulus (GPa)
-results.youngs_modulus_gpa    # Young's modulus (GPa)
-results.poisson_ratio         # Poisson ratio
-
-# Dielectric
-results.static_dielectric     # Static dielectric constant
-results.high_freq_dielectric  # High-freq dielectric constant
-
-# Phonon
-results.has_imaginary_modes   # Dynamically stable?
-
-# Transport
-results.seebeck_coefficient
-results.electrical_conductivity
-results.thermal_conductivity
-```
-
-### Data Containers
-
-```python
-# Band structure data
-results.band_structure.energies     # [n_kpoints, n_bands]
-results.band_structure.kpoints      # [n_kpoints, 3]
-results.band_structure.kpoint_labels
-results.band_structure.fermi_energy
-
-# DOS data
-results.dos.energies
-results.dos.total_dos
-results.dos.projected_dos
-
-# Phonon data
-results.phonon_dispersion.frequencies
-results.phonon_dispersion.qpoints
-
-# Elastic tensor
-results.elastic_tensor.voigt        # [6, 6] GPa
-results.elastic_tensor.compliance
-```
-
-### Export Methods
-
-#### DataFrame Export
-
-```python
-# Single-row DataFrame with all scalar properties
-df = results.to_dataframe()
-df.to_csv("properties.csv", index=False)
-
-# Combine multiple materials
-all_results = []
-for material in materials:
-    result = HighThroughput.run_standard_analysis(material, ["bands"])
-    all_results.append(result.to_dataframe())
-
-combined = pd.concat(all_results, ignore_index=True)
-combined.to_csv("screening.csv")
-```
-
-#### Dictionary Export
-
-```python
-# Nested dictionary including arrays
-data = results.to_dict()
-
-# JSON export
-json_str = results.to_json()
-results.to_json("results.json")
-```
-
-#### LaTeX Export
-
-```python
-# Standard booktabs table
-latex = results.to_latex_table()
-
-# Write to file
-results.to_latex_table("table.tex")
-
-# SI-formatted table
-latex = results.to_latex_si_table("table_si.tex")
-```
-
-**Example LaTeX Output:**
-
-```latex
-\begin{table}[htbp]
-\centering
-\caption{Calculated properties of NbOCl2}
-\label{tab:properties}
-\begin{tabular}{lS[table-format=3.3]}
-\toprule
-Property & {Value} \\
-\midrule
-Band gap (DFT) & \SI{1.234}{\electronvolt} \\
-Band gap (GW) & \SI{2.567}{\electronvolt} \\
-Optical gap (BSE) & \SI{2.123}{\electronvolt} \\
-Exciton binding & \SI{0.444}{\electronvolt} \\
-\bottomrule
-\end{tabular}
-\end{table}
-```
-
-### Plotting Methods
-
-#### Static Plots (Matplotlib)
-
-```python
-# Band structure
-fig = results.plot_bands(color="blue", linewidth=1.0)
-fig.savefig("bands.png", dpi=300)
-
-# Density of states
-fig = results.plot_dos(projected=True)
-fig.savefig("dos.png", dpi=300)
-
-# Combined band structure + DOS
-fig = results.plot_bands_dos(figsize=(10, 6))
-fig.savefig("electronic_structure.png", dpi=300)
-
-# Phonon dispersion
-fig = results.plot_phonons()
-fig.savefig("phonons.png", dpi=300)
-
-# Optical absorption
-fig = results.plot_optical(component="xx")
-fig.savefig("optical.png", dpi=300)
-```
-
-#### Interactive Plots (Plotly)
-
-```python
-# Interactive band structure (Jupyter)
-fig = results.iplot_bands()
-fig.show()
-
-# Interactive DOS
-fig = results.iplot_dos()
-fig.show()
-```
-
-## Protocol Levels
-
-Protocol levels control calculation accuracy throughout the workflow:
-
-```python
-results = HighThroughput.run_standard_analysis(
-    structure="struct.cif",
-    properties=["bands"],
-    protocol="precise"   # fast, moderate, precise
-)
-```
-
-### Protocol Parameters
-
-| Parameter | Fast | Moderate | Precise |
-|-----------|------|----------|---------|
-| k-density | 0.08 /A | 0.04 /A | 0.02 /A |
-| Energy conv. | 10^-4 eV | 10^-5 eV | 10^-6 eV |
-| Force conv. | 0.05 eV/A | 0.01 eV/A | 0.001 eV/A |
-
-## Progress Tracking
-
-### Console Progress
-
-```python
-builder.with_progress()  # Uses ConsoleProgressCallback
-```
-
-### Custom Progress Handler
-
-```python
-from crystalmath.protocols import ProgressCallback
-
-class MyProgressHandler(ProgressCallback):
-    def on_started(self, workflow_id, workflow_type):
-        print(f"Started: {workflow_id}")
-
-    def on_progress(self, workflow_id, step, percent, message):
-        print(f"[{percent:.0f}%] {step}: {message}")
-
-    def on_completed(self, workflow_id, result):
-        print(f"Completed: {workflow_id}")
-
-    def on_failed(self, workflow_id, error, recoverable):
-        print(f"Failed: {error}")
-
-builder.with_progress(callback=MyProgressHandler())
-```
-
-### Jupyter Widget Progress
-
-```python
-from crystalmath.high_level.progress import JupyterProgressCallback
-
-builder.with_progress(callback=JupyterProgressCallback())
-```
-
-## Complete Example
-
-```python
-from crystalmath.high_level import HighThroughput, WorkflowBuilder
-from crystalmath.protocols import ErrorRecoveryStrategy
-
-# Option 1: One-liner with HighThroughput
-results = HighThroughput.run_standard_analysis(
-    structure="NbOCl2.cif",
-    properties=["relax", "bands", "dos", "gw", "bse"],
-    codes={"dft": "vasp", "gw": "yambo"},
-    cluster="beefcake2",
-    protocol="moderate"
-)
-
-# Option 2: Fine-grained control with WorkflowBuilder
-workflow = (
-    WorkflowBuilder()
-    .from_file("NbOCl2.cif")
-    .relax(code="vasp", force_threshold=0.005)
-    .then_bands(kpath="auto", kpoints_per_segment=100)
-    .then_dos(mesh=[16, 16, 16], projected=True)
-    .with_gw(code="yambo", protocol="gw0", n_bands=100)
-    .with_bse(n_valence=6, n_conduction=6)
-    .on_cluster("beefcake2", partition="gpu")
-    .with_progress()
-    .with_output("./results/NbOCl2")
-    .with_recovery(ErrorRecoveryStrategy.ADAPTIVE)
-    .build()
-)
-
-results = workflow.run()
-
-# Access results
-print(f"Formula: {results.formula}")
-print(f"DFT gap: {results.band_gap_ev:.3f} eV")
-print(f"GW gap: {results.gw_gap_ev:.3f} eV")
-print(f"Optical gap: {results.optical_gap_ev:.3f} eV")
-print(f"Exciton binding: {results.exciton_binding_ev:.3f} eV")
-
-# Export
-results.to_dataframe().to_csv("properties.csv")
-results.to_latex_table("table.tex")
-
-# Plot
-fig = results.plot_bands_dos()
-fig.savefig("electronic_structure.png", dpi=300)
-```
+## Next Steps
+
+- **[Advanced Workflows](advanced-workflows.md)** - Multi-step workflow orchestration
+- **[Cluster Setup](cluster-setup.md)** - Remote execution configuration
+- **[Getting Started](getting-started.md)** - Installation and quick start

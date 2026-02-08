@@ -1,5 +1,11 @@
 # atomate2 Integration Guide
 
+> **Status: Planned Feature**
+>
+> The atomate2 integration described below is a design document for planned functionality.
+> The bridge classes exist as stubs but are not yet production-ready. For current workflow
+> capabilities, see the [Workflow Classes Reference](high-level-api.md).
+
 CrystalMath provides seamless integration with atomate2 and jobflow for users who want to leverage atomate2's extensive pre-built workflows while using CrystalMath's unified interface.
 
 ## Overview
