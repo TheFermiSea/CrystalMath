@@ -1220,11 +1220,9 @@ impl<'a> App<'a> {
                     if request_id == self.cluster_manager.request_id {
                         self.cluster_manager.loading = false;
                         match result {
-                            Ok(cluster) => {
-                                self.cluster_manager.set_status(
-                                    &format!("Updated cluster '{}'", cluster.name),
-                                    false,
-                                );
+                            Ok(()) => {
+                                self.cluster_manager
+                                    .set_status("Cluster updated", false);
                                 self.cluster_manager.cancel(); // Return to list view
                                 self.request_fetch_clusters(); // Refresh the list
                             }

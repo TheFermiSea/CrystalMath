@@ -1,7 +1,7 @@
 //! Python bridge module using PyO3.
 //!
 //! This module handles all communication with the Python backend.
-//! It uses JSON strings over FFI for simplicity and robustness.
+//! It uses JSON-RPC over FFI for thin IPC without thick enum variants.
 //!
 //! The async bridge (BridgeHandle) spawns a dedicated worker thread that
 //! owns the Py<PyAny>, allowing the main UI thread to remain responsive
@@ -28,7 +28,6 @@ use crate::models::{
 /// This enables the thin IPC pattern where we send generic JSON-RPC requests
 /// to Python's `dispatch` method instead of calling individual methods directly.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[allow(dead_code)] // Used during incremental migration
 pub struct JsonRpcRequest {
     /// JSON-RPC version (always "2.0")
     pub jsonrpc: String,
@@ -66,7 +65,6 @@ pub struct JsonRpcError {
 
 /// JSON-RPC 2.0 response structure.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[allow(dead_code)] // Methods used during incremental migration
 pub struct JsonRpcResponse {
     /// JSON-RPC version (always "2.0")
     pub jsonrpc: String,
@@ -385,115 +383,6 @@ fn find_database_path() -> Option<String> {
     None
 }
 
-/// Fetch the list of jobs from the Python backend.
-pub fn fetch_jobs(py_controller: &Py<PyAny>) -> Result<Vec<JobStatus>> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let bridge = py
-            .import("crystalmath.rust_bridge")
-            .context("Failed to import crystalmath.rust_bridge")?;
-
-        // Call rust_bridge.get_jobs_json(controller)
-        let json_str: String = bridge
-            .call_method1("get_jobs_json", (controller,))
-            .context("Failed to call rust_bridge.get_jobs_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        // Deserialize in Rust
-        let jobs: Vec<JobStatus> =
-            serde_json::from_str(&json_str).context("Failed to parse jobs JSON")?;
-
-        Ok(jobs)
-    })
-}
-
-/// Fetch detailed job information.
-pub fn fetch_job_details(py_controller: &Py<PyAny>, pk: i32) -> Result<Option<JobDetails>> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let bridge = py
-            .import("crystalmath.rust_bridge")
-            .context("Failed to import crystalmath.rust_bridge")?;
-
-        // Call rust_bridge.get_job_details_json(controller, pk)
-        let json_str: String = bridge
-            .call_method1("get_job_details_json", (controller, pk))
-            .context("Failed to call rust_bridge.get_job_details_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        // Parse structured API response
-        let response: ApiResponse<JobDetails> =
-            serde_json::from_str(&json_str).context("Failed to parse job details response")?;
-
-        // Handle NOT_FOUND as None, other errors as Error
-        match response.into_result() {
-            Ok(details) => Ok(Some(details)),
-            Err(msg) if msg.contains("NOT_FOUND") => Ok(None),
-            Err(msg) => Err(anyhow::anyhow!("Job details error: {}", msg)),
-        }
-    })
-}
-
-/// Submit a new job to the Python backend.
-#[allow(dead_code)] // Planned for job submission feature
-pub fn submit_job(py_controller: &Py<PyAny>, submission: &JobSubmission) -> Result<i32> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        // Serialize submission to JSON
-        let json_payload = serde_json::to_string(submission).context("Failed to serialize job")?;
-
-        // Call submit_job_json(payload)
-        let pk: i32 = controller
-            .call_method1("submit_job_json", (json_payload,))
-            .context("Failed to call submit_job_json")?
-            .extract()
-            .context("Failed to extract job pk")?;
-
-        Ok(pk)
-    })
-}
-
-/// Cancel a running job.
-pub fn cancel_job(py_controller: &Py<PyAny>, pk: i32) -> Result<bool> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let success: bool = controller
-            .call_method1("cancel_job", (pk,))
-            .context("Failed to call cancel_job")?
-            .extract()
-            .context("Failed to extract result")?;
-
-        Ok(success)
-    })
-}
-
-/// Get job logs.
-pub fn fetch_job_log(py_controller: &Py<PyAny>, pk: i32, tail_lines: i32) -> Result<JobLog> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let bridge = py
-            .import("crystalmath.rust_bridge")
-            .context("Failed to import crystalmath.rust_bridge")?;
-
-        let json_str: String = bridge
-            .call_method1("get_job_log_json", (controller, pk, tail_lines))
-            .context("Failed to call rust_bridge.get_job_log_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        let log: JobLog = serde_json::from_str(&json_str).context("Failed to parse log JSON")?;
-
-        Ok(log)
-    })
-}
-
 /// Job log output.
 #[derive(Debug, serde::Deserialize)]
 pub struct JobLog {
@@ -508,120 +397,11 @@ pub struct JobLog {
 
 /// Request types for the Python bridge worker thread.
 ///
-/// All requests include a `request_id` to correlate with responses and prevent
-/// race conditions where a stale response clears the pending state for a newer request.
+/// All requests are now routed through JSON-RPC except for Shutdown.
 #[derive(Debug)]
-#[allow(dead_code)] // Variants used by worker thread, some planned for future
 pub enum BridgeRequest {
     /// Graceful shutdown signal - worker exits after receiving this.
     Shutdown,
-    FetchJobs {
-        request_id: usize,
-    },
-    FetchJobDetails {
-        pk: i32,
-        request_id: usize,
-    },
-    SubmitJob {
-        submission_json: String,
-        request_id: usize,
-    },
-    CancelJob {
-        pk: i32,
-        request_id: usize,
-    },
-    FetchJobLog {
-        pk: i32,
-        tail_lines: i32,
-        request_id: usize,
-    },
-    // Materials Project API requests
-    SearchMaterials {
-        formula: String,
-        limit: usize,
-        request_id: usize,
-    },
-    GenerateD12 {
-        mp_id: String,
-        config_json: String,
-        request_id: usize,
-    },
-    // SLURM queue requests
-    FetchSlurmQueue {
-        cluster_id: i32,
-        request_id: usize,
-    },
-    CancelSlurmJob {
-        cluster_id: i32,
-        slurm_job_id: String,
-        request_id: usize,
-    },
-    AdoptSlurmJob {
-        cluster_id: i32,
-        slurm_job_id: String,
-        request_id: usize,
-    },
-    SyncRemoteJobs {
-        request_id: usize,
-    },
-    // Template requests
-    FetchTemplates {
-        request_id: usize,
-    },
-    RenderTemplate {
-        template_name: String,
-        params_json: String,
-        request_id: usize,
-    },
-    // Cluster management requests
-    FetchClusters {
-        request_id: usize,
-    },
-    FetchCluster {
-        cluster_id: i32,
-        request_id: usize,
-    },
-    CreateCluster {
-        config_json: String,
-        request_id: usize,
-    },
-    UpdateCluster {
-        cluster_id: i32,
-        config_json: String,
-        request_id: usize,
-    },
-    DeleteCluster {
-        cluster_id: i32,
-        request_id: usize,
-    },
-    TestClusterConnection {
-        cluster_id: i32,
-        request_id: usize,
-    },
-    // Workflow requests
-    CheckWorkflowsAvailable {
-        request_id: usize,
-    },
-    CreateConvergenceStudy {
-        config_json: String,
-        request_id: usize,
-    },
-    CreateBandStructureWorkflow {
-        config_json: String,
-        request_id: usize,
-    },
-    CreatePhononWorkflow {
-        config_json: String,
-        request_id: usize,
-    },
-    CreateEosWorkflow {
-        config_json: String,
-        request_id: usize,
-    },
-    LaunchAiidaGeopt {
-        config_json: String,
-        request_id: usize,
-    },
     /// Generic JSON-RPC request (thin IPC pattern).
     ///
     /// This enables incremental migration from the thick bridge pattern.
@@ -707,7 +487,7 @@ pub enum BridgeResponse {
     },
     ClusterUpdated {
         request_id: usize,
-        result: Result<ClusterConfig>,
+        result: Result<()>,
     },
     ClusterDeleted {
         request_id: usize,
@@ -729,7 +509,8 @@ pub enum BridgeResponse {
     },
     /// Generic JSON-RPC response (thin IPC pattern).
     ///
-    /// Contains the parsed JSON-RPC response from Python's `dispatch` method.
+    /// This is used as a fallback for operations that don't have dedicated
+    /// typed response variants (e.g., recipes.list, vasp.validate, output.get_file).
     RpcResult {
         request_id: usize,
         /// The JSON-RPC response (may contain result or error)
@@ -780,7 +561,6 @@ pub struct BridgeHandle {
     worker_handle: Option<thread::JoinHandle<()>>,
 }
 
-#[allow(dead_code)] // Inherent methods kept for direct use; trait methods used via Box<dyn>
 impl BridgeHandle {
     /// Create a new bridge handle by spawning a worker thread.
     ///
@@ -815,221 +595,6 @@ impl BridgeHandle {
                 Err(anyhow::anyhow!("Bridge worker disconnected"))
             }
         }
-    }
-
-    /// Send a request to fetch jobs (non-blocking).
-    ///
-    /// Uses JSON-RPC dispatch internally. The `request_id` is returned in the
-    /// response to detect stale responses.
-    pub fn request_fetch_jobs(&self, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "fetch_jobs",
-            serde_json::Value::Null, // Use Python default limit
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    /// Send a request to fetch job details (non-blocking).
-    ///
-    /// The `request_id` is returned in the response to detect stale responses.
-    pub fn request_fetch_job_details(&self, pk: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchJobDetails { pk, request_id })
-    }
-
-    /// Send a request to submit a job (non-blocking).
-    ///
-    /// The `request_id` is returned in the response to detect stale responses.
-    #[allow(dead_code)] // Planned for job submission feature
-    pub fn request_submit_job(&self, submission: &JobSubmission, request_id: usize) -> Result<()> {
-        let json = serde_json::to_string(submission)?;
-        self.try_send_request(BridgeRequest::SubmitJob {
-            submission_json: json,
-            request_id,
-        })
-    }
-
-    /// Send a request to cancel a job (non-blocking).
-    ///
-    /// The `request_id` is returned in the response to detect stale responses.
-    #[allow(dead_code)] // Planned for job cancellation feature
-    pub fn request_cancel_job(&self, pk: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::CancelJob { pk, request_id })
-    }
-
-    /// Send a request to fetch job log (non-blocking).
-    ///
-    /// The `request_id` is returned in the response to detect stale responses.
-    #[allow(dead_code)] // Used by log tab feature
-    pub fn request_fetch_job_log(&self, pk: i32, tail_lines: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchJobLog {
-            pk,
-            tail_lines,
-            request_id,
-        })
-    }
-
-    /// Send a request to search materials (non-blocking).
-    ///
-    /// The request_id is used to correlate responses and handle cancellation.
-    /// If the user dismisses the modal before a response arrives, the UI
-    /// should check the request_id and ignore stale responses.
-    pub fn request_search_materials(
-        &self,
-        formula: &str,
-        limit: usize,
-        request_id: usize,
-    ) -> Result<()> {
-        self.try_send_request(BridgeRequest::SearchMaterials {
-            formula: formula.to_string(),
-            limit,
-            request_id,
-        })
-    }
-
-    /// Send a request to generate a .d12 file (non-blocking).
-    ///
-    /// The config_json should match D12GenerationConfig serialization.
-    pub fn request_generate_d12(
-        &self,
-        mp_id: &str,
-        config_json: &str,
-        request_id: usize,
-    ) -> Result<()> {
-        self.try_send_request(BridgeRequest::GenerateD12 {
-            mp_id: mp_id.to_string(),
-            config_json: config_json.to_string(),
-            request_id,
-        })
-    }
-
-    /// Send a request to fetch SLURM queue status (non-blocking).
-    ///
-    /// Queries the SLURM controller on the specified cluster.
-    pub fn request_fetch_slurm_queue(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchSlurmQueue {
-            cluster_id,
-            request_id,
-        })
-    }
-
-    /// Send a request to cancel a SLURM job (non-blocking).
-    ///
-    /// Calls scancel on the specified cluster to cancel the job.
-    pub fn request_cancel_slurm_job(
-        &self,
-        cluster_id: i32,
-        slurm_job_id: &str,
-        request_id: usize,
-    ) -> Result<()> {
-        self.try_send_request(BridgeRequest::CancelSlurmJob {
-            cluster_id,
-            slurm_job_id: slurm_job_id.to_string(),
-            request_id,
-        })
-    }
-
-    /// Send a request to adopt a SLURM job (non-blocking).
-    ///
-    /// Creates a local tracking record for an existing remote job.
-    pub fn request_adopt_slurm_job(
-        &self,
-        cluster_id: i32,
-        slurm_job_id: &str,
-        request_id: usize,
-    ) -> Result<()> {
-        self.try_send_request(BridgeRequest::AdoptSlurmJob {
-            cluster_id,
-            slurm_job_id: slurm_job_id.to_string(),
-            request_id,
-        })
-    }
-
-    /// Send a request to sync remote job status (non-blocking).
-    ///
-    /// Checks active remote jobs against squeue/sacct and updates DB.
-    pub fn request_sync_remote_jobs(&self, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::SyncRemoteJobs { request_id })
-    }
-
-    fn request_fetch_templates(&self, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchTemplates { request_id })
-    }
-
-    fn request_render_template(
-        &self,
-        template_name: &str,
-        params_json: &str,
-        request_id: usize,
-    ) -> Result<()> {
-        self.try_send_request(BridgeRequest::RenderTemplate {
-            template_name: template_name.to_string(),
-            params_json: params_json.to_string(),
-            request_id,
-        })
-    }
-
-    // =========================================================================
-    // Cluster Management Methods
-    // =========================================================================
-
-    /// Send a request to fetch all clusters (non-blocking).
-    ///
-    /// **Migration Note**: This method now uses the JSON-RPC IPC pattern
-    /// instead of the legacy `BridgeRequest::FetchClusters` variant.
-    /// The response will arrive as `BridgeResponse::RpcResult`.
-    pub fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
-        // Use JSON-RPC dispatch (thin IPC pattern)
-        let rpc_request = JsonRpcRequest::new(
-            "fetch_clusters",
-            serde_json::Value::Null, // No parameters
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    /// Send a request to create a new cluster (non-blocking).
-    pub fn request_create_cluster(&self, config: &ClusterConfig, request_id: usize) -> Result<()> {
-        let json = serde_json::to_string(config)?;
-        self.try_send_request(BridgeRequest::CreateCluster {
-            config_json: json,
-            request_id,
-        })
-    }
-
-    /// Send a request to update a cluster (non-blocking).
-    pub fn request_update_cluster(
-        &self,
-        cluster_id: i32,
-        config: &ClusterConfig,
-        request_id: usize,
-    ) -> Result<()> {
-        let json = serde_json::to_string(config)?;
-        self.try_send_request(BridgeRequest::UpdateCluster {
-            cluster_id,
-            config_json: json,
-            request_id,
-        })
-    }
-
-    /// Send a request to delete a cluster (non-blocking).
-    pub fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::DeleteCluster {
-            cluster_id,
-            request_id,
-        })
-    }
-
-    /// Send a request to test cluster connection (non-blocking).
-    pub fn request_test_cluster_connection(
-        &self,
-        cluster_id: i32,
-        request_id: usize,
-    ) -> Result<()> {
-        self.try_send_request(BridgeRequest::TestClusterConnection {
-            cluster_id,
-            request_id,
-        })
     }
 
     /// Send a generic JSON-RPC request (thin IPC pattern).
@@ -1109,37 +674,49 @@ impl Drop for BridgeHandle {
 /// enabling dependency injection and mock implementations for testing.
 impl BridgeService for BridgeHandle {
     fn request_fetch_jobs(&self, request_id: usize) -> Result<()> {
-        // Use JSON-RPC dispatch (thin IPC pattern)
         let rpc_request = JsonRpcRequest::new(
             "fetch_jobs",
-            serde_json::Value::Null, // Use Python default limit
+            serde_json::Value::Null,
             request_id as u64,
         );
         self.request_rpc(rpc_request, request_id)
     }
 
     fn request_fetch_job_details(&self, pk: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchJobDetails { pk, request_id })
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_job_details",
+            serde_json::json!({"pk": pk}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_submit_job(&self, submission: &JobSubmission, request_id: usize) -> Result<()> {
         let json = serde_json::to_string(submission)?;
-        self.try_send_request(BridgeRequest::SubmitJob {
-            submission_json: json,
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "submit_job",
+            serde_json::json!({"json_payload": json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_cancel_job(&self, pk: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::CancelJob { pk, request_id })
+        let rpc_request = JsonRpcRequest::new(
+            "cancel_job",
+            serde_json::json!({"pk": pk}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_fetch_job_log(&self, pk: i32, tail_lines: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchJobLog {
-            pk,
-            tail_lines,
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_job_log",
+            serde_json::json!({"pk": pk, "tail_lines": tail_lines}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_search_materials(
@@ -1148,11 +725,12 @@ impl BridgeService for BridgeHandle {
         limit: usize,
         request_id: usize,
     ) -> Result<()> {
-        self.try_send_request(BridgeRequest::SearchMaterials {
-            formula: formula.to_string(),
-            limit,
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "search_materials",
+            serde_json::json!({"formula": formula, "limit": limit}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_generate_d12(
@@ -1161,18 +739,21 @@ impl BridgeService for BridgeHandle {
         config_json: &str,
         request_id: usize,
     ) -> Result<()> {
-        self.try_send_request(BridgeRequest::GenerateD12 {
-            mp_id: mp_id.to_string(),
-            config_json: config_json.to_string(),
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "generate_d12",
+            serde_json::json!({"mp_id": mp_id, "config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_fetch_slurm_queue(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchSlurmQueue {
-            cluster_id,
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_slurm_queue",
+            serde_json::json!({"cluster_id": cluster_id}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_cancel_slurm_job(
@@ -1181,11 +762,12 @@ impl BridgeService for BridgeHandle {
         slurm_job_id: &str,
         request_id: usize,
     ) -> Result<()> {
-        self.try_send_request(BridgeRequest::CancelSlurmJob {
-            cluster_id,
-            slurm_job_id: slurm_job_id.to_string(),
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "cancel_slurm_job",
+            serde_json::json!({"cluster_id": cluster_id, "slurm_job_id": slurm_job_id}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_adopt_slurm_job(
@@ -1194,19 +776,30 @@ impl BridgeService for BridgeHandle {
         slurm_job_id: &str,
         request_id: usize,
     ) -> Result<()> {
-        self.try_send_request(BridgeRequest::AdoptSlurmJob {
-            cluster_id,
-            slurm_job_id: slurm_job_id.to_string(),
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "adopt_slurm_job",
+            serde_json::json!({"cluster_id": cluster_id, "slurm_job_id": slurm_job_id}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_sync_remote_jobs(&self, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::SyncRemoteJobs { request_id })
+        let rpc_request = JsonRpcRequest::new(
+            "sync_remote_jobs",
+            serde_json::Value::Null,
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_fetch_templates(&self, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::FetchTemplates { request_id })
+        let rpc_request = JsonRpcRequest::new(
+            "list_templates",
+            serde_json::Value::Null,
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_render_template(
@@ -1215,26 +808,31 @@ impl BridgeService for BridgeHandle {
         params_json: &str,
         request_id: usize,
     ) -> Result<()> {
-        self.try_send_request(BridgeRequest::RenderTemplate {
-            template_name: template_name.to_string(),
-            params_json: params_json.to_string(),
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "render_template",
+            serde_json::json!({"template_name": template_name, "params_json": params_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
-        // Use JSON-RPC dispatch (thin IPC pattern)
-        let rpc_request =
-            JsonRpcRequest::new("fetch_clusters", serde_json::Value::Null, request_id as u64);
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_clusters",
+            serde_json::Value::Null,
+            request_id as u64,
+        );
         self.request_rpc(rpc_request, request_id)
     }
 
     fn request_create_cluster(&self, config: &ClusterConfig, request_id: usize) -> Result<()> {
         let json = serde_json::to_string(config)?;
-        self.try_send_request(BridgeRequest::CreateCluster {
-            config_json: json,
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "create_cluster",
+            serde_json::json!({"json_payload": json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_update_cluster(
@@ -1244,36 +842,48 @@ impl BridgeService for BridgeHandle {
         request_id: usize,
     ) -> Result<()> {
         let json = serde_json::to_string(config)?;
-        self.try_send_request(BridgeRequest::UpdateCluster {
-            cluster_id,
-            config_json: json,
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "update_cluster",
+            serde_json::json!({"cluster_id": cluster_id, "json_payload": json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::DeleteCluster {
-            cluster_id,
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "delete_cluster",
+            serde_json::json!({"cluster_id": cluster_id}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_test_cluster_connection(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::TestClusterConnection {
-            cluster_id,
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "test_cluster_connection",
+            serde_json::json!({"cluster_id": cluster_id}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_check_workflows_available(&self, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::CheckWorkflowsAvailable { request_id })
+        let rpc_request = JsonRpcRequest::new(
+            "check_workflows_available",
+            serde_json::Value::Null,
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_create_convergence_study(&self, config_json: &str, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::CreateConvergenceStudy {
-            config_json: config_json.to_string(),
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "create_convergence_study",
+            serde_json::json!({"config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_create_band_structure_workflow(
@@ -1281,31 +891,39 @@ impl BridgeService for BridgeHandle {
         config_json: &str,
         request_id: usize,
     ) -> Result<()> {
-        self.try_send_request(BridgeRequest::CreateBandStructureWorkflow {
-            config_json: config_json.to_string(),
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "create_band_structure_workflow",
+            serde_json::json!({"config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_create_phonon_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::CreatePhononWorkflow {
-            config_json: config_json.to_string(),
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "create_phonon_workflow",
+            serde_json::json!({"config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_create_eos_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::CreateEosWorkflow {
-            config_json: config_json.to_string(),
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "create_eos_workflow",
+            serde_json::json!({"config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_launch_aiida_geopt(&self, config_json: &str, request_id: usize) -> Result<()> {
-        self.try_send_request(BridgeRequest::LaunchAiidaGeopt {
-            config_json: config_json.to_string(),
-            request_id,
-        })
+        let rpc_request = JsonRpcRequest::new(
+            "launch_aiida_geopt",
+            serde_json::json!({"config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
     }
 
     fn request_rpc(&self, rpc_request: JsonRpcRequest, request_id: usize) -> Result<()> {
@@ -1387,599 +1005,200 @@ fn bridge_worker_loop(
 /// Each response includes the `request_id` from the corresponding request.
 fn process_bridge_request(py_controller: &Py<PyAny>, request: BridgeRequest) -> BridgeResponse {
     match request {
-        BridgeRequest::FetchJobs { request_id } => BridgeResponse::Jobs {
-            request_id,
-            result: fetch_jobs(py_controller),
-        },
-        BridgeRequest::FetchJobDetails { pk, request_id } => BridgeResponse::JobDetails {
-            request_id,
-            result: fetch_job_details(py_controller, pk),
-        },
-        BridgeRequest::SubmitJob {
-            submission_json,
-            request_id,
-        } => BridgeResponse::JobSubmitted {
-            request_id,
-            result: submit_job_json(py_controller, &submission_json),
-        },
-        BridgeRequest::CancelJob { pk, request_id } => BridgeResponse::JobCancelled {
-            request_id,
-            result: cancel_job(py_controller, pk),
-        },
-        BridgeRequest::FetchJobLog {
-            pk,
-            tail_lines,
-            request_id,
-        } => BridgeResponse::JobLog {
-            request_id,
-            result: fetch_job_log(py_controller, pk, tail_lines),
-        },
-        // Materials Project API
-        BridgeRequest::SearchMaterials {
-            formula,
-            limit,
-            request_id,
-        } => BridgeResponse::MaterialsFound {
-            request_id,
-            result: search_materials(py_controller, &formula, limit),
-        },
-        BridgeRequest::GenerateD12 {
-            mp_id,
-            config_json,
-            request_id,
-        } => BridgeResponse::D12Generated {
-            request_id,
-            result: generate_d12(py_controller, &mp_id, &config_json),
-        },
-        // SLURM queue
-        BridgeRequest::FetchSlurmQueue {
-            cluster_id,
-            request_id,
-        } => BridgeResponse::SlurmQueue {
-            request_id,
-            result: fetch_slurm_queue(py_controller, cluster_id),
-        },
-        BridgeRequest::CancelSlurmJob {
-            cluster_id,
-            slurm_job_id,
-            request_id,
-        } => BridgeResponse::SlurmJobCancelled {
-            request_id,
-            result: cancel_slurm_job(py_controller, cluster_id, &slurm_job_id),
-        },
-        BridgeRequest::AdoptSlurmJob {
-            cluster_id,
-            slurm_job_id,
-            request_id,
-        } => BridgeResponse::SlurmJobAdopted {
-            request_id,
-            result: adopt_slurm_job(py_controller, cluster_id, &slurm_job_id),
-        },
-        BridgeRequest::SyncRemoteJobs { request_id } => BridgeResponse::Jobs {
-            request_id,
-            result: sync_remote_jobs(py_controller),
-        },
-        // Templates
-        BridgeRequest::FetchTemplates { request_id } => BridgeResponse::Templates {
-            request_id,
-            result: fetch_templates(py_controller),
-        },
-        BridgeRequest::RenderTemplate {
-            template_name,
-            params_json,
-            request_id,
-        } => BridgeResponse::TemplateRendered {
-            request_id,
-            result: render_template(py_controller, &template_name, &params_json),
-        },
-        // Cluster management
-        BridgeRequest::FetchClusters { request_id } => BridgeResponse::Clusters {
-            request_id,
-            result: fetch_clusters(py_controller),
-        },
-        BridgeRequest::FetchCluster {
-            cluster_id,
-            request_id,
-        } => BridgeResponse::Cluster {
-            request_id,
-            result: fetch_cluster(py_controller, cluster_id),
-        },
-        BridgeRequest::CreateCluster {
-            config_json,
-            request_id,
-        } => BridgeResponse::ClusterCreated {
-            request_id,
-            result: create_cluster(py_controller, &config_json),
-        },
-        BridgeRequest::UpdateCluster {
-            cluster_id,
-            config_json,
-            request_id,
-        } => BridgeResponse::ClusterUpdated {
-            request_id,
-            result: update_cluster(py_controller, cluster_id, &config_json),
-        },
-        BridgeRequest::DeleteCluster {
-            cluster_id,
-            request_id,
-        } => BridgeResponse::ClusterDeleted {
-            request_id,
-            result: delete_cluster(py_controller, cluster_id),
-        },
-        BridgeRequest::TestClusterConnection {
-            cluster_id,
-            request_id,
-        } => BridgeResponse::ClusterConnectionTested {
-            request_id,
-            result: test_cluster_connection(py_controller, cluster_id),
-        },
-        // Workflow requests
-        BridgeRequest::CheckWorkflowsAvailable { request_id } => {
-            BridgeResponse::WorkflowsAvailable {
-                request_id,
-                result: check_workflows_available(py_controller),
-            }
-        }
-        BridgeRequest::CreateConvergenceStudy {
-            config_json,
-            request_id,
-        } => BridgeResponse::WorkflowCreated {
-            request_id,
-            result: create_convergence_study(py_controller, &config_json),
-        },
-        BridgeRequest::CreateBandStructureWorkflow {
-            config_json,
-            request_id,
-        } => BridgeResponse::WorkflowCreated {
-            request_id,
-            result: create_band_structure_workflow(py_controller, &config_json),
-        },
-        BridgeRequest::CreatePhononWorkflow {
-            config_json,
-            request_id,
-        } => BridgeResponse::WorkflowCreated {
-            request_id,
-            result: create_phonon_workflow(py_controller, &config_json),
-        },
-        BridgeRequest::CreateEosWorkflow {
-            config_json,
-            request_id,
-        } => BridgeResponse::WorkflowCreated {
-            request_id,
-            result: create_eos_workflow(py_controller, &config_json),
-        },
-        BridgeRequest::LaunchAiidaGeopt {
-            config_json,
-            request_id,
-        } => BridgeResponse::WorkflowCreated {
-            request_id,
-            result: launch_aiida_geopt(py_controller, &config_json),
-        },
-        // JSON-RPC dispatch (thin IPC pattern)
+        BridgeRequest::Shutdown => unreachable!("Shutdown handled in worker loop"),
         BridgeRequest::Rpc {
             rpc_request,
             request_id,
-        } => BridgeResponse::RpcResult {
-            request_id,
-            result: dispatch_rpc(py_controller, &rpc_request),
-        },
-        // Shutdown is handled in the worker loop before calling this function.
-        BridgeRequest::Shutdown => unreachable!("Shutdown handled in worker loop"),
+        } => {
+            let method = rpc_request.method.clone();
+            let rpc_result = dispatch_rpc(py_controller, &rpc_request);
+            route_rpc_response(&method, request_id, rpc_result)
+        }
     }
 }
 
-/// Helper for submitting job from JSON string.
+/// Route a JSON-RPC response to the appropriate typed BridgeResponse variant.
 ///
-/// Used by the worker thread to avoid re-serializing the JobSubmission.
-fn submit_job_json(py_controller: &Py<PyAny>, json_payload: &str) -> Result<i32> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-        let pk: i32 = controller
-            .call_method1("submit_job_json", (json_payload,))
-            .context("Failed to call submit_job_json")?
-            .extract()
-            .context("Failed to extract job pk")?;
-        Ok(pk)
-    })
-}
-
-// =============================================================================
-// Materials Project API Helpers
-// =============================================================================
-
-/// Search Materials Project by formula.
-///
-/// Calls Python's search_materials_json() and parses the response.
-fn search_materials(
-    py_controller: &Py<PyAny>,
-    formula: &str,
-    limit: usize,
-) -> Result<Vec<MaterialResult>> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("search_materials_json", (formula, limit as i32))
-            .context("Failed to call search_materials_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        // Parse the structured response
-        let response: ApiResponse<Vec<MaterialResult>> =
-            serde_json::from_str(&json_str).context("Failed to parse materials search response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Generate a CRYSTAL23 .d12 input file from a Materials Project structure.
-///
-/// Calls Python's generate_d12_json() and returns the file content.
-fn generate_d12(py_controller: &Py<PyAny>, mp_id: &str, config_json: &str) -> Result<String> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("generate_d12_json", (mp_id, config_json))
-            .context("Failed to call generate_d12_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        // Parse the structured response
-        let response: ApiResponse<String> =
-            serde_json::from_str(&json_str).context("Failed to parse D12 generation response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Fetch SLURM queue status from remote cluster.
-///
-/// Calls Python's get_slurm_queue_json() and returns the queue entries.
-fn fetch_slurm_queue(py_controller: &Py<PyAny>, cluster_id: i32) -> Result<Vec<SlurmQueueEntry>> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("get_slurm_queue_json", (cluster_id,))
-            .context("Failed to call get_slurm_queue_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        // Parse the structured response
-        let response: ApiResponse<Vec<SlurmQueueEntry>> =
-            serde_json::from_str(&json_str).context("Failed to parse SLURM queue response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Cancel a SLURM job on a remote cluster.
-///
-/// Calls Python's cancel_slurm_job_json() and returns the result.
-fn cancel_slurm_job(
-    py_controller: &Py<PyAny>,
-    cluster_id: i32,
-    slurm_job_id: &str,
-) -> Result<SlurmCancelResult> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("cancel_slurm_job_json", (cluster_id, slurm_job_id))
-            .context("Failed to call cancel_slurm_job_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        // Parse the structured response
-        let response: ApiResponse<SlurmCancelResult> =
-            serde_json::from_str(&json_str).context("Failed to parse SLURM cancel response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Adopt a SLURM job.
-///
-/// Calls Python's adopt_slurm_job_json() and returns the new job PK.
-fn adopt_slurm_job(py_controller: &Py<PyAny>, cluster_id: i32, slurm_job_id: &str) -> Result<i32> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("adopt_slurm_job_json", (cluster_id, slurm_job_id))
-            .context("Failed to call adopt_slurm_job_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        // Parse the structured response
-        #[derive(serde::Deserialize, Default)]
-        struct AdoptResponse {
-            pk: i32,
+/// This function converts generic JSON-RPC responses back to the typed enum
+/// variants that app.rs expects, maintaining backward compatibility.
+fn route_rpc_response(
+    method: &str,
+    request_id: usize,
+    rpc_result: Result<JsonRpcResponse>,
+) -> BridgeResponse {
+    match method {
+        "fetch_jobs" | "sync_remote_jobs" => BridgeResponse::Jobs {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                Ok(serde_json::from_value(value)?)
+            }),
+        },
+        "fetch_job_details" => BridgeResponse::JobDetails {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<JobDetails> = serde_json::from_value(value)?;
+                match api_resp.into_result() {
+                    Ok(details) => Ok(Some(details)),
+                    Err(msg) if msg.contains("NOT_FOUND") => Ok(None),
+                    Err(msg) => Err(anyhow::anyhow!("Job details error: {}", msg)),
+                }
+            }),
+        },
+        "submit_job" => BridgeResponse::JobSubmitted {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                Ok(serde_json::from_value(value)?)
+            }),
+        },
+        "cancel_job" => BridgeResponse::JobCancelled {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                Ok(serde_json::from_value(value)?)
+            }),
+        },
+        "fetch_job_log" => BridgeResponse::JobLog {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                Ok(serde_json::from_value(value)?)
+            }),
+        },
+        "search_materials" => BridgeResponse::MaterialsFound {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<Vec<MaterialResult>> = serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+            }),
+        },
+        "generate_d12" => BridgeResponse::D12Generated {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<String> = serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+            }),
+        },
+        "fetch_slurm_queue" => BridgeResponse::SlurmQueue {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<Vec<SlurmQueueEntry>> = serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+            }),
+        },
+        "cancel_slurm_job" => BridgeResponse::SlurmJobCancelled {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<SlurmCancelResult> = serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+            }),
+        },
+        "adopt_slurm_job" => BridgeResponse::SlurmJobAdopted {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                #[derive(serde::Deserialize, Default)]
+                struct AdoptResponse {
+                    pk: i32,
+                }
+                let api_resp: ApiResponse<AdoptResponse> = serde_json::from_value(value)?;
+                Ok(api_resp.into_result().map_err(|e| anyhow::anyhow!(e))?.pk)
+            }),
+        },
+        "list_templates" => BridgeResponse::Templates {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<Vec<crate::models::Template>> =
+                    serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+            }),
+        },
+        "render_template" => BridgeResponse::TemplateRendered {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<String> = serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+            }),
+        },
+        "fetch_clusters" => BridgeResponse::Clusters {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<Vec<ClusterConfig>> = serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+            }),
+        },
+        "create_cluster" => BridgeResponse::ClusterCreated {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<ClusterConfig> = serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+            }),
+        },
+        "update_cluster" => BridgeResponse::ClusterUpdated {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<serde_json::Value> = serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))?;
+                Ok(())
+            }),
+        },
+        "delete_cluster" => BridgeResponse::ClusterDeleted {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<serde_json::Value> = serde_json::from_value(value)?;
+                let data = api_resp.into_result().map_err(|e| anyhow::anyhow!(e))?;
+                Ok(data.get("success").and_then(|v| v.as_bool()).unwrap_or(false))
+            }),
+        },
+        "test_cluster_connection" => BridgeResponse::ClusterConnectionTested {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<ClusterConnectionResult> =
+                    serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+            }),
+        },
+        "check_workflows_available" => BridgeResponse::WorkflowsAvailable {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                let api_resp: ApiResponse<WorkflowAvailability> = serde_json::from_value(value)?;
+                api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
+            }),
+        },
+        "create_convergence_study"
+        | "create_band_structure_workflow"
+        | "create_phonon_workflow"
+        | "create_eos_workflow"
+        | "launch_aiida_geopt" => BridgeResponse::WorkflowCreated {
+            request_id,
+            result: rpc_result.and_then(|resp| {
+                let value = resp.into_result()?;
+                serde_json::to_string(&value)
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize workflow response: {}", e))
+            }),
+        },
+        _ => {
+            // Unknown method - return as generic RpcResult for app.rs to handle
+            BridgeResponse::RpcResult {
+                request_id,
+                result: rpc_result,
+            }
         }
-        let response: ApiResponse<AdoptResponse> =
-            serde_json::from_str(&json_str).context("Failed to parse adopt response")?;
-
-        Ok(response.into_result().map_err(|e| anyhow::anyhow!(e))?.pk)
-    })
-}
-
-/// Sync remote job status with SLURM.
-///
-/// Calls Python's sync_remote_jobs_json() and returns the updated job list.
-fn sync_remote_jobs(py_controller: &Py<PyAny>) -> Result<Vec<JobStatus>> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method0("sync_remote_jobs_json")
-            .context("Failed to call sync_remote_jobs_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        // Deserialize in Rust
-        let jobs: Vec<JobStatus> =
-            serde_json::from_str(&json_str).context("Failed to parse jobs JSON")?;
-
-        Ok(jobs)
-    })
-}
-
-// =============================================================================
-// Cluster Management Helpers
-// =============================================================================
-
-/// Fetch all configured clusters.
-fn fetch_clusters(py_controller: &Py<PyAny>) -> Result<Vec<ClusterConfig>> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method0("get_clusters_json")
-            .context("Failed to call get_clusters_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        let response: ApiResponse<Vec<ClusterConfig>> =
-            serde_json::from_str(&json_str).context("Failed to parse clusters response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Fetch a single cluster by ID.
-fn fetch_cluster(py_controller: &Py<PyAny>, cluster_id: i32) -> Result<Option<ClusterConfig>> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("get_cluster_json", (cluster_id,))
-            .context("Failed to call get_cluster_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        let response: ApiResponse<Option<ClusterConfig>> =
-            serde_json::from_str(&json_str).context("Failed to parse cluster response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Create a new cluster configuration.
-fn create_cluster(py_controller: &Py<PyAny>, config_json: &str) -> Result<ClusterConfig> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("create_cluster_json", (config_json,))
-            .context("Failed to call create_cluster_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        let response: ApiResponse<ClusterConfig> =
-            serde_json::from_str(&json_str).context("Failed to parse cluster creation response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Update an existing cluster configuration.
-fn update_cluster(
-    py_controller: &Py<PyAny>,
-    cluster_id: i32,
-    config_json: &str,
-) -> Result<ClusterConfig> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("update_cluster_json", (cluster_id, config_json))
-            .context("Failed to call update_cluster_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        let response: ApiResponse<ClusterConfig> =
-            serde_json::from_str(&json_str).context("Failed to parse cluster update response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Delete a cluster configuration.
-fn delete_cluster(py_controller: &Py<PyAny>, cluster_id: i32) -> Result<bool> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("delete_cluster", (cluster_id,))
-            .context("Failed to call delete_cluster")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        let response: ApiResponse<bool> =
-            serde_json::from_str(&json_str).context("Failed to parse cluster deletion response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Test SSH connection to a cluster.
-fn test_cluster_connection(
-    py_controller: &Py<PyAny>,
-    cluster_id: i32,
-) -> Result<ClusterConnectionResult> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("test_cluster_connection_json", (cluster_id,))
-            .context("Failed to call test_cluster_connection_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        let response: ApiResponse<ClusterConnectionResult> =
-            serde_json::from_str(&json_str).context("Failed to parse connection test response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Fetch all available templates.
-fn fetch_templates(py_controller: &Py<PyAny>) -> Result<Vec<crate::models::Template>> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method0("list_templates_json")
-            .context("Failed to call list_templates_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        let response: ApiResponse<Vec<crate::models::Template>> =
-            serde_json::from_str(&json_str).context("Failed to parse templates response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Render a template with parameters.
-fn render_template(
-    py_controller: &Py<PyAny>,
-    template_name: &str,
-    params_json: &str,
-) -> Result<String> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("render_template_json", (template_name, params_json))
-            .context("Failed to call render_template_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        let response: ApiResponse<String> =
-            serde_json::from_str(&json_str).context("Failed to parse template render response")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-// =============================================================================
-// Workflow Helpers
-// =============================================================================
-
-/// Check if workflow module is available.
-fn check_workflows_available(py_controller: &Py<PyAny>) -> Result<WorkflowAvailability> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method0("check_workflows_available_json")
-            .context("Failed to call check_workflows_available_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        let response: ApiResponse<WorkflowAvailability> =
-            serde_json::from_str(&json_str).context("Failed to parse workflow availability")?;
-
-        response.into_result().map_err(|e| anyhow::anyhow!(e))
-    })
-}
-
-/// Create a convergence study workflow.
-fn create_convergence_study(py_controller: &Py<PyAny>, config_json: &str) -> Result<String> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("create_convergence_study_json", (config_json,))
-            .context("Failed to call create_convergence_study_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        // Return raw JSON for workflow state
-        Ok(json_str)
-    })
-}
-
-/// Create a band structure workflow.
-fn create_band_structure_workflow(py_controller: &Py<PyAny>, config_json: &str) -> Result<String> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("create_band_structure_workflow_json", (config_json,))
-            .context("Failed to call create_band_structure_workflow_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        Ok(json_str)
-    })
-}
-
-/// Create a phonon workflow.
-fn create_phonon_workflow(py_controller: &Py<PyAny>, config_json: &str) -> Result<String> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("create_phonon_workflow_json", (config_json,))
-            .context("Failed to call create_phonon_workflow_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        Ok(json_str)
-    })
-}
-
-/// Create an EOS workflow.
-fn create_eos_workflow(py_controller: &Py<PyAny>, config_json: &str) -> Result<String> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("create_eos_workflow_json", (config_json,))
-            .context("Failed to call create_eos_workflow_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        Ok(json_str)
-    })
-}
-
-/// Launch an AiiDA geometry optimization workflow.
-fn launch_aiida_geopt(py_controller: &Py<PyAny>, config_json: &str) -> Result<String> {
-    Python::attach(|py| {
-        let controller = py_controller.bind(py);
-
-        let json_str: String = controller
-            .call_method1("launch_aiida_geopt_json", (config_json,))
-            .context("Failed to call launch_aiida_geopt_json")?
-            .extract()
-            .context("Failed to extract JSON string")?;
-
-        Ok(json_str)
-    })
+    }
 }
 
 /// Dispatch a JSON-RPC request to Python's generic dispatcher.
