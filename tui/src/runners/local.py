@@ -7,7 +7,9 @@ the configured executable from DFTCodeConfig.
 """
 
 import asyncio
+import logging
 import os
+import shutil
 import signal
 from pathlib import Path
 from typing import Dict, Any, Optional, AsyncIterator
@@ -22,6 +24,8 @@ from .exceptions import (
     LocalRunnerError,
     ExecutionError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutableNotFoundError(ConfigurationError):
@@ -130,7 +134,6 @@ class LocalRunner(BaseRunner):
             return exe_path
 
         # Try PATH lookup
-        import shutil
         exe_in_path = shutil.which(exe_name)
         if exe_in_path:
             return Path(exe_in_path)
@@ -804,10 +807,6 @@ class LocalRunner(BaseRunner):
         Raises:
             LocalRunnerError: If job handle is invalid or file operations fail
         """
-        import shutil
-        import logging
-        logger = logging.getLogger(__name__)
-
         job_id = self._job_handles.get(job_handle)
         if job_id is None:
             raise LocalRunnerError(f"Invalid job handle: {job_handle}")

@@ -11,68 +11,9 @@ MODULE_NAME="cry-exec"
 MODULE_VERSION="1.0.0"
 
 # Execution tracking
-declare -g EXEC_DRY_RUN="${EXEC_DRY_RUN:-false}"
-declare -g EXEC_VERBOSE="${EXEC_VERBOSE:-false}"
 declare -g EXEC_LOG_FILE="${EXEC_LOG_FILE:-}"
-declare -ga EXEC_HISTORY=()
 
 # Public functions
-
-exec_init() {
-    # Initialize execution engine
-    # Args: $1 - dry run (true/false, optional), $2 - verbose (true/false, optional)
-    # Returns: 0 on success
-    local dry_run="${1:-$EXEC_DRY_RUN}"
-    local verbose="${2:-$EXEC_VERBOSE}"
-
-    EXEC_DRY_RUN="$dry_run"
-    EXEC_VERBOSE="$verbose"
-
-    if [[ "$EXEC_DRY_RUN" == "true" ]]; then
-        ui_info "Execution engine initialized (DRY RUN mode)"
-    else
-        ui_info "Execution engine initialized"
-    fi
-
-    return 0
-}
-
-exec_run() {
-    # Execute a command with tracking and logging
-    # Args: $1 - command description, $2... - command and arguments
-    # Returns: command exit code
-    local description="$1"
-    shift
-    local cmd=("$@")
-
-    # Log execution
-    _exec_log "START" "$description" "${cmd[*]}"
-
-    # Show command if verbose or dry run
-    if [[ "$EXEC_VERBOSE" == "true" ]] || [[ "$EXEC_DRY_RUN" == "true" ]]; then
-        ui_info "Executing: ${cmd[*]}"
-    fi
-
-    # Execute or simulate
-    local status=0
-    if [[ "$EXEC_DRY_RUN" == "true" ]]; then
-        ui_warning "[DRY RUN] Would execute: ${cmd[*]}"
-    else
-        if "${cmd[@]}"; then
-            _exec_log "SUCCESS" "$description" "${cmd[*]}"
-            ui_success "$description"
-        else
-            status=$?
-            _exec_log "FAILED" "$description" "${cmd[*]}" "$status"
-            ui_error "$description (exit code: $status)"
-        fi
-    fi
-
-    # Track in history
-    EXEC_HISTORY+=("$description")
-
-    return $status
-}
 
 analyze_failure() {
     # Analyze CRYSTAL23 output for common errors
@@ -277,82 +218,6 @@ exec_crystal_run() {
     return $exit_code
 }
 
-# NOTE: Legacy functions exec_stage_transform, exec_parallel_transform, and
-# exec_pipeline were removed as they used unimplemented staging/parallel APIs.
-# Production code uses exec_crystal_run() exclusively.
-
-exec_history() {
-    # Show execution history
-    # Args: none
-    # Returns: 0 on success
-    if [[ ${#EXEC_HISTORY[@]} -eq 0 ]]; then
-        echo "No execution history"
-        return 0
-    fi
-
-    echo "Execution History:"
-    local i=1
-    for entry in "${EXEC_HISTORY[@]}"; do
-        echo "  $i. $entry"
-        ((i++))
-    done
-
-    return 0
-}
-
-exec_set_log() {
-    # Set log file for execution tracking
-    # Args: $1 - log file path
-    # Returns: 0 on success
-    local log_file="$1"
-
-    EXEC_LOG_FILE="$log_file"
-
-    # Create log file with header
-    {
-        echo "=== CRY Execution Log ==="
-        echo "Started: $(date)"
-        echo ""
-    } > "$log_file"
-
-    ui_info "Logging to: $log_file"
-    return 0
-}
-
-exec_dry_run() {
-    # Enable or disable dry run mode
-    # Args: $1 - enable (true/false)
-    # Returns: 0 on success
-    local enable="$1"
-
-    EXEC_DRY_RUN="$enable"
-
-    if [[ "$enable" == "true" ]]; then
-        ui_info "Dry run mode enabled"
-    else
-        ui_info "Dry run mode disabled"
-    fi
-
-    return 0
-}
-
-exec_verbose() {
-    # Enable or disable verbose mode
-    # Args: $1 - enable (true/false)
-    # Returns: 0 on success
-    local enable="$1"
-
-    EXEC_VERBOSE="$enable"
-
-    if [[ "$enable" == "true" ]]; then
-        ui_info "Verbose mode enabled"
-    else
-        ui_info "Verbose mode disabled"
-    fi
-
-    return 0
-}
-
 # Private functions
 
 _exec_log() {
@@ -379,31 +244,3 @@ _exec_log() {
 
     return 0
 }
-
-_exec_validate_command() {
-    # Validate command before execution (basic safety checks)
-    # Args: $@ - command and arguments
-    # Returns: 0 if safe, 1 if potentially dangerous
-    local cmd=("$@")
-
-    # Check for dangerous commands
-    local dangerous_patterns=("rm -rf /" "dd if=" "> /dev/" "mkfs" "format")
-
-    for pattern in "${dangerous_patterns[@]}"; do
-        if [[ "${cmd[*]}" == *"$pattern"* ]]; then
-            ui_error "Potentially dangerous command detected: ${cmd[*]}"
-            return 1
-        fi
-    done
-
-    return 0
-}
-
-_exec_init() {
-    # Initialize exec module
-    # Returns: 0 on success
-    return 0
-}
-
-# Auto-initialize
-_exec_init

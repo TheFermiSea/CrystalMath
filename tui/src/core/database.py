@@ -12,12 +12,19 @@ import sqlite3
 import json
 import warnings
 from pathlib import Path
-from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from queue import SimpleQueue
 from contextlib import contextmanager
+
+
+def _safe_get_column(row: sqlite3.Row, col_name: str, default: Any = None) -> Any:
+    """Safely get a column value from a sqlite3.Row, returning default if column doesn't exist."""
+    try:
+        return row[col_name] if col_name in row.keys() else default
+    except IndexError:
+        return default
 
 
 class RunnerType(Enum):
@@ -332,11 +339,8 @@ class Database:
     """
 
     MIGRATION_V6_TO_V7 = """
-        -- Record version
-        conn.execute(
-            "INSERT INTO schema_version (version) VALUES (?)", (7,)
-        )
-        conn.execute("COMMIT")
+        -- V6 to V7: No schema changes, version bump only
+        SELECT 1;
     """
 
     # Migration to version 8 (Add environment paths to clusters)
@@ -988,20 +992,12 @@ class Database:
         if "parallelism_config" in row.keys() and row["parallelism_config"]:
             parallelism_config = json.loads(row["parallelism_config"])
 
-        # Handle Phase 2 columns with backward compatibility
-        # sqlite3.Row doesn't have .get(), so we check column existence
-        def safe_get(col_name, default=None):
-            try:
-                return row[col_name] if col_name in row.keys() else default
-            except IndexError:
-                return default
-
         return Job(
             id=row["id"],
             name=row["name"],
             work_dir=row["work_dir"],
             status=row["status"],
-            workflow_id=safe_get("workflow_id"),
+            workflow_id=_safe_get_column(row, "workflow_id"),
             created_at=row["created_at"],
             started_at=row["started_at"],
             completed_at=row["completed_at"],
@@ -1009,13 +1005,13 @@ class Database:
             input_file=row["input_file"],
             final_energy=row["final_energy"],
             key_results=key_results,
-            cluster_id=safe_get("cluster_id"),
-            runner_type=safe_get("runner_type", "local"),
+            cluster_id=_safe_get_column(row, "cluster_id"),
+            runner_type=_safe_get_column(row, "runner_type") or "local",
             parallelism_config=parallelism_config,
-            queue_time=safe_get("queue_time"),
-            start_time=safe_get("start_time"),
-            end_time=safe_get("end_time"),
-            dft_code=safe_get("dft_code", "crystal")
+            queue_time=_safe_get_column(row, "queue_time"),
+            start_time=_safe_get_column(row, "start_time"),
+            end_time=_safe_get_column(row, "end_time"),
+            dft_code=_safe_get_column(row, "dft_code") or "crystal"
         )
 
     # ==================== Cluster Methods (Phase 2) ====================
@@ -1164,12 +1160,6 @@ class Database:
             except json.JSONDecodeError:
                 setup_commands = []
 
-        def safe_get(col_name, default=None):
-            try:
-                return row[col_name] if col_name in row.keys() else default
-            except IndexError:
-                return default
-
         return Cluster(
             id=row["id"],
             name=row["name"],
@@ -1179,8 +1169,8 @@ class Database:
             username=row["username"],
             connection_config=connection_config,
             status=row["status"],
-            cry23_root=safe_get("cry23_root"),
-            vasp_root=safe_get("vasp_root"),
+            cry23_root=_safe_get_column(row, "cry23_root"),
+            vasp_root=_safe_get_column(row, "vasp_root"),
             setup_commands=setup_commands,
             created_at=row["created_at"],
             updated_at=row["updated_at"]

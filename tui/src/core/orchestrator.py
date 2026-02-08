@@ -1928,7 +1928,6 @@ class WorkflowOrchestrator:
             state.running_nodes.add(node.node_id)
 
             # Execute command using async subprocess to avoid blocking event loop
-            import asyncio
             try:
                 process = await asyncio.create_subprocess_shell(
                     command,
@@ -2029,7 +2028,6 @@ class WorkflowOrchestrator:
             dest_dir = self._create_work_directory(workflow_id, node.node_id)
 
             # Copy files using asyncio.to_thread to avoid blocking event loop
-            import asyncio
             copied_files = []
             for pattern in node.source_files:
                 matches = list(source_dir.glob(pattern))

@@ -514,25 +514,9 @@ class QueueManager:
             ) from e
 
     def _get_job_statuses_batch(self, job_ids: List[int]) -> Dict[int, str]:
-        """
-        Get job statuses efficiently using batch query with caching.
-
-        This method:
-        1. Fetches statuses from database using single batch query
-        2. Returns a dictionary mapping job_id -> status
-
-        Replaces the N+1 query pattern where each job was queried individually.
-
-        Args:
-            job_ids: List of job IDs to fetch statuses for
-
-        Returns:
-            Dictionary mapping job_id -> status string
-        """
+        """Get job statuses using batch query (delegates to database layer)."""
         if not job_ids:
             return {}
-
-        # Use batch query from database (single query for all jobs)
         return self.db.get_job_statuses_batch(job_ids)
 
     def _invalidate_status_cache(self, job_id: Optional[int] = None) -> None:
@@ -631,7 +615,7 @@ class QueueManager:
 
         # OPTIMIZATION: Batch query all job statuses instead of individual queries
         job_ids = list(self._jobs.keys())
-        job_statuses = self._get_job_statuses_batch(job_ids)
+        job_statuses = self.db.get_job_statuses_batch(job_ids)
 
         for job_id, queued_job in self._jobs.items():
             # Check job status from batch query cache (O(1) lookup)
@@ -663,16 +647,7 @@ class QueueManager:
         return [job.job_id for job, _ in schedulable]
 
     def _dependencies_satisfied(self, job_id: int) -> bool:
-        """
-        Check if all dependencies for a job are satisfied.
-
-        WARNING: This method does NOT acquire the lock. If you need thread-safe
-        dependency checking, use _dependencies_satisfied_locked() and ensure you
-        hold the lock before calling.
-
-        This method is kept for backward compatibility but should generally not
-        be called directly - use the locked version instead.
-        """
+        """Check if all dependencies for a job are satisfied (delegates to locked version)."""
         return self._dependencies_satisfied_locked(job_id)
 
     def _dependencies_satisfied_locked(self, job_id: int) -> bool:
