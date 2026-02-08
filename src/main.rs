@@ -788,6 +788,18 @@ fn handle_tab_input(app: &mut App, key: event::KeyEvent) {
                     tracing::info!("Key 'U' pressed on Jobs tab - calling toggle_slurm_view()");
                     app.toggle_slurm_view();
                 }
+                // f - Cycle status filter (Running -> Completed -> Failed -> Queued -> All)
+                KeyCode::Char('f') => {
+                    app.cycle_job_status_filter();
+                }
+                // F - Cycle DFT code filter (Crystal -> VASP -> QE -> All)
+                KeyCode::Char('F') => {
+                    app.cycle_job_code_filter();
+                }
+                // x - Clear all filters
+                KeyCode::Char('x') => {
+                    app.clear_job_filters();
+                }
                 KeyCode::Home => app.select_first_job(),
                 KeyCode::End => app.select_last_job(),
                 _ => {}

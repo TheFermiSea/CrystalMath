@@ -5105,6 +5105,42 @@ impl<'a> App<'a> {
         self.output_viewer.active
     }
 
+    // =========================================================================
+    // Job Filtering Methods
+    // =========================================================================
+
+    /// Cycle through job status filter options (None -> Running -> Completed -> Failed -> Queued -> None).
+    pub fn cycle_job_status_filter(&mut self) {
+        self.jobs_state.cycle_status_filter();
+        // Reset selection when filter changes to stay in bounds
+        let filtered = self.jobs_state.filtered_jobs();
+        if filtered.is_empty() {
+            self.jobs_state.selected_index = None;
+        } else if self.jobs_state.selected_index.map(|i| i >= filtered.len()).unwrap_or(false) {
+            self.jobs_state.selected_index = Some(0);
+        }
+        self.mark_dirty();
+    }
+
+    /// Cycle through DFT code filter options (None -> Crystal -> VASP -> QE -> None).
+    pub fn cycle_job_code_filter(&mut self) {
+        self.jobs_state.cycle_dft_code_filter();
+        // Reset selection when filter changes to stay in bounds
+        let filtered = self.jobs_state.filtered_jobs();
+        if filtered.is_empty() {
+            self.jobs_state.selected_index = None;
+        } else if self.jobs_state.selected_index.map(|i| i >= filtered.len()).unwrap_or(false) {
+            self.jobs_state.selected_index = Some(0);
+        }
+        self.mark_dirty();
+    }
+
+    /// Clear all job filters.
+    pub fn clear_job_filters(&mut self) {
+        self.jobs_state.clear_filters();
+        self.mark_dirty();
+    }
+
     /// Open the output file viewer modal for a specific job and file type.
     pub fn open_output_viewer(&mut self, file_type: OutputFileType, job_pk: i32, job_name: Option<String>) {
         self.output_viewer.open(file_type, job_pk, job_name);

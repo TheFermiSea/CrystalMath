@@ -1665,17 +1665,30 @@ impl WorkflowListState {
 #[allow(dead_code)] // Methods for incremental migration
 impl JobsState {
     /// Get the currently selected job.
+    /// When a filter is active, returns the job at the selected index in the filtered list.
     pub fn selected_job(&self) -> Option<&JobStatus> {
-        self.selected_index.and_then(|idx| self.jobs.get(idx))
+        self.selected_index.and_then(|idx| {
+            if self.has_active_filter() {
+                self.filtered_jobs().get(idx).copied()
+            } else {
+                self.jobs.get(idx)
+            }
+        })
     }
 
     /// Select the next job in the list.
+    /// When a filter is active, navigates through the filtered list.
     pub fn select_next(&mut self) {
-        if self.jobs.is_empty() {
+        let list_len = if self.has_active_filter() {
+            self.filtered_jobs().len()
+        } else {
+            self.jobs.len()
+        };
+        if list_len == 0 {
             return;
         }
         let i = match self.selected_index {
-            Some(i) if i >= self.jobs.len() - 1 => 0,
+            Some(i) if i >= list_len - 1 => 0,
             Some(i) => i + 1,
             None => 0,
         };
@@ -1683,12 +1696,18 @@ impl JobsState {
     }
 
     /// Select the previous job in the list.
+    /// When a filter is active, navigates through the filtered list.
     pub fn select_prev(&mut self) {
-        if self.jobs.is_empty() {
+        let list_len = if self.has_active_filter() {
+            self.filtered_jobs().len()
+        } else {
+            self.jobs.len()
+        };
+        if list_len == 0 {
             return;
         }
         let i = match self.selected_index {
-            Some(0) => self.jobs.len() - 1,
+            Some(0) => list_len - 1,
             Some(i) => i - 1,
             None => 0,
         };

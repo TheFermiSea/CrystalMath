@@ -412,6 +412,185 @@ def _parse_structure(structure_data: str | dict) -> Any:
         raise ValueError(f"Unknown structure format: {type(structure_data)}")
 
 
+# ==================== VASP Error Analysis ====================
+
+# Inline VASP error patterns (fallback when tui.runners.vasp_errors not available)
+_VASP_ERROR_PATTERNS_FALLBACK: list[tuple[str, str, str, str, list[str], dict[str, str]]] = [
+    # (pattern, code, severity, message, suggestions, incar_changes)
+    (
+        r"ZBRENT: fatal error in bracketing",
+        "ZBRENT",
+        "recoverable",
+        "Brent algorithm failed to bracket the minimum during line search",
+        [
+            "Reduce POTIM (e.g., from 0.5 to 0.1-0.2)",
+            "Switch optimizer: try IBRION=1 (quasi-Newton) or IBRION=3 (damped MD)",
+            "Check for unreasonable starting geometry",
+        ],
+        {"POTIM": "0.1", "IBRION": "1"},
+    ),
+    (
+        r"Error EDDDAV",
+        "EDDDAV",
+        "recoverable",
+        "Electronic self-consistency (SCF) did not converge",
+        [
+            "Increase NELM (max electronic iterations, e.g., 200)",
+            "Try different algorithm: ALGO=All or ALGO=Damped",
+            "Reduce EDIFF (looser convergence, e.g., 1E-5)",
+        ],
+        {"NELM": "200", "ALGO": "All"},
+    ),
+    (
+        r"POSMAP internal error",
+        "POSMAP",
+        "fatal",
+        "Internal error in position mapping - likely overlapping atoms",
+        [
+            "Check POSCAR for overlapping or too-close atoms",
+            "Verify all atomic positions are within cell bounds",
+        ],
+        {},
+    ),
+    (
+        r"VERY BAD NEWS",
+        "VERYBAD",
+        "fatal",
+        "Serious internal VASP error detected",
+        [
+            "Check OUTCAR for details above this message",
+            "Review input structure for anomalies",
+        ],
+        {},
+    ),
+    (
+        r"SGRCON.*group",
+        "SGRCON",
+        "recoverable",
+        "Symmetry detection failed",
+        [
+            "Set ISYM=0 to disable symmetry",
+            "Or increase SYMPREC to be more tolerant",
+        ],
+        {"ISYM": "0"},
+    ),
+    (
+        r"BRIONS problems",
+        "BRIONS",
+        "recoverable",
+        "Ionic relaxation algorithm encountered problems",
+        [
+            "Reduce POTIM (smaller ionic steps)",
+            "Try different optimizer: IBRION=1, 2, or 3",
+        ],
+        {"POTIM": "0.1", "IBRION": "1"},
+    ),
+    (
+        r"allocation.*failed|cannot allocate",
+        "MEMORY",
+        "fatal",
+        "Memory allocation failed - job ran out of memory",
+        [
+            "Reduce NCORE/NPAR to use less memory per node",
+            "Request more memory or fewer cores per node",
+            "For very large systems: use LREAL=Auto",
+        ],
+        {"LREAL": "Auto"},
+    ),
+    (
+        r"BRMIX.*internal error",
+        "BRMIX",
+        "recoverable",
+        "Charge density mixing failed",
+        [
+            "Reduce AMIX and/or BMIX (e.g., 0.1)",
+            "Try different mixing: IMIX=1 with smaller AMIX",
+        ],
+        {"AMIX": "0.1", "BMIX": "0.0001"},
+    ),
+    (
+        r"DENTET",
+        "DENTET",
+        "recoverable",
+        "Tetrahedron method (ISMEAR=-5) failed",
+        [
+            "Use Gaussian smearing instead: ISMEAR=0, SIGMA=0.05",
+            "Increase k-point density",
+        ],
+        {"ISMEAR": "0", "SIGMA": "0.05"},
+    ),
+]
+
+
+def _analyze_vasp_errors_fallback(content: str) -> list[dict[str, Any]]:
+    """Analyze VASP errors using inline fallback patterns.
+
+    Args:
+        content: OUTCAR file content
+
+    Returns:
+        List of error dictionaries
+    """
+    import re
+
+    errors = []
+    seen_codes: set[str] = set()
+
+    for line in content.split("\n"):
+        for pattern, code, severity, message, suggestions, incar_changes in _VASP_ERROR_PATTERNS_FALLBACK:
+            if code in seen_codes:
+                continue
+            if re.search(pattern, line, re.IGNORECASE):
+                seen_codes.add(code)
+                errors.append({
+                    "code": code,
+                    "severity": severity,
+                    "message": message,
+                    "line_content": line.strip()[:100],
+                    "suggestions": suggestions,
+                    "incar_changes": incar_changes,
+                })
+                break  # Only match first pattern per line
+
+    return errors
+
+
+def _analyze_vasp_errors(content: str) -> list[dict[str, Any]]:
+    """Analyze VASP errors, trying the full handler first then fallback.
+
+    Args:
+        content: OUTCAR file content
+
+    Returns:
+        List of error dictionaries
+    """
+    # Try to use the full VASPErrorHandler from tui
+    try:
+        from tui.src.runners.vasp_errors import VASPErrorHandler
+
+        handler = VASPErrorHandler()
+        vasp_errors = handler.analyze_outcar(content)
+
+        return [
+            {
+                "code": err.code,
+                "severity": err.severity.value,
+                "message": err.message,
+                "line_content": err.line_content,
+                "suggestions": err.suggestions,
+                "incar_changes": err.incar_changes,
+            }
+            for err in vasp_errors
+        ]
+    except ImportError:
+        # Fall back to inline patterns
+        logger.debug("VASPErrorHandler not available, using fallback patterns")
+        return _analyze_vasp_errors_fallback(content)
+    except Exception as e:
+        logger.warning("VASPErrorHandler failed, using fallback: %s", e)
+        return _analyze_vasp_errors_fallback(content)
+
+
 def _read_file_with_tail(file_path: str, tail_lines: int | None) -> dict[str, Any]:
     """Read file content with optional tail limiting.
 
@@ -449,6 +628,115 @@ def _read_file_with_tail(file_path: str, tail_lines: int | None) -> dict[str, An
         "content": content,
         "truncated": truncated,
         "total_lines": total_lines,
+    }
+
+
+@register_handler("jobs.analyze_errors")
+async def handle_jobs_analyze_errors(
+    controller: CrystalController | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Analyze VASP job output for errors and return recovery suggestions.
+
+    Args:
+        controller: The crystal controller instance
+        params: RPC parameters containing:
+            - job_pk: Job primary key
+
+    Returns:
+        JSON-RPC response with:
+            ok: True if analysis succeeded
+            data: {
+                job_pk: int,
+                errors: List of error objects with:
+                    - code: str (e.g., "ZBRENT", "EDDDAV")
+                    - severity: str ("fatal", "recoverable", "warning")
+                    - message: str (human-readable description)
+                    - line_content: str | None (actual line from OUTCAR)
+                    - suggestions: List[str] (recovery suggestions)
+                    - incar_changes: Dict[str, str] (suggested INCAR changes)
+                has_errors: bool,
+                summary: str (brief summary message)
+            }
+    """
+    import asyncio
+    from pathlib import Path
+
+    job_pk = params.get("job_pk")
+    if job_pk is None:
+        return {"ok": False, "error": {"message": "job_pk is required"}}
+
+    # Get job details to find work directory
+    if controller is None:
+        return {"ok": False, "error": {"message": "Controller not available"}}
+
+    try:
+        job_details = controller.get_job_details(job_pk)
+        if job_details is None:
+            return {"ok": False, "error": {"message": f"Job {job_pk} not found"}}
+    except Exception as e:
+        logger.exception("Failed to get job details for pk=%s", job_pk)
+        return {"ok": False, "error": {"message": f"Failed to get job details: {e}"}}
+
+    # Get work directory
+    work_dir = getattr(job_details, "work_dir", None)
+    if not work_dir:
+        return {"ok": False, "error": {"message": f"Job {job_pk} has no work directory"}}
+
+    # Build path to OUTCAR
+    work_dir_resolved = Path(work_dir).resolve()
+    outcar_path = work_dir_resolved / "OUTCAR"
+
+    if not outcar_path.exists():
+        return {
+            "ok": True,
+            "data": {
+                "job_pk": job_pk,
+                "errors": [],
+                "has_errors": False,
+                "summary": "No OUTCAR file found - job may not be a VASP calculation",
+            },
+        }
+
+    # Read OUTCAR content (async for non-blocking)
+    def _read_outcar() -> str:
+        with open(outcar_path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+
+    try:
+        content = await asyncio.to_thread(_read_outcar)
+    except Exception as e:
+        logger.exception("Failed to read OUTCAR for job %s", job_pk)
+        return {"ok": False, "error": {"message": f"Failed to read OUTCAR: {e}"}}
+
+    # Analyze for errors
+    errors = _analyze_vasp_errors(content)
+
+    # Build summary
+    if not errors:
+        summary = "No errors detected in OUTCAR"
+    else:
+        fatal_count = sum(1 for e in errors if e["severity"] == "fatal")
+        recoverable_count = sum(1 for e in errors if e["severity"] == "recoverable")
+        warning_count = sum(1 for e in errors if e["severity"] == "warning")
+
+        parts = []
+        if fatal_count:
+            parts.append(f"{fatal_count} fatal")
+        if recoverable_count:
+            parts.append(f"{recoverable_count} recoverable")
+        if warning_count:
+            parts.append(f"{warning_count} warning")
+        summary = f"Found {len(errors)} error(s): {', '.join(parts)}"
+
+    return {
+        "ok": True,
+        "data": {
+            "job_pk": job_pk,
+            "errors": errors,
+            "has_errors": len(errors) > 0,
+            "summary": summary,
+        },
     }
 
 
