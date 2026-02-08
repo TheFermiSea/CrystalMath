@@ -1,7 +1,0 @@
-name: security_save_test
-version: '1.0'
-description: Security save test
-author: Test
-tags: []
-parameters: {}
-input_template: test save
