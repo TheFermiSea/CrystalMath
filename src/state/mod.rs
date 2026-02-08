@@ -1476,18 +1476,6 @@ pub struct JobsState {
     /// Job PK selected as base for diff comparison (press 'd' to select).
     pub diff_base_pk: Option<i32>,
 
-    /// Whether diff view modal is active.
-    #[allow(dead_code)] // Planned for job diff feature
-    pub diff_view_active: bool,
-
-    /// Diff content lines (left = base job, right = compare job).
-    #[allow(dead_code)] // Planned for job diff feature
-    pub diff_lines: Vec<(String, String, DiffLineType)>,
-
-    /// Scroll offset for diff view.
-    #[allow(dead_code)] // Planned for job diff feature
-    pub diff_scroll: usize,
-
     // ===== Job Filtering =====
     /// Filter jobs by status (None = show all).
     pub status_filter: Option<JobState>,
@@ -1662,7 +1650,7 @@ impl WorkflowListState {
     }
 }
 
-#[allow(dead_code)] // Methods for incremental migration
+#[allow(dead_code)]
 impl JobsState {
     /// Get the currently selected job.
     /// When a filter is active, returns the job at the selected index in the filtered list.

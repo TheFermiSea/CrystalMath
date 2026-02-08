@@ -11,7 +11,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from crystalmath.backends import Backend
 from crystalmath.models import (
@@ -22,9 +22,6 @@ from crystalmath.models import (
     JobSubmission,
     RunnerType,
 )
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

@@ -21,9 +21,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 
-# Bootstrap core modules
+# Bootstrap core modules (cry_config_init runs automatically on source)
 source "${LIB_DIR}/cry-config.sh" || { echo "FATAL: Failed to load cry-config.sh" >&2; exit 1; }
-cry_config_init
 
 # Quick validation of CRYSTAL23 installation
 cry_config_validate_quick || exit 1
@@ -41,8 +40,6 @@ cry_require cry-help || exit 1
 
 # Main workflow orchestrator
 main() {
-    ui_init
-
     # Early exit for help
     [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { help_show_main; exit 0; }
 

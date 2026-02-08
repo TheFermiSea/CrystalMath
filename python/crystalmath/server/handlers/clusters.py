@@ -17,17 +17,12 @@ async def handle_clusters_list(
 ) -> dict[str, Any]:
     """List configured clusters and workflow engine status.
 
+    Delegates to CrystalController.get_quacc_clusters_list() if available,
+    otherwise falls back to direct query.
+
     Returns:
         {
-            "clusters": [
-                {
-                    "name": "nersc-perlmutter",
-                    "partition": "regular",
-                    "account": "m1234",
-                    ...
-                },
-                ...
-            ],
+            "clusters": [...],
             "workflow_engine": {
                 "configured": "parsl" | null,
                 "installed": ["parsl", "dask"],
@@ -35,6 +30,10 @@ async def handle_clusters_list(
             }
         }
     """
+    if controller is not None:
+        return controller.get_quacc_clusters_list()
+
+    # Fallback if controller not available
     from crystalmath.quacc.config import ClusterConfigStore
     from crystalmath.quacc.engines import get_engine_status
 

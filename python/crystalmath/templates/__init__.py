@@ -108,51 +108,32 @@ def list_templates(
         if d.is_dir() and not d.name.startswith("_")
     ]
 
+    # Map category names to default DFT codes
+    category_code_map = {"vasp": "vasp", "qe": "qe"}
+
     for cat in categories:
         cat_dir = templates_dir / cat
         if not cat_dir.is_dir():
             continue
 
-        # Infer dft_code from category
-        inferred_code = "crystal"
-        if cat == "vasp":
-            inferred_code = "vasp"
-        elif cat == "qe":
-            inferred_code = "qe"
+        inferred_code = category_code_map.get(cat, "crystal")
 
-        for template_path in cat_dir.glob("*.yml"):
-            metadata = _parse_template_metadata(template_path)
-            template_dft_code = metadata.get("dft_code", inferred_code)
+        for ext in ("*.yml", "*.yaml"):
+            for template_path in cat_dir.glob(ext):
+                metadata = _parse_template_metadata(template_path)
+                template_dft_code = metadata.get("dft_code", inferred_code)
 
-            # Apply dft_code filter
-            if dft_code and template_dft_code != dft_code:
-                continue
+                if dft_code and template_dft_code != dft_code:
+                    continue
 
-            yield TemplateInfo(
-                name=template_path.stem,
-                category=cat,
-                path=template_path,
-                description=metadata.get("description", ""),
-                dft_code=template_dft_code,
-                tags=metadata.get("tags", []),
-            )
-
-        # Also check .yaml extension
-        for template_path in cat_dir.glob("*.yaml"):
-            metadata = _parse_template_metadata(template_path)
-            template_dft_code = metadata.get("dft_code", inferred_code)
-
-            if dft_code and template_dft_code != dft_code:
-                continue
-
-            yield TemplateInfo(
-                name=template_path.stem,
-                category=cat,
-                path=template_path,
-                description=metadata.get("description", ""),
-                dft_code=template_dft_code,
-                tags=metadata.get("tags", []),
-            )
+                yield TemplateInfo(
+                    name=template_path.stem,
+                    category=cat,
+                    path=template_path,
+                    description=metadata.get("description", ""),
+                    dft_code=template_dft_code,
+                    tags=metadata.get("tags", []),
+                )
 
 
 def get_template(template_id: str) -> Optional[Path]:

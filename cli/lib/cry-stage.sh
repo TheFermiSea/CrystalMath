@@ -18,20 +18,6 @@ else
     declare -r CRY_STAGE_LOADED=1
 fi
 
-# Module-level constants (non-readonly to avoid conflicts with other modules)
-MODULE_NAME="cry-stage"
-MODULE_VERSION="1.0.0"
-
-# NOTE: Legacy generic staging API (stage_init, stage_add, stage_remove, etc.)
-# was removed as it used unimplemented scratch_create_dir helper and was never
-# called by production code. Production uses stage_inputs/stage_retrieve_results.
-
-_stage_init() {
-    # Initialize stage module
-    # Returns: 0 on success
-    return 0
-}
-
 #===============================================================================
 # CRYSTAL23-Specific Staging Functions
 #===============================================================================
@@ -149,6 +135,3 @@ stage_retrieve_results() {
 
     return 0
 }
-
-# Auto-initialize
-_stage_init

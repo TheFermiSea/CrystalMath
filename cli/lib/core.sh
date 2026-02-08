@@ -6,9 +6,8 @@
 # Error handling
 set -euo pipefail
 
-# Module-level constants (non-readonly to avoid conflicts)
+# Module-level constants
 MODULE_NAME="core"
-MODULE_VERSION="1.0.0"
 readonly LIB_DIR="${LIB_DIR:-$(dirname "${BASH_SOURCE[0]}")}"
 
 # Track loaded modules
@@ -42,54 +41,6 @@ cry_require() {
 
     # Mark as loaded
     _CRY_LOADED_MODULES[$module_name]=1
-
-    return 0
-}
-
-cry_require_all() {
-    # Load all standard CRY_CLI modules
-    # Args: none
-    # Returns: 0 on success, non-zero on failure
-    local modules=(
-        "cry-ui"
-        "cry-parallel"
-        "cry-scratch"
-        "cry-stage"
-        "cry-exec"
-        "cry-help"
-    )
-
-    local failed=0
-    for module in "${modules[@]}"; do
-        if ! cry_require "$module"; then
-            ((failed++))
-        fi
-    done
-
-    return $failed
-}
-
-cry_module_loaded() {
-    # Check if a module is loaded
-    # Args: $1 - module name
-    # Returns: 0 if loaded, 1 if not
-    local module_name="$1"
-    [[ -n "${_CRY_LOADED_MODULES[$module_name]:-}" ]]
-}
-
-cry_list_modules() {
-    # List all loaded modules
-    # Args: none
-    # Returns: 0 on success
-    if [[ ${#_CRY_LOADED_MODULES[@]} -eq 0 ]]; then
-        echo "No modules loaded"
-        return 0
-    fi
-
-    echo "Loaded modules:"
-    for module in "${!_CRY_LOADED_MODULES[@]}"; do
-        echo "  - $module"
-    done
 
     return 0
 }

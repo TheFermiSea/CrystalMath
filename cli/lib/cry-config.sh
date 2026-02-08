@@ -61,8 +61,8 @@ cry_config_init() {
     # Load optional configuration file
     _cry_load_config_file
 
-    # Initialize file staging maps
-    _cry_init_stage_maps
+    # Export staging maps for use in other modules
+    export STAGE_MAP RETRIEVE_MAP
 }
 
 #===============================================================================
@@ -186,15 +186,6 @@ _cry_load_config_file() {
     fi
 }
 
-_cry_init_stage_maps() {
-    # Initialize file staging maps
-    # This function can be extended to load custom mappings from config
-
-    # Export maps for use in other modules
-    export STAGE_MAP
-    export RETRIEVE_MAP
-}
-
 _cry_show_map() {
     # Display a map in human-readable format
     local map_name="$1"
@@ -262,90 +253,6 @@ cry_retrieve_map_get() {
         done
         return 1
     fi
-}
-
-cry_config_validate() {
-    # Validate configuration paths and dependencies
-    # Args:
-    #   $1 - validation mode: "strict" (fail on any error) or "warn" (warn only)
-    # Returns:
-    #   0 if validation passes (or mode=warn)
-    #   non-zero count of errors if mode=strict
-    local mode="${1:-strict}"
-    local errors=0
-    local warnings=0
-
-    # Check if CRYSTAL23 directory exists
-    if [[ ! -d "$CRY23_ROOT" ]]; then
-        echo "Error: CRYSTAL23 directory not found: $CRY23_ROOT" >&2
-        echo "  Set CRY23_ROOT environment variable to your CRYSTAL23 installation" >&2
-        ((errors++))
-    fi
-
-    # Check if binary directory exists
-    if [[ ! -d "$CRY_BIN_DIR" ]]; then
-        echo "Error: Binary directory not found: $CRY_BIN_DIR" >&2
-        echo "  Check CRY_ARCH=$CRY_ARCH and CRY_VERSION=$CRY_VERSION" >&2
-        ((errors++))
-    fi
-
-    # Check for crystal executables (need at least one)
-    local found_exe=false
-    if [[ -x "$CRY_BIN_DIR/crystalOMP" ]]; then
-        found_exe=true
-    elif [[ -x "$CRY_BIN_DIR/crystal" ]]; then
-        found_exe=true
-    fi
-
-    if ! $found_exe; then
-        echo "Error: No CRYSTAL executable found in $CRY_BIN_DIR" >&2
-        echo "  Expected: crystalOMP or crystal" >&2
-        ((errors++))
-    fi
-
-    # Check for optional but useful parallel binary
-    if [[ ! -x "$CRY_BIN_DIR/PcrystalOMP" && ! -x "$CRY_BIN_DIR/Pcrystal" ]]; then
-        echo "Warning: Parallel CRYSTAL binary not found (PcrystalOMP/Pcrystal)" >&2
-        echo "  MPI parallelism will not be available" >&2
-        ((warnings++))
-    fi
-
-    # Check if scratch directory is writable
-    if [[ -n "${CRY_SCRATCH_BASE:-}" ]]; then
-        if [[ ! -d "$CRY_SCRATCH_BASE" ]]; then
-            # Try to create it
-            if ! mkdir -p "$CRY_SCRATCH_BASE" 2>/dev/null; then
-                echo "Error: Cannot create scratch directory: $CRY_SCRATCH_BASE" >&2
-                ((errors++))
-            fi
-        elif [[ ! -w "$CRY_SCRATCH_BASE" ]]; then
-            echo "Error: Scratch directory not writable: $CRY_SCRATCH_BASE" >&2
-            ((errors++))
-        fi
-    fi
-
-    # Validate version format (should be v#.#.#)
-    if [[ -n "${CRY_VERSION:-}" ]]; then
-        if [[ ! "$CRY_VERSION" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "Warning: CRY_VERSION format unexpected: $CRY_VERSION" >&2
-            echo "  Expected format: v1.0.1" >&2
-            ((warnings++))
-        fi
-    fi
-
-    # Summary
-    if [[ "$errors" -gt 0 ]]; then
-        echo "" >&2
-        echo "Configuration validation: $errors error(s), $warnings warning(s)" >&2
-        if [[ "$mode" == "strict" ]]; then
-            return "$errors"
-        fi
-    elif [[ "$warnings" -gt 0 ]]; then
-        echo "" >&2
-        echo "Configuration validation: $warnings warning(s)" >&2
-    fi
-
-    return 0
 }
 
 cry_config_validate_quick() {

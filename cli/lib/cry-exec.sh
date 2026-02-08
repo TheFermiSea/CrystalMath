@@ -6,10 +6,6 @@
 # Error handling
 set -euo pipefail
 
-# Module-level constants
-MODULE_NAME="cry-exec"
-MODULE_VERSION="1.0.0"
-
 # Execution tracking
 declare -g EXEC_LOG_FILE="${EXEC_LOG_FILE:-}"
 

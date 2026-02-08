@@ -41,7 +41,6 @@ pub struct RecipeBrowserState {
 
 impl RecipeBrowserState {
     /// Create a new recipe browser state.
-    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }

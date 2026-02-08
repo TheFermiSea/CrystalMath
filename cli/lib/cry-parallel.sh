@@ -6,10 +6,6 @@
 # Enable strict mode for better error handling
 set -euo pipefail
 
-# Module-level constants
-MODULE_NAME="cry-parallel"
-MODULE_VERSION="1.0.0"
-
 # Default OpenMP stack size for CRYSTAL23
 readonly DEFAULT_OMP_STACKSIZE="256M"
 
@@ -203,11 +199,3 @@ _parallel_get_cpu_count() {
     fi
 }
 
-_parallel_init() {
-    # Initialize parallel module (called automatically)
-    # Returns: 0 on success
-    return 0
-}
-
-# Auto-initialize
-_parallel_init

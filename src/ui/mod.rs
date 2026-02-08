@@ -284,118 +284,74 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
         workflow_results::render(frame, app);
     }
 
-        if app.recipe_browser.active {
-            recipes::render(frame, &mut app.recipe_browser);
-            
-            if let Some(ref mut effect) = app.recipe_browser.effect {
-                let delta = std::time::Duration::from_millis(16);
-                let modal_area = centered_rect(80, 80, frame.area());
-                effect.process(delta.into(), frame.buffer_mut(), modal_area);
-                
-                if !effect.running() {
-                    if app.recipe_browser.closing {
-                        app.recipe_browser.active = false;
-                        app.recipe_browser.closing = false;
-                        app.recipe_browser.effect = None;
-                        app.mark_dirty();
-                    } else {
-                        app.recipe_browser.effect = None;
-                    }
-                } else {
+    if app.recipe_browser.active {
+        recipes::render(frame, &mut app.recipe_browser);
+
+        if let Some(ref mut effect) = app.recipe_browser.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let modal_area = centered_rect(80, 80, frame.area());
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+
+            if !effect.running() {
+                if app.recipe_browser.closing {
+                    app.recipe_browser.active = false;
+                    app.recipe_browser.closing = false;
+                    app.recipe_browser.effect = None;
                     app.mark_dirty();
+                } else {
+                    app.recipe_browser.effect = None;
                 }
+            } else {
+                app.mark_dirty();
             }
         }
-    
-            if app.template_browser.active {
-    
-                templates::render(frame, app);
-    
-                
-    
-                if let Some(ref mut effect) = app.template_browser.effect {
-    
-                    let delta = std::time::Duration::from_millis(16);
-    
-                    let modal_area = centered_rect(80, 80, frame.area());
-    
-                    effect.process(delta.into(), frame.buffer_mut(), modal_area);
-    
-                    
-    
-                    if !effect.running() {
-    
-                        if app.template_browser.closing {
-    
-                            app.template_browser.active = false;
-    
-                            app.template_browser.closing = false;
-    
-                            app.template_browser.effect = None;
-    
-                            app.mark_dirty();
-    
-                        } else {
-    
-                            app.template_browser.effect = None;
-    
-                        }
-    
-                    } else {
-    
-                        app.mark_dirty();
-    
-                    }
-    
+    }
+
+    if app.template_browser.active {
+        templates::render(frame, app);
+
+        if let Some(ref mut effect) = app.template_browser.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let modal_area = centered_rect(80, 80, frame.area());
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
+
+            if !effect.running() {
+                if app.template_browser.closing {
+                    app.template_browser.active = false;
+                    app.template_browser.closing = false;
+                    app.template_browser.effect = None;
+                    app.mark_dirty();
+                } else {
+                    app.template_browser.effect = None;
                 }
-    
+            } else {
+                app.mark_dirty();
             }
-    
-        
-    
-            if app.batch_submission.active {
+        }
+    }
 
-                batch_submission::render(frame, app);
+    if app.batch_submission.active {
+        batch_submission::render(frame, app);
 
+        if let Some(ref mut effect) = app.batch_submission.effect {
+            let delta = std::time::Duration::from_millis(16);
+            let modal_area = centered_rect(85, 85, frame.area());
+            effect.process(delta.into(), frame.buffer_mut(), modal_area);
 
-
-                if let Some(ref mut effect) = app.batch_submission.effect {
-
-                    let delta = std::time::Duration::from_millis(16);
-
-                    let modal_area = centered_rect(85, 85, frame.area());
-
-                    effect.process(delta.into(), frame.buffer_mut(), modal_area);
-
-
-
-                    if !effect.running() {
-
-                        if app.batch_submission.closing {
-
-                            app.batch_submission.active = false;
-
-                            app.batch_submission.closing = false;
-
-                            app.batch_submission.effect = None;
-
-                            app.mark_dirty();
-
-                        } else {
-
-                            app.batch_submission.effect = None;
-
-                        }
-
-                    } else {
-
-                        app.mark_dirty();
-
-                    }
-
+            if !effect.running() {
+                if app.batch_submission.closing {
+                    app.batch_submission.active = false;
+                    app.batch_submission.closing = false;
+                    app.batch_submission.effect = None;
+                    app.mark_dirty();
+                } else {
+                    app.batch_submission.effect = None;
                 }
-
+            } else {
+                app.mark_dirty();
             }
+        }
+    }
 
     // Output file viewer modal
     if app.output_viewer.active {
@@ -452,9 +408,8 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
         }
     }
 }
-    
-        
-    /// Helper function to create a centered rectangle (replicated from new_job).
+
+/// Helper function to create a centered rectangle (replicated from new_job).
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)

@@ -31,7 +31,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use app::App;
 use crate::state::{BatchSubmissionField, OutputFileType, WorkflowConfigField};
-use models::ClusterType;
 
 /// Global flag to track if terminal is in raw mode (for panic cleanup)
 static TERMINAL_RAW: AtomicBool = AtomicBool::new(false);
@@ -59,12 +58,6 @@ impl TerminalGuard {
         Ok(Self { active: true })
     }
 
-    /// Deactivate the guard (prevents cleanup on drop).
-    /// Call this when you want to handle cleanup manually.
-    #[allow(dead_code)]
-    fn deactivate(&mut self) {
-        self.active = false;
-    }
 }
 
 impl Drop for TerminalGuard {
@@ -233,6 +226,13 @@ print(json.dumps({
     })
 }
 
+/// Build a path to the Python executable inside a directory (venv or prefix).
+fn python_exe_in(base: &Path) -> PathBuf {
+    let bin_dir = if cfg!(windows) { "Scripts" } else { "bin" };
+    let exe_name = if cfg!(windows) { "python.exe" } else { "python" };
+    base.join(bin_dir).join(exe_name)
+}
+
 /// Find Python executable candidates in order of preference.
 fn find_python_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
@@ -249,13 +249,7 @@ fn find_python_candidates() -> Vec<PathBuf> {
 
     // 2. VIRTUAL_ENV/bin/python
     if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
-        let venv_python = PathBuf::from(&venv)
-            .join(if cfg!(windows) { "Scripts" } else { "bin" })
-            .join(if cfg!(windows) {
-                "python.exe"
-            } else {
-                "python"
-            });
+        let venv_python = python_exe_in(Path::new(&venv));
         if venv_python.is_file() {
             candidates.push(venv_python);
         }
@@ -263,14 +257,7 @@ fn find_python_candidates() -> Vec<PathBuf> {
 
     // 3. Project .venv/bin/python
     if let Some(project_root) = find_project_root() {
-        let venv_python = project_root
-            .join(".venv")
-            .join(if cfg!(windows) { "Scripts" } else { "bin" })
-            .join(if cfg!(windows) {
-                "python.exe"
-            } else {
-                "python"
-            });
+        let venv_python = python_exe_in(&project_root.join(".venv"));
         if venv_python.is_file() {
             candidates.push(venv_python);
         }
@@ -278,25 +265,15 @@ fn find_python_candidates() -> Vec<PathBuf> {
 
     // 4. CWD .venv/bin/python (fallback)
     if let Ok(cwd) = std::env::current_dir() {
-        let venv_python = cwd
-            .join(".venv")
-            .join(if cfg!(windows) { "Scripts" } else { "bin" })
-            .join(if cfg!(windows) {
-                "python.exe"
-            } else {
-                "python"
-            });
+        let venv_python = python_exe_in(&cwd.join(".venv"));
         if venv_python.is_file() {
             candidates.push(venv_python);
         }
     }
 
     // 5. System python3 as last resort
-    candidates.push(PathBuf::from(if cfg!(windows) {
-        "python.exe"
-    } else {
-        "python3"
-    }));
+    let system_exe = if cfg!(windows) { "python.exe" } else { "python3" };
+    candidates.push(PathBuf::from(system_exe));
 
     candidates
 }
@@ -588,33 +565,13 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             // Open SLURM Queue modal (s from Jobs tab)
                             (KeyCode::Char('s'), KeyModifiers::NONE) => {
                                 if app.current_tab == app::AppTab::Jobs {
-                                    // Collect all SLURM clusters
-                                    let slurm_clusters: Vec<_> = app
-                                        .cluster_manager
-                                        .clusters
-                                        .iter()
-                                        .filter(|c| c.cluster_type == ClusterType::Slurm)
-                                        .filter_map(|c| c.id)
-                                        .collect();
-
-                                    if slurm_clusters.is_empty() {
-                                        app.set_error("No SLURM clusters configured. Use 'c' to add a cluster.");
-                                    } else if slurm_clusters.len() == 1 {
-                                        // Only one SLURM cluster - use it directly
-                                        app.open_slurm_queue_modal(slurm_clusters[0]);
-                                    } else {
-                                        // Multiple SLURM clusters - prefer last-used if valid
-                                        let cluster_id =
-                                            if let Some(last_id) = app.last_slurm_cluster_id {
-                                                if slurm_clusters.contains(&last_id) {
-                                                    last_id // Last-used cluster still exists
-                                                } else {
-                                                    slurm_clusters[0] // Last-used no longer valid, use first
-                                                }
-                                            } else {
-                                                slurm_clusters[0] // No last-used, use first
-                                            };
-                                        app.open_slurm_queue_modal(cluster_id);
+                                    match app.resolve_slurm_cluster_id() {
+                                        Some(cluster_id) => {
+                                            app.open_slurm_queue_modal(cluster_id);
+                                        }
+                                        None => {
+                                            app.set_error("No SLURM clusters configured. Use 'c' to add a cluster.");
+                                        }
                                     }
                                 }
                             }

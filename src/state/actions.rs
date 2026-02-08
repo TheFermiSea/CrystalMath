@@ -101,24 +101,6 @@ pub enum Action {
 }
 
 // =============================================================================
-// Diff Line Type
-// =============================================================================
-
-/// Diff line type for job comparison.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Planned for job diff feature
-pub enum DiffLineType {
-    /// Line is the same in both files.
-    Same,
-    /// Line was added (only in right/compare job).
-    Added,
-    /// Line was removed (only in left/base job).
-    Removed,
-    /// Line was modified (different in both).
-    Modified,
-}
-
-// =============================================================================
 // Application Tabs
 // =============================================================================
 

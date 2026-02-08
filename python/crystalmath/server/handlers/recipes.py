@@ -17,29 +17,25 @@ async def handle_recipes_list(
 ) -> dict[str, Any]:
     """List available quacc VASP recipes.
 
+    Delegates to CrystalController.get_recipes_list() if available,
+    otherwise falls back to direct discovery.
+
     Returns:
         {
-            "recipes": [
-                {
-                    "name": "relax_job",
-                    "module": "quacc.recipes.vasp.core",
-                    "fullname": "quacc.recipes.vasp.core.relax_job",
-                    "docstring": "Relax structure...",
-                    "signature": "(atoms, ...)",
-                    "type": "job"
-                },
-                ...
-            ],
+            "recipes": [...],
             "quacc_version": "0.11.2" | null,
             "error": null | "error message"
         }
     """
+    if controller is not None:
+        return controller.get_recipes_list()
+
+    # Fallback if controller not available
     try:
         from crystalmath.quacc.discovery import discover_vasp_recipes
 
         recipes = discover_vasp_recipes()
 
-        # Get quacc version if available
         try:
             import quacc
 

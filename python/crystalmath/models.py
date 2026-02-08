@@ -20,44 +20,43 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # ========== State Mapping Helper ==========
 
+
+class JobState(str, Enum):
+    """
+    Job execution state enum.
+
+    Maps to Rust's JobState enum via serde string serialization.
+    Also maps from AiiDA process states via map_to_job_state().
+    """
+
+    CREATED = "CREATED"
+    SUBMITTED = "SUBMITTED"
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
 # Mapping from AiiDA/legacy states to UI states (centralized)
-_AIIDA_STATE_MAP: Dict[str, "JobState"] = {
+_AIIDA_STATE_MAP: Dict[str, JobState] = {
     # AiiDA process states
-    "created": None,  # Will be set to JobState.CREATED after class definition
-    "waiting": None,  # JobState.QUEUED
-    "running": None,  # JobState.RUNNING
-    "finished": None,  # JobState.COMPLETED
-    "excepted": None,  # JobState.FAILED
-    "killed": None,  # JobState.CANCELLED
+    "created": JobState.CREATED,
+    "waiting": JobState.QUEUED,
+    "running": JobState.RUNNING,
+    "finished": JobState.COMPLETED,
+    "excepted": JobState.FAILED,
+    "killed": JobState.CANCELLED,
     # Legacy database states
-    "pending": None,  # JobState.CREATED
-    "queued": None,  # JobState.QUEUED
-    "completed": None,  # JobState.COMPLETED
-    "failed": None,  # JobState.FAILED
-    "cancelled": None,  # JobState.CANCELLED
+    "pending": JobState.CREATED,
+    "queued": JobState.QUEUED,
+    "completed": JobState.COMPLETED,
+    "failed": JobState.FAILED,
+    "cancelled": JobState.CANCELLED,
 }
 
 
-def _init_state_map() -> None:
-    """Initialize state map after JobState is defined."""
-    _AIIDA_STATE_MAP.update(
-        {
-            "created": JobState.CREATED,
-            "waiting": JobState.QUEUED,
-            "running": JobState.RUNNING,
-            "finished": JobState.COMPLETED,
-            "excepted": JobState.FAILED,
-            "killed": JobState.CANCELLED,
-            "pending": JobState.CREATED,
-            "queued": JobState.QUEUED,
-            "completed": JobState.COMPLETED,
-            "failed": JobState.FAILED,
-            "cancelled": JobState.CANCELLED,
-        }
-    )
-
-
-def map_to_job_state(value: Any) -> "JobState":
+def map_to_job_state(value: Any) -> JobState:
     """
     Map various state representations to JobState enum.
 
@@ -87,27 +86,6 @@ def map_to_job_state(value: Any) -> "JobState":
         return _AIIDA_STATE_MAP.get(value.lower(), JobState.CREATED)
 
     return JobState.CREATED
-
-
-class JobState(str, Enum):
-    """
-    Job execution state enum.
-
-    Maps to Rust's JobState enum via serde string serialization.
-    Also maps from AiiDA process states via map_to_job_state().
-    """
-
-    CREATED = "CREATED"
-    SUBMITTED = "SUBMITTED"
-    QUEUED = "QUEUED"
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
-
-
-# Initialize state map now that JobState is defined
-_init_state_map()
 
 
 class DftCode(str, Enum):

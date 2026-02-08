@@ -18,10 +18,6 @@ else
     declare -r CRY_UI_LOADED=1
 fi
 
-# Module-level constants (non-readonly to avoid conflicts with other modules)
-MODULE_NAME="cry-ui"
-MODULE_VERSION="1.0.0"
-
 # User-space paths for gum installation
 readonly USER_BIN="${CRY_USER_BIN:-$HOME/.local/bin}"
 readonly USER_MAN="${CRY_USER_MAN:-$HOME/.local/share/man/man1}"
@@ -61,10 +57,7 @@ _ui_detect_platform() {
 
 # UI symbols
 readonly UI_SYMBOL_CHECK="✓"
-readonly UI_SYMBOL_CROSS="✗"
 readonly UI_SYMBOL_ARROW="→"
-readonly UI_SYMBOL_BULLET="•"
-readonly UI_SYMBOL_SPINNER=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
 
 #===============================================================================
 # Public Functions - Core UI Components
@@ -294,190 +287,6 @@ ui_info() {
     return 0
 }
 
-ui_progress() {
-    # Display a progress indicator
-    # Args: $1 - current step, $2 - total steps, $3 - description
-    # Returns: 0 on success
-
-    local current="$1"
-    local total="$2"
-    local description="${3:-}"
-
-    local percentage=$(( current * 100 / total ))
-    local bar_width=40
-    local filled=$(( current * bar_width / total ))
-    local empty=$(( bar_width - filled ))
-
-    printf "\r["
-    printf "%${filled}s" | tr ' ' '='
-    printf "%${empty}s" | tr ' ' ' '
-    printf "] %3d%% %s" "$percentage" "$description"
-
-    if [[ $current -eq $total ]]; then
-        echo ""
-    fi
-
-    return 0
-}
-
-ui_spinner_start() {
-    # Start a spinner animation (runs in background)
-    # Args: $1 - message text
-    # Returns: PID of spinner process
-
-    local message="$1"
-    local i=0
-
-    (
-        while true; do
-            printf "\r%s %s" "${UI_SYMBOL_SPINNER[$i]}" "$message"
-            i=$(( (i + 1) % ${#UI_SYMBOL_SPINNER[@]} ))
-            sleep 0.1
-        done
-    ) &
-
-    echo $!
-    return 0
-}
-
-ui_spinner_stop() {
-    # Stop a spinner animation
-    # Args: $1 - spinner PID, $2 - success/failure (optional)
-    # Returns: 0 on success
-    local spinner_pid="$1"
-    local result="${2:-success}"
-
-    kill "$spinner_pid" 2>/dev/null || true
-    wait "$spinner_pid" 2>/dev/null || true
-    printf "\r"
-
-    if [[ "$result" == "success" ]]; then
-        ui_success "Done"
-    else
-        ui_error "Failed"
-    fi
-
-    return 0
-}
-
-ui_spin() {
-    # Execute a command with a spinner or progress indicator
-    # Args: $1 - title/message, $2 - command to execute
-    # Returns: command exit status
-
-    local title="$1"
-    local command="$2"
-
-    if $HAS_GUM; then
-        gum spin --spinner dot --title "$title" -- bash -c "$command"
-        return $?
-    else
-        # Fallback without gum - just run command with simple output
-        echo ">> $title..."
-        eval "$command"
-        return $?
-    fi
-}
-
-ui_prompt() {
-    # Display a prompt and get user input
-    # Args: $1 - prompt text, $2 - default value (optional)
-    # Returns: 0 on success, prints input to stdout
-
-    local prompt="$1"
-    local default="${2:-}"
-    local input
-
-    if $HAS_GUM; then
-        if [[ -n "$default" ]]; then
-            gum input --placeholder "$default" --prompt "$prompt: " --value "$default"
-        else
-            gum input --prompt "$prompt: "
-        fi
-    else
-        if [[ -n "$default" ]]; then
-            read -rp "$prompt [$default]: " input
-            echo "${input:-$default}"
-        else
-            read -rp "$prompt: " input
-            echo "$input"
-        fi
-    fi
-
-    return 0
-}
-
-ui_confirm() {
-    # Display a yes/no confirmation prompt
-    # Args: $1 - prompt text, $2 - default (y/n, optional)
-    # Returns: 0 for yes, 1 for no
-
-    local prompt="$1"
-    local default="${2:-n}"
-    local response
-
-    if $HAS_GUM; then
-        gum confirm "$prompt" && return 0 || return 1
-    else
-        if [[ "$default" == "y" ]]; then
-            read -rp "? $prompt [Y/n]: " response
-            response="${response:-y}"
-        else
-            read -rp "? $prompt [y/N]: " response
-            response="${response:-n}"
-        fi
-        [[ "$response" =~ ^[Yy]$ ]]
-    fi
-}
-
-ui_list() {
-    # Display a formatted list
-    # Args: $@ - list items
-    # Returns: 0 on success
-
-    for item in "$@"; do
-        echo "  $UI_SYMBOL_BULLET $item"
-    done
-
-    return 0
-}
-
-ui_table_header() {
-    # Display a table header
-    # Args: $@ - column headers
-    # Returns: 0 on success
-
-    local cols=("$@")
-    local col_width=20
-
-    for col in "${cols[@]}"; do
-        printf "%-${col_width}s" "$col"
-    done
-    printf "\n"
-
-    for col in "${cols[@]}"; do
-        printf "%${col_width}s" | tr ' ' '-'
-    done
-    printf "\n"
-
-    return 0
-}
-
-ui_table_row() {
-    # Display a table row
-    # Args: $@ - column values
-    # Returns: 0 on success
-    local cols=("$@")
-    local col_width=20
-
-    for col in "${cols[@]}"; do
-        printf "%-${col_width}s" "$col"
-    done
-    printf "\n"
-
-    return 0
-}
-
 ui_section_header() {
     # Display a bold section header for explain mode
     # Args: $1 - section text
@@ -491,16 +300,6 @@ ui_section_header() {
     fi
 
     return 0
-}
-
-#===============================================================================
-# Private Helper Functions
-#===============================================================================
-
-_ui_get_terminal_width() {
-    # Get the current terminal width
-    # Returns: terminal width or 80 as default
-    tput cols 2>/dev/null || echo 80
 }
 
 #===============================================================================

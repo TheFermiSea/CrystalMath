@@ -39,7 +39,6 @@ pub struct WorkflowState {
     pub closing: bool,
 }
 
-#[allow(dead_code)]
 impl WorkflowState {
     /// Create a new workflow state.
     pub fn new() -> Self {

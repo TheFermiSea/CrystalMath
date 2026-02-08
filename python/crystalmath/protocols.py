@@ -53,21 +53,11 @@ from typing import (
     Optional,
     Protocol,
     Sequence,
-    TypeVar,
     runtime_checkable,
 )
 
 if TYPE_CHECKING:
     from crystalmath.models import JobDetails, JobStatus, JobSubmission
-
-
-# =============================================================================
-# Type Variables and Basic Types
-# =============================================================================
-
-T = TypeVar("T")
-R = TypeVar("R")  # Result type
-S = TypeVar("S")  # Structure type
 
 # Workflow states
 WorkflowState = Literal[

@@ -58,22 +58,10 @@ pub struct App<'a> {
 
     // ===== SLURM Queue State =====
     /// SLURM queue entries from remote cluster.
-    #[allow(dead_code)] // Planned for SLURM integration
     pub slurm_queue: Vec<SlurmQueueEntry>,
-
-    /// Whether SLURM queue view is active.
-    pub slurm_view_active: bool,
 
     /// Request ID for the current SLURM queue fetch (to ignore stale responses).
     pub slurm_request_id: usize,
-
-    /// Selected index in SLURM queue table.
-    #[allow(dead_code)] // Planned for SLURM integration
-    pub slurm_selected: Option<usize>,
-
-    /// Timestamp of last SLURM queue refresh.
-    #[allow(dead_code)] // Planned for SLURM integration
-    pub last_slurm_refresh: Option<std::time::Instant>,
 
     // ===== Editor Tab State =====
     /// Text editor widget.
@@ -382,10 +370,7 @@ impl<'a> App<'a> {
             needs_redraw: true, // Initial draw required
             jobs_state: JobsState::default(),
             slurm_queue: Vec::new(),
-            slurm_view_active: false,
             slurm_request_id: 0,
-            slurm_selected: None,
-            last_slurm_refresh: None,
             editor,
             editor_file_path: None,
             editor_file_uri: None,
@@ -456,7 +441,6 @@ impl<'a> App<'a> {
     }
 
     /// Check if redraw is needed without resetting.
-    #[allow(dead_code)] // Useful for debugging/testing
     pub fn needs_redraw(&self) -> bool {
         self.needs_redraw
     }
@@ -2340,29 +2324,6 @@ impl<'a> App<'a> {
         self.last_job_poll = std::time::Instant::now();
     }
 
-    /// Update a job from a status poll response.
-    ///
-    /// Called when a jobs.status RPC response is received. Updates the job's
-    /// state and clears the pending request tracker.
-    #[allow(dead_code)]
-    fn update_job_from_status(&mut self, job_id: &str, status: crate::models::JobState) {
-        // Remove from pending requests
-        self.pending_status_requests.remove(job_id);
-
-        // Find and update the job
-        if let Ok(pk) = job_id.parse::<i32>() {
-            if let Some(job) = self.jobs_state.jobs.iter_mut().find(|j| j.pk == pk) {
-                let old_state = job.state;
-                if old_state != status {
-                    job.state = status;
-                    self.jobs_state.changed_pks.insert(pk);
-                    info!("Job {} status: {:?} -> {:?}", pk, old_state, status);
-                    self.mark_dirty();
-                }
-            }
-        }
-    }
-
     /// Convenience method that triggers an async job refresh.
     /// Kept for backwards compatibility with existing call sites.
     pub fn try_refresh_jobs(&mut self) {
@@ -3121,96 +3082,54 @@ impl<'a> App<'a> {
         self.mark_dirty();
     }
 
-    /// Close the diff view modal.
-    #[allow(dead_code)] // Planned for job diff feature
-    pub fn close_diff_view(&mut self) {
-        self.jobs_state.diff_view_active = false;
-        self.jobs_state.diff_lines.clear();
-        self.jobs_state.diff_scroll = 0;
-        self.mark_dirty();
-    }
-
-    /// Scroll diff view up.
-    #[allow(dead_code)] // Planned for job diff feature
-    pub fn scroll_diff_up(&mut self) {
-        if self.jobs_state.diff_scroll > 0 {
-            self.jobs_state.diff_scroll -= 1;
-            self.mark_dirty();
-        }
-    }
-
-    /// Scroll diff view down.
-    #[allow(dead_code)] // Planned for job diff feature
-    pub fn scroll_diff_down(&mut self) {
-        let max = self.jobs_state.diff_lines.len().saturating_sub(20);
-        if self.jobs_state.diff_scroll < max {
-            self.jobs_state.diff_scroll += 1;
-            self.mark_dirty();
-        }
-    }
 
     // ===== SLURM Queue Management =====
+
+    /// Resolve the best SLURM cluster ID to use.
+    ///
+    /// Prefers the last-used SLURM cluster if still valid, otherwise the first available.
+    /// Returns `None` if no SLURM clusters are configured.
+    pub fn resolve_slurm_cluster_id(&self) -> Option<i32> {
+        let slurm_clusters: Vec<i32> = self
+            .cluster_manager
+            .clusters
+            .iter()
+            .filter(|c| c.cluster_type == crate::models::ClusterType::Slurm)
+            .filter_map(|c| c.id)
+            .collect();
+
+        if slurm_clusters.is_empty() {
+            return None;
+        }
+
+        let cluster_id = match self.last_slurm_cluster_id {
+            Some(last_id) if slurm_clusters.contains(&last_id) => last_id,
+            _ => slurm_clusters[0],
+        };
+
+        Some(cluster_id)
+    }
 
     /// Toggle SLURM queue view visibility.
     ///
     /// Opens the SLURM queue modal if clusters are configured.
     /// Prefers the last-used SLURM cluster, or the first available one.
     pub fn toggle_slurm_view(&mut self) {
-        tracing::info!("toggle_slurm_view() called");
-        tracing::info!(
-            "  slurm_queue_state.active = {}",
-            self.slurm_queue_state.active
-        );
-        tracing::info!(
-            "  cluster_manager.clusters.len() = {}",
-            self.cluster_manager.clusters.len()
-        );
-
         // If modal is already open, close it
         if self.slurm_queue_state.active {
-            tracing::info!("  Closing SLURM modal");
             self.close_slurm_queue_modal();
             return;
         }
 
-        // Find SLURM clusters
-        let slurm_clusters: Vec<i32> = self
-            .cluster_manager
-            .clusters
-            .iter()
-            .filter(|c| {
-                tracing::debug!("  Cluster: {:?}, type: {:?}", c.name, c.cluster_type);
-                c.cluster_type == crate::models::ClusterType::Slurm
-            })
-            .filter_map(|c| c.id)
-            .collect();
-
-        tracing::info!(
-            "  Found {} SLURM clusters: {:?}",
-            slurm_clusters.len(),
-            slurm_clusters
-        );
-
-        if slurm_clusters.is_empty() {
-            tracing::warn!("  No SLURM clusters found!");
-            self.set_error("No SLURM clusters configured. Press 'c' to open Cluster Manager.");
-            return;
-        }
-
-        // Prefer last-used cluster if valid, otherwise use first
-        let cluster_id = if let Some(last_id) = self.last_slurm_cluster_id {
-            if slurm_clusters.contains(&last_id) {
-                last_id
-            } else {
-                slurm_clusters[0]
+        match self.resolve_slurm_cluster_id() {
+            Some(cluster_id) => {
+                self.open_slurm_queue_modal(cluster_id);
+                self.mark_dirty();
             }
-        } else {
-            slurm_clusters[0]
-        };
-
-        tracing::info!("  Opening SLURM modal for cluster_id={}", cluster_id);
-        self.open_slurm_queue_modal(cluster_id);
-        self.mark_dirty();
+            None => {
+                self.set_error("No SLURM clusters configured. Press 'c' to open Cluster Manager.");
+            }
+        }
     }
 
     /// Request SLURM queue fetch from bridge.
@@ -3263,34 +3182,6 @@ impl<'a> App<'a> {
         self.mark_dirty();
     }
 
-    /// Close the SLURM queue view.
-    #[allow(dead_code)] // Planned for SLURM integration
-    pub fn close_slurm_view(&mut self) {
-        self.slurm_view_active = false;
-        self.mark_dirty();
-    }
-
-    /// Select previous entry in SLURM queue.
-    #[allow(dead_code)] // Planned for SLURM integration
-    pub fn select_prev_slurm(&mut self) {
-        if let Some(idx) = self.slurm_selected {
-            if idx > 0 {
-                self.slurm_selected = Some(idx - 1);
-                self.mark_dirty();
-            }
-        }
-    }
-
-    /// Select next entry in SLURM queue.
-    #[allow(dead_code)] // Planned for SLURM integration
-    pub fn select_next_slurm(&mut self) {
-        if let Some(idx) = self.slurm_selected {
-            if idx + 1 < self.slurm_queue.len() {
-                self.slurm_selected = Some(idx + 1);
-                self.mark_dirty();
-            }
-        }
-    }
 
     /// Load job details with non-fatal error handling (async).
     ///
@@ -5623,10 +5514,7 @@ mod tests {
             needs_redraw: false,
             jobs_state: JobsState::default(),
             slurm_queue: Vec::new(),
-            slurm_view_active: false,
             slurm_request_id: 0,
-            slurm_selected: None,
-            last_slurm_refresh: None,
             editor,
             editor_file_path: None,
             editor_file_uri: None,
