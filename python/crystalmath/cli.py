@@ -123,11 +123,10 @@ def list(
     limit: int = typer.Option(100, help="Maximum number of jobs to show"),
 ) -> None:
     """
-    List all jobs.
-
-    Examples:
-        crystal list            # Show last 100 jobs
-        crystal list --limit 10 # Show last 10 jobs
+    Display a table of recent jobs with summary details.
+    
+    Parameters:
+    	limit (int): Maximum number of most-recent jobs to show.
     """
     try:
         controller = _get_controller()
@@ -183,8 +182,11 @@ def status(
     pk: int = typer.Argument(..., help="Job ID"),
 ) -> None:
     """
-    Show detailed job status.
-
+    Show detailed status for a job and print it to the console.
+    
+    Parameters:
+        pk (int): Primary key (ID) of the job to inspect.
+    
     Examples:
         crystal status 42    # Show details for job 42
     """
@@ -249,11 +251,13 @@ def log(
     lines: int = typer.Option(100, "--lines", "-n", help="Number of lines to show"),
 ) -> None:
     """
-    View job output log.
-
-    Examples:
-        crystal log 42           # Show last 100 lines
-        crystal log 42 -n 50     # Show last 50 lines
+    Show the tail of a job's stdout and stderr logs.
+    
+    Prints the last `lines` lines of `stdout` and `stderr` for the job identified by `pk`, with `stderr` highlighted when present.
+    
+    Parameters:
+        pk (int): Job ID.
+        lines (int): Number of tail lines to display.
     """
     try:
         controller = _get_controller()
@@ -287,10 +291,13 @@ def cancel(
     pk: int = typer.Argument(..., help="Job ID"),
 ) -> None:
     """
-    Cancel a running job.
-
-    Examples:
-        crystal cancel 42    # Cancel job 42
+    Cancel the job with the given primary key and report the outcome to the console.
+    
+    Parameters:
+        pk (int): Job ID to cancel.
+    
+    Raises:
+        typer.Exit: If an unexpected error occurs while attempting cancellation (exits with status code 1).
     """
     try:
         controller = _get_controller()
@@ -309,7 +316,12 @@ def cancel(
 # Utility functions
 
 def _state_color(state: str) -> str:
-    """Map job state to color."""
+    """
+    Map a job state string to a display color name for UI output.
+    
+    Returns:
+        color (str): Color name corresponding to the provided state (defaults to "white" for unknown states).
+    """
     return {
         "COMPLETED": "green",
         "RUNNING": "blue",
@@ -322,7 +334,12 @@ def _state_color(state: str) -> str:
 
 
 def _format_seconds(seconds: float) -> str:
-    """Format seconds as human-readable duration."""
+    """
+    Convert a duration in seconds to a compact human-readable string.
+    
+    Returns:
+    	A string formatted with one decimal and a unit suffix: seconds ('s') if < 60, minutes ('m') if < 3600, otherwise hours ('h') — e.g. "3.5s", "2.0m", "1.2h".
+    """
     if seconds < 60:
         return f"{seconds:.1f}s"
     elif seconds < 3600:
