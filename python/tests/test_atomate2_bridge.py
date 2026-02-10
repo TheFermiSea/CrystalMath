@@ -432,19 +432,20 @@ class TestAtomate2Bridge:
         bridge = Atomate2Bridge(execution_mode=ExecutionMode.REMOTE)
         assert bridge is not None
 
-    @pytest.mark.skip(reason="submit requires atomate2 Maker - Phase 3 implementation")
     def test_bridge_submit(self, mock_structure: Mock) -> None:
-        """Test submitting a workflow."""
+        """Test submitting a workflow via mock path."""
         from crystalmath.integrations.atomate2_bridge import Atomate2Bridge
         from crystalmath.protocols import WorkflowType
 
         bridge = Atomate2Bridge()
         result = bridge.submit(
             workflow_type=WorkflowType.RELAX,
-            structure=mock_structure,
+            structure=None,  # Works in mock mode
             code="vasp",
         )
         assert result is not None
+        assert result.success is True
+        assert result.workflow_id is not None
 
     def test_bridge_get_status_unknown_workflow(self) -> None:
         """Test getting status of unknown workflow."""
@@ -473,6 +474,54 @@ class TestAtomate2Bridge:
         cancelled = bridge.cancel("unknown-uuid")
 
         assert cancelled is False
+
+
+# =============================================================================
+# Test Atomate2Bridge Mock Path
+# =============================================================================
+
+
+class TestBridgeWithMockPath:
+    """Tests for Atomate2Bridge mock path (no atomate2 installed)."""
+
+    def test_submit_without_atomate2(self):
+        from crystalmath.integrations.atomate2_bridge import Atomate2Bridge
+        from crystalmath.protocols import WorkflowType
+
+        bridge = Atomate2Bridge()
+        result = bridge.submit(WorkflowType.SCF, None, code="vasp")
+        assert result.success is True
+        assert result.workflow_id is not None
+
+    def test_complete_workflow(self):
+        from crystalmath.integrations.atomate2_bridge import Atomate2Bridge
+        from crystalmath.protocols import WorkflowType
+
+        bridge = Atomate2Bridge()
+        result = bridge.submit(WorkflowType.SCF, None, code="vasp")
+        wf_id = result.workflow_id
+
+        ok = bridge.complete_workflow(wf_id, {"energy": -10.84})
+        assert ok is True
+        assert bridge.get_status(wf_id) == "completed"
+
+    def test_status_tracking(self):
+        from crystalmath.integrations.atomate2_bridge import Atomate2Bridge
+        from crystalmath.protocols import WorkflowType
+
+        bridge = Atomate2Bridge()
+        result = bridge.submit(WorkflowType.SCF, None, code="vasp")
+        wf_id = result.workflow_id
+
+        assert bridge.get_status(wf_id) == "submitted"
+        bridge.complete_workflow(wf_id, {})
+        assert bridge.get_status(wf_id) == "completed"
+
+    def test_complete_unknown_workflow(self):
+        from crystalmath.integrations.atomate2_bridge import Atomate2Bridge
+
+        bridge = Atomate2Bridge()
+        assert bridge.complete_workflow("nonexistent", {}) is False
 
 
 # =============================================================================

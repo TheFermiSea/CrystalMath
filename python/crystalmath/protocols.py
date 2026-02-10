@@ -763,7 +763,11 @@ def get_runner(backend_type: BackendType = "aiida") -> WorkflowRunner:
         - crystalmath.runners.jobflow_runner.JobflowRunner
         - crystalmath.runners.local_runner.LocalRunner
     """
-    # Phase 3 implementation - runners not yet created
+    if backend_type == "jobflow":
+        from crystalmath.integrations.atomate2_bridge import Atomate2Bridge
+
+        return Atomate2Bridge()  # type: ignore[return-value]
+
     raise NotImplementedError(
         f"WorkflowRunner for '{backend_type}' will be implemented in Phase 3. "
         f"See docs/architecture/UNIFIED-WORKFLOW-ARCHITECTURE.md for design."

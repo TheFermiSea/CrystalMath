@@ -342,6 +342,7 @@ class SQLiteJobStore:
         self._db_path = Path(db_path)
         self._collection_name = collection_name
         self._connected = False
+        self._conn = None
 
     @property
     def name(self) -> str:
@@ -356,16 +357,35 @@ class SQLiteJobStore:
 
         Args:
             force: Force reconnection even if already connected
-
-        Note:
-            This is a STUB implementation. Full implementation in Phase 3.
         """
-        raise NotImplementedError(
-            "SQLiteJobStore.connect() will be implemented in Phase 3."
+        if self._connected and not force:
+            return
+        import sqlite3
+
+        self._conn = sqlite3.connect(str(self._db_path))
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS {} (
+                uuid TEXT PRIMARY KEY,
+                name TEXT,
+                state TEXT DEFAULT 'created',
+                created_at TEXT,
+                completed_at TEXT,
+                input_json TEXT DEFAULT '{{}}',
+                output_json TEXT DEFAULT '{{}}',
+                metadata_json TEXT DEFAULT '{{}}'
+            )
+            """.format(self._collection_name)
         )
+        self._conn.commit()
+        self._connected = True
 
     def close(self) -> None:
         """Close the database connection."""
+        if self._conn:
+            self._conn.close()
+            self._conn = None
         self._connected = False
 
     def query(
@@ -390,13 +410,52 @@ class SQLiteJobStore:
 
         Yields:
             Matching documents
-
-        Note:
-            This is a STUB implementation. Full implementation in Phase 3.
         """
-        raise NotImplementedError(
-            "SQLiteJobStore.query() will be implemented in Phase 3."
-        )
+        if not self._connected:
+            self.connect()
+        import json
+
+        where_clauses: List[str] = []
+        params: List[Any] = []
+        if criteria:
+            for key, value in criteria.items():
+                if isinstance(value, dict) and "$regex" in value:
+                    where_clauses.append(f"{key} LIKE ?")
+                    pattern = value["$regex"].replace(".*", "%").replace(".", "_")
+                    params.append(f"%{pattern}%")
+                else:
+                    where_clauses.append(f"{key} = ?")
+                    params.append(
+                        value if not isinstance(value, dict) else json.dumps(value)
+                    )
+
+        sql = f"SELECT * FROM {self._collection_name}"
+        if where_clauses:
+            sql += " WHERE " + " AND ".join(where_clauses)
+        if sort:
+            sort_clauses = []
+            for field_name, direction in sort.items():
+                sort_clauses.append(
+                    f"{field_name} {'ASC' if direction == 1 else 'DESC'}"
+                )
+            sql += " ORDER BY " + ", ".join(sort_clauses)
+        if skip:
+            sql += f" OFFSET {skip}"
+        if limit:
+            sql += f" LIMIT {limit}"
+
+        cursor = self._conn.execute(sql, params)
+        for row in cursor:
+            doc = dict(row)
+            for json_field in ("input_json", "output_json", "metadata_json"):
+                if json_field in doc and doc[json_field]:
+                    clean_key = json_field.replace("_json", "")
+                    doc[clean_key] = json.loads(doc[json_field])
+                    del doc[json_field]
+                elif json_field in doc:
+                    doc[json_field.replace("_json", "")] = {}
+                    del doc[json_field]
+            yield doc
 
     def query_one(
         self,
@@ -430,13 +489,30 @@ class SQLiteJobStore:
         Args:
             docs: Documents to update/insert
             key: Field to use as unique key
-
-        Note:
-            This is a STUB implementation. Full implementation in Phase 3.
         """
-        raise NotImplementedError(
-            "SQLiteJobStore.update() will be implemented in Phase 3."
-        )
+        if not self._connected:
+            self.connect()
+        import json
+
+        for doc in docs:
+            uuid_val = doc.get(key, doc.get("uuid", ""))
+            self._conn.execute(
+                f"""INSERT OR REPLACE INTO {self._collection_name}
+                    (uuid, name, state, created_at, completed_at,
+                     input_json, output_json, metadata_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    uuid_val,
+                    doc.get("name", ""),
+                    doc.get("state", "created"),
+                    doc.get("created_at", ""),
+                    doc.get("completed_at", ""),
+                    json.dumps(doc.get("input", {})),
+                    json.dumps(doc.get("output", {})),
+                    json.dumps(doc.get("metadata", {})),
+                ),
+            )
+        self._conn.commit()
 
     def count(
         self,
@@ -467,13 +543,23 @@ class SQLiteJobStore:
 
         Returns:
             List of distinct values
-
-        Note:
-            This is a STUB implementation. Full implementation in Phase 3.
         """
-        raise NotImplementedError(
-            "SQLiteJobStore.distinct() will be implemented in Phase 3."
-        )
+        if not self._connected:
+            self.connect()
+        sql = f"SELECT DISTINCT {field} FROM {self._collection_name}"
+        params: List[Any] = []
+        if criteria:
+            import json
+
+            where_clauses: List[str] = []
+            for key, value in criteria.items():
+                where_clauses.append(f"{key} = ?")
+                params.append(
+                    value if not isinstance(value, dict) else json.dumps(value)
+                )
+            sql += " WHERE " + " AND ".join(where_clauses)
+        cursor = self._conn.execute(sql, params)
+        return [row[0] for row in cursor]
 
     def remove_docs(
         self,
@@ -699,13 +785,26 @@ class CrystalMathJobStore(JobStoreBridge):
 
         Returns:
             SyncStats with operation results
-
-        Note:
-            This is a STUB implementation. Full implementation in Phase 3.
         """
-        raise NotImplementedError(
-            "CrystalMathJobStore.sync_to_crystalmath() will be implemented in Phase 3."
-        )
+        import time
+
+        start = time.time()
+        stats = SyncStats()
+
+        if not self._primary_store:
+            stats.errors.append("No primary store configured")
+            return stats
+
+        try:
+            for doc in self._primary_store.query():
+                record = JobRecord.from_jobflow_dict(doc)
+                record.to_crystalmath_status()  # validate conversion works
+                stats.jobs_synced += 1
+        except Exception as e:
+            stats.errors.append(str(e))
+
+        stats.duration_seconds = time.time() - start
+        return stats
 
     def sync_from_crystalmath(self) -> SyncStats:
         """

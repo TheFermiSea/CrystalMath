@@ -41,6 +41,12 @@ aiida = [
     "aiida-core>=2.0.0",
     "pymatgen>=2024.1.1",
 ]
+atomate2 = [
+    "atomate2>=0.0.14",
+    "jobflow>=0.1.17",
+    "maggma>=0.57.0",
+    "pymatgen>=2024.1.1",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -55,7 +61,7 @@ llm = [
     "langchain-anthropic>=0.3.0",
 ]
 all = [
-    "crystalmath[aiida,dev,llm]",
+    "crystalmath[aiida,atomate2,dev,llm]",
 ]
 
 [project.scripts]
