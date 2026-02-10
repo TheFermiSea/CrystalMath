@@ -275,7 +275,31 @@ pub fn init_python_backend() -> Result<Py<PyAny>> {
     })
 }
 
-/// Find the database path from environment or default locations.
+/// Locate a jobs database file from environment variables or well-known locations.
+///
+/// The search follows this priority:
+/// 1. The `CRYSTAL_TUI_DB` environment variable (will be created if its parent directory can be made).
+/// 2. A shared Textual TUI database named `.crystal_tui.db` found in the project root (detected via `Cargo.toml`) or in the current working directory (including a `tui/` subdirectory).
+/// 3. The XDG user data location `~/.local/share/crystal-tui/jobs.db`.
+/// 4. The platform data directory (`dirs::data_dir()`) under `crystal-tui/jobs.db` (created if the parent directory can be made).
+/// 5. A legacy development location `tui/jobs.db` in the current working directory.
+///
+/// If none of the locations exist (and no platform location could be created), the function returns `None` and the caller should treat the application as running in demo mode.
+///
+/// # Returns
+///
+/// `Some(String)` containing the filesystem path to the selected jobs database, or `None` if no suitable database path was found or created.
+///
+/// # Examples
+///
+/// ```
+/// // Try to find an existing or creatable database path.
+/// if let Some(db_path) = find_database_path() {
+///     println!("Using database at: {}", db_path);
+/// } else {
+///     println!("No database found; running in demo mode.");
+/// }
+/// ```
 fn find_database_path() -> Option<String> {
     use std::path::PathBuf;
 
@@ -581,10 +605,20 @@ impl BridgeHandle {
         })
     }
 
-    /// Send a request to the bridge worker using try_send (non-blocking).
+    /// Attempt to send a request to the bridge worker without blocking.
     ///
-    /// Uses try_send to avoid blocking the UI thread if the channel is full.
-    /// Returns an error if the channel is full (backend busy) or disconnected.
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was enqueued successfully. `Err` with context
+    /// "Backend busy - try again in a moment" if the request channel is full,
+    /// or "Bridge worker disconnected" if the worker has already exited.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // given a `bridge` of type `BridgeHandle` and a `req` of type `BridgeRequest`:
+    /// let _ = bridge.try_send_request(req)?;
+    /// ```
     fn try_send_request(&self, request: BridgeRequest) -> Result<()> {
         match self.request_tx.try_send(request) {
             Ok(()) => Ok(()),
@@ -673,6 +707,27 @@ impl Drop for BridgeHandle {
 /// This allows `BridgeHandle` to be used anywhere a `BridgeService` is expected,
 /// enabling dependency injection and mock implementations for testing.
 impl BridgeService for BridgeHandle {
+    /// Send a request to fetch the list of jobs via the bridge worker.
+    ///
+    /// The supplied `request_id` is echoed back on the corresponding response so callers can
+    /// correlate the background reply with the original request.
+    ///
+    /// # Parameters
+    ///
+    /// - `request_id`: opaque identifier used to match the eventual response to this request.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was accepted for delivery to the worker; an `Err` if the bridge
+    /// is currently busy or disconnected.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // `bridge` represents a BridgeHandle connected to the worker thread.
+    /// let bridge = unimplemented!(); // BridgeHandle
+    /// let _ = bridge.request_fetch_jobs(42);
+    /// ```
     fn request_fetch_jobs(&self, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "fetch_jobs",
@@ -682,6 +737,27 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request job details for the job with the given primary key through the bridge.
+    ///
+    /// Sends a JSON-RPC request with method `"fetch_job_details"` and params `{"pk": pk}`
+    /// and tags it with `request_id` for matching the async response.
+    ///
+    /// # Parameters
+    ///
+    /// - `pk`: Primary key of the job to fetch details for.
+    /// - `request_id`: Opaque identifier used to correlate the eventual response with this request.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was successfully queued for the bridge, `Err` if the request could not be sent.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // `handle` is a bridge handle obtained from the bridge spawner.
+    /// # let handle: &crate::BridgeHandle = todo!();
+    /// handle.request_fetch_job_details(123, 42).unwrap();
+    /// ```
     fn request_fetch_job_details(&self, pk: i32, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "fetch_job_details",
@@ -691,6 +767,26 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Enqueue a job submission request to the Python backend using the `submit_job` JSON-RPC method.
+    ///
+    /// The `submission` payload is serialized to JSON and sent as the RPC `params` under the key
+    /// `"json_payload"`. The provided `request_id` is used to correlate the eventual response.
+    ///
+    /// # Parameters
+    ///
+    /// - `submission`: The job submission data to send to the backend.
+    /// - `request_id`: A client-side identifier used to correlate this request with its response.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was successfully queued, `Err` if serialization or channel send failed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // assume `handle` is a BridgeHandle and `submission` is a JobSubmission
+    /// handle.request_submit_job(&submission, 42).unwrap();
+    /// ```
     fn request_submit_job(&self, submission: &JobSubmission, request_id: usize) -> Result<()> {
         let json = serde_json::to_string(submission)?;
         let rpc_request = JsonRpcRequest::new(
@@ -701,6 +797,25 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request cancellation of a job by primary key.
+    ///
+    /// Sends a JSON-RPC `"cancel_job"` request to the bridge with the job primary key.
+    ///
+    /// # Parameters
+    ///
+    /// - `pk`: Primary key of the job to cancel.
+    /// - `request_id`: Local request identifier used to correlate responses.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the cancellation request was accepted for delivery, `Err` if the bridge is busy or disconnected.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `handle` is a BridgeHandle; request_id should be unique per outstanding request.
+    /// let _ = handle.request_cancel_job(123, 42).unwrap();
+    /// ```
     fn request_cancel_job(&self, pk: i32, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "cancel_job",
@@ -710,6 +825,23 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request the tail of a job's log from the Python backend.
+    ///
+    /// Sends a JSON-RPC `fetch_job_log` request containing the job primary key (`pk`)
+    /// and the number of tail lines to retrieve. `request_id` is used to correlate
+    /// the eventual response with the original request.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the bridge cannot accept the request (for example, if the
+    /// worker is busy or disconnected).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `bridge` implements BridgeService (e.g., BridgeHandle)
+    /// let _ = bridge.request_fetch_job_log(42, 200, 1)?;
+    /// ```
     fn request_fetch_job_log(&self, pk: i32, tail_lines: i32, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "fetch_job_log",
@@ -719,6 +851,24 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request a materials search from the Python backend using a chemical formula and result limit.
+    ///
+    /// Sends a JSON-RPC `search_materials` request with parameters `formula` and `limit` and associates it with `request_id`.
+    ///
+    /// # Parameters
+    ///
+    /// * `request_id` - Client-provided identifier used to correlate the eventual response with this request.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was queued successfully; `Err(_)` if the request could not be sent (for example, because the bridge is busy or the worker has disconnected).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `handle` is a BridgeHandle previously created by the application.
+    /// handle.request_search_materials("Fe2O3", 10, 42).expect("failed to queue search");
+    /// ```
     fn request_search_materials(
         &self,
         formula: &str,
@@ -733,6 +883,22 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Requests generation of a D12 string for the given material ID using the bridge.
+    ///
+    /// `mp_id` is the material identifier to generate the D12 for. `config_json` is a
+    /// JSON-encoded configuration object for the generator. `request_id` is the caller's
+    /// identifier used to correlate the asynchronous response.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `handle` implements the bridge service (e.g., BridgeHandle)
+    /// handle.request_generate_d12("mp-123", r#"{"option": true}"#, 42).unwrap();
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was accepted and queued, `Err(_)` if the request could not be sent.
     fn request_generate_d12(
         &self,
         mp_id: &str,
@@ -747,6 +913,21 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request the SLURM queue for the given cluster from the Python backend.
+    ///
+    /// Sends a JSON-RPC `fetch_slurm_queue` request with `cluster_id` and associates it with `request_id`.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was queued successfully, `Err` if the bridge is busy or disconnected.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Assume `bridge` implements the BridgeService (e.g., a BridgeHandle).
+    /// let res = bridge.request_fetch_slurm_queue(7, 123);
+    /// assert!(res.is_ok());
+    /// ```
     fn request_fetch_slurm_queue(&self, cluster_id: i32, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "fetch_slurm_queue",
@@ -756,6 +937,28 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Sends a JSON-RPC request to cancel a SLURM job on the specified cluster.
+    ///
+    /// The request is enqueued for the bridge worker and routed to the Python backend
+    /// under the `"cancel_slurm_job"` method with `cluster_id` and `slurm_job_id` as parameters.
+    ///
+    /// # Parameters
+    ///
+    /// - `cluster_id`: Identifier of the cluster that manages the SLURM job.
+    /// - `slurm_job_id`: SLURM job identifier string.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was successfully queued for dispatch, `Err` if the bridge
+    /// is busy or disconnected and the request could not be sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `bridge` implements the BridgeService/BridgeHandle interface.
+    /// let result = bridge.request_cancel_slurm_job(1, "12345", 42);
+    /// assert!(result.is_ok());
+    /// ```
     fn request_cancel_slurm_job(
         &self,
         cluster_id: i32,
@@ -770,6 +973,29 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request that the backend adopt an existing SLURM job into the TUI-managed job list.
+    ///
+    /// Sends a JSON-RPC `adopt_slurm_job` request containing `cluster_id` and `slurm_job_id`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use serde_json::json;
+    /// // Construct the JSON-RPC payload this method will send
+    /// let expected = serde_json::json!({
+    ///     "jsonrpc": "2.0",
+    ///     "method": "adopt_slurm_job",
+    ///     "params": { "cluster_id": 1, "slurm_job_id": "12345" },
+    ///     "id": 42u64
+    /// });
+    /// let rpc = crate::bridge::JsonRpcRequest::new("adopt_slurm_job", json!({"cluster_id": 1, "slurm_job_id": "12345"}), 42);
+    /// assert_eq!(rpc.method, "adopt_slurm_job");
+    /// assert_eq!(rpc.id, 42u64);
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success; an `Err` if the bridge cannot accept the request (for example, if the bridge is busy or disconnected).
     fn request_adopt_slurm_job(
         &self,
         cluster_id: i32,
@@ -784,6 +1010,22 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request a remote job synchronization through the Python backend.
+    ///
+    /// Sends a `"sync_remote_jobs"` JSON-RPC request with the given `request_id` so the worker can enqueue
+    /// a background synchronization of remote jobs.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was queued successfully, `Err` if the bridge is busy or disconnected.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // assume `handle` is a `BridgeHandle`
+    /// let request_id = 1usize;
+    /// handle.request_sync_remote_jobs(request_id).unwrap();
+    /// ```
     fn request_sync_remote_jobs(&self, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "sync_remote_jobs",
@@ -793,6 +1035,26 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request a list of available templates from the Python backend.
+    ///
+    /// Sends a JSON-RPC `list_templates` request and associates it with `request_id` so the
+    /// corresponding response can be correlated when polled.
+    ///
+    /// # Parameters
+    ///
+    /// - `request_id`: Identifier used to correlate the sent request with a later response.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was successfully queued for the bridge worker, `Err` if the bridge
+    /// is currently full or disconnected.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `bridge` is a BridgeHandle obtained from BridgeHandle::spawn(...)
+    /// bridge.request_fetch_templates(42).unwrap();
+    /// ```
     fn request_fetch_templates(&self, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "list_templates",
@@ -802,6 +1064,29 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Queue a request to render a named template with the given JSON parameters.
+    ///
+    /// Sends a JSON-RPC `render_template` request to the backend containing the
+    /// template name and a JSON-encoded parameters string, tagged with `request_id`.
+    ///
+    /// # Parameters
+    ///
+    /// - `template_name`: Name of the template to render.
+    /// - `params_json`: A JSON string containing the template parameters.
+    /// - `request_id`: Local identifier used to correlate the backend response.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was successfully queued, `Err(...)` if the request could
+    /// not be sent (for example, if the backend is busy or the bridge is disconnected).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // `handle` is a BridgeHandle connected to the Python backend.
+    /// let handle: &crate::BridgeHandle = &unimplemented!();
+    /// handle.request_render_template("my_template", r#"{"name":"Alice"}"#, 42).unwrap();
+    /// ```
     fn request_render_template(
         &self,
         template_name: &str,
@@ -816,6 +1101,18 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Requests the list of clusters from the Python backend using a JSON-RPC `fetch_clusters` call.
+    ///
+    /// `request_id` is an opaque identifier used to correlate the eventual `BridgeResponse` with this request.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # // `handle` is a previously created BridgeHandle connected to the Python backend.
+    /// # let handle: crate::bridge::BridgeHandle = unimplemented!();
+    /// let request_id = 42;
+    /// handle.request_fetch_clusters(request_id).unwrap();
+    /// ```
     fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "fetch_clusters",
@@ -825,6 +1122,26 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request creation of a new cluster on the Python backend.
+    ///
+    /// Serializes `config` and enqueues a JSON-RPC `"create_cluster"` request correlated with `request_id`.
+    ///
+    /// # Parameters
+    ///
+    /// - `request_id`: Identifier used to correlate the created request with its eventual response.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was queued successfully, `Err` if serialization or sending the request failed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `handle` is a BridgeHandle connected to the Python backend.
+    /// // `cfg` is a ClusterConfig to create.
+    /// // This example demonstrates the call pattern; actual BridgeHandle construction is omitted.
+    /// let _ = handle.request_create_cluster(&cfg, 42).unwrap();
+    /// ```
     fn request_create_cluster(&self, config: &ClusterConfig, request_id: usize) -> Result<()> {
         let json = serde_json::to_string(config)?;
         let rpc_request = JsonRpcRequest::new(
@@ -835,6 +1152,24 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request an update to an existing cluster's configuration through the Python bridge.
+    ///
+    /// Sends a JSON-RPC `update_cluster` request containing the cluster id and a JSON-serialized
+    /// cluster configuration. The provided `request_id` is used to correlate the eventual bridge response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serializing `config` to JSON fails or if sending the request to the bridge fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `handle` is a BridgeHandle or other type implementing this method.
+    /// let cluster_id = 42;
+    /// let config = ClusterConfig { /* fields */ };
+    /// let request_id = 1;
+    /// handle.request_update_cluster(cluster_id, &config, request_id)?;
+    /// ```
     fn request_update_cluster(
         &self,
         cluster_id: i32,
@@ -850,6 +1185,30 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request deletion of a cluster on the Python backend.
+    ///
+    /// Sends a JSON-RPC `delete_cluster` request carrying the cluster primary key to the bridge worker.
+    ///
+    /// # Parameters
+    ///
+    /// - `cluster_id`: Primary key of the cluster to delete.
+    /// - `request_id`: Client-visible identifier used to correlate the eventual response with this request.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the delete request was accepted for dispatch, `Err` if the bridge could not enqueue the request (for example, because it is busy or disconnected).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #[test]
+    /// fn send_delete_cluster_request() {
+    ///     // `handle` must implement the bridge service (e.g., BridgeHandle).
+    ///     // This example demonstrates the simplest usage; in real code `handle` is obtained from BridgeHandle::spawn(...).
+    ///     let handle = get_test_bridge_handle();
+    ///     handle.request_delete_cluster(42, 1).unwrap();
+    /// }
+    /// ```
     fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "delete_cluster",
@@ -859,6 +1218,19 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Queues a JSON-RPC request to test the connection for the specified cluster.
+    ///
+    /// Sends a `test_cluster_connection` JSON-RPC request with the given `cluster_id` and
+    /// associates it with `request_id` so the bridge can correlate the eventual response.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // `svc` should implement `BridgeService` (for example, a `BridgeHandle`).
+    /// svc.request_test_cluster_connection(1, 42).unwrap();
+    /// ```
+    ///
+    /// Returns `Ok(())` if the request was queued successfully, `Err` with context otherwise.
     fn request_test_cluster_connection(&self, cluster_id: i32, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "test_cluster_connection",
@@ -868,6 +1240,18 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Requests a check for which workflows are available from the backend.
+    ///
+    /// Sends a JSON-RPC `check_workflows_available` request to the Python bridge using the provided
+    /// `request_id`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `handle` is a BridgeHandle obtained from BridgeHandle::spawn(...).
+    /// // The call queues a non-blocking request; use `poll_response` to receive the result.
+    /// let _ = handle.request_check_workflows_available(42);
+    /// ```
     fn request_check_workflows_available(&self, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "check_workflows_available",
@@ -877,6 +1261,21 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Requests creation of a convergence study on the Python backend using the given JSON configuration.
+    ///
+    /// `config_json` is a JSON string describing the convergence study parameters. `request_id` is an
+    /// opaque identifier used to correlate the asynchronous response produced by the bridge.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was queued successfully, `Err` if the bridge is busy or disconnected.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = r#"{"kpoints": {"start": 1, "end": 5}, "tolerance": 1e-3}"#;
+    /// handle.request_create_convergence_study(cfg, 42).unwrap();
+    /// ```
     fn request_create_convergence_study(&self, config_json: &str, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "create_convergence_study",
@@ -886,6 +1285,18 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request creation of a band structure workflow using the provided workflow configuration JSON.
+    ///
+    /// The function wraps `config_json` into a JSON-RPC `create_band_structure_workflow` request and
+    /// enqueues it for the Python backend using the provided `request_id`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `handle` is an instance implementing the bridge service (e.g. BridgeHandle).
+    /// let config = r#"{"kpoints": 100, "parameters": {"ecut": 50}}"#;
+    /// handle.request_create_band_structure_workflow(config, 42).unwrap();
+    /// ```
     fn request_create_band_structure_workflow(
         &self,
         config_json: &str,
@@ -899,6 +1310,20 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Request creation of a phonon workflow using the provided configuration JSON.
+    ///
+    /// Sends a JSON-RPC `create_phonon_workflow` request with `config_json` as the payload and enqueues it under `request_id`.
+    ///
+    /// # Returns
+    /// `Ok(())` if the request was enqueued successfully, `Err` with context if sending fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `handle` is a BridgeHandle (or any type implementing the same method)
+    /// let config = r#"{"structure": {"atoms": []}, "parameters": {}}"#;
+    /// handle.request_create_phonon_workflow(config, 7).unwrap();
+    /// ```
     fn request_create_phonon_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "create_phonon_workflow",
@@ -908,6 +1333,19 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Creates an equation-of-state (EOS) workflow on the Python backend by sending a JSON-RPC request.
+    ///
+    /// `config_json` must be a JSON string containing the workflow configuration. `request_id` is an
+    /// opaque identifier used to correlate the request with a later response from the bridge.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `handle` is a BridgeHandle implementing this method.
+    /// let config = r#"{"structure": "C", "parameters": {"kpoints": 4}}"#;
+    /// let request_id = 42usize;
+    /// handle.request_create_eos_workflow(config, request_id).unwrap();
+    /// ```
     fn request_create_eos_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "create_eos_workflow",
@@ -917,6 +1355,20 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Queues a JSON-RPC request to launch an AiiDA ge-opt workflow using the given JSON configuration.
+    ///
+    /// The `config_json` string should contain the workflow configuration expected by the Python backend; `request_id` is used to correlate the backend response with this request.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `handle` is a BridgeHandle connected to the Python backend.
+    /// handle.request_launch_aiida_geopt(r#"{"structure": {"atoms": []}, "settings": {}}"#, 42).unwrap();
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the request was queued successfully, `Err` with context otherwise.
     fn request_launch_aiida_geopt(&self, config_json: &str, request_id: usize) -> Result<()> {
         let rpc_request = JsonRpcRequest::new(
             "launch_aiida_geopt",
@@ -926,6 +1378,17 @@ impl BridgeService for BridgeHandle {
         self.request_rpc(rpc_request, request_id)
     }
 
+    /// Enqueues a JSON-RPC request for the bridge worker to process and associates it with a client-side request id.
+    ///
+    /// The `rpc_request` is the JSON-RPC 2.0 payload to dispatch to the Python backend. The `request_id` is an
+    /// application-level identifier used to correlate the eventual `BridgeResponse` with the original request.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // `handle` is a BridgeHandle; `req` is a JsonRpcRequest built for the desired method.
+    /// let _ = handle.request_rpc(req, 42);
+    /// ```
     fn request_rpc(&self, rpc_request: JsonRpcRequest, request_id: usize) -> Result<()> {
         self.try_send_request(BridgeRequest::Rpc {
             rpc_request,
@@ -999,10 +1462,20 @@ fn bridge_worker_loop(
     }
 }
 
-/// Process a single bridge request and return the response.
+/// Process a single bridge request and produce the corresponding typed BridgeResponse.
 ///
-/// Extracted from the worker loop to enable catch_unwind wrapping.
-/// Each response includes the `request_id` from the corresponding request.
+/// This converts a received `BridgeRequest::Rpc` into a routed `BridgeResponse` by dispatching
+/// the contained JSON-RPC request through the Python controller and mapping the result back
+/// to the appropriate response variant. The `Shutdown` variant is not expected here and must
+/// be handled by the worker loop.
+///
+/// # Examples
+///
+/// ```no_run
+/// use crate::{process_bridge_request, BridgeRequest, JsonRpcRequest};
+/// // Build a JsonRpcRequest and a Py controller, then:
+/// // let resp = process_bridge_request(&py_controller, BridgeRequest::Rpc { rpc_request, request_id: 1 });
+/// ```
 fn process_bridge_request(py_controller: &Py<PyAny>, request: BridgeRequest) -> BridgeResponse {
     match request {
         BridgeRequest::Shutdown => unreachable!("Shutdown handled in worker loop"),
@@ -1017,10 +1490,38 @@ fn process_bridge_request(py_controller: &Py<PyAny>, request: BridgeRequest) -> 
     }
 }
 
-/// Route a JSON-RPC response to the appropriate typed BridgeResponse variant.
+/// Map a JSON-RPC reply into the typed BridgeResponse variant expected by the caller.
 ///
-/// This function converts generic JSON-RPC responses back to the typed enum
-/// variants that app.rs expects, maintaining backward compatibility.
+/// Converts a generic `JsonRpcResponse` (success or error) for `method` into the
+/// corresponding `BridgeResponse` variant using `request_id`. For methods that
+/// return an `ApiResponse<T>` the inner result is extracted; for method-specific
+/// error conditions (for example a `NOT_FOUND` marker for job details) the
+/// behaviour follows the original API semantics. Unknown methods are returned
+/// as `BridgeResponse::RpcResult` so callers can handle them generically.
+///
+/// # Parameters
+///
+/// - `method`: the JSON-RPC method name that produced `rpc_result`.
+/// - `request_id`: caller-provided identifier associated with the original request.
+/// - `rpc_result`: the deserialized `JsonRpcResponse` or an error describing why
+///   dispatch/transport failed.
+///
+/// # Returns
+///
+/// A `BridgeResponse` variant containing `request_id` and either the parsed
+/// typed result or an `Err` describing the failure.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Example (non-executable) showing the high-level intent:
+/// // let resp = route_rpc_response("fetch_jobs", 42, rpc_result);
+/// // match resp {
+/// //     BridgeResponse::Jobs { request_id, result } => { /* handle jobs */ }
+/// //     BridgeResponse::RpcResult { request_id, result } => { /* fallback */ }
+/// //     _ => {}
+/// // }
+/// ```
 fn route_rpc_response(
     method: &str,
     request_id: usize,

@@ -134,7 +134,7 @@ def list_jobs(
     db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
 ) -> None:
     """
-    List all jobs.
+    Display a table of recent jobs with summary details.
 
     Examples:
         crystal list            # Show last 100 jobs
@@ -195,8 +195,11 @@ def status(
     db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
 ) -> None:
     """
-    Show detailed job status.
-
+    Show detailed status for a job and print it to the console.
+    
+    Parameters:
+        pk (int): Primary key (ID) of the job to inspect.
+    
     Examples:
         crystal status 42    # Show details for job 42
     """
@@ -262,7 +265,9 @@ def log(
     db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
 ) -> None:
     """
-    View job output log.
+    Show the tail of a job's stdout and stderr logs.
+
+    Prints the last `lines` lines for the job, with `stderr` highlighted.
 
     Examples:
         crystal log 42           # Show last 100 lines
@@ -323,7 +328,12 @@ def cancel(
 # Utility functions
 
 def _state_color(state: str) -> str:
-    """Map job state to color."""
+    """
+    Map a job state string to a display color name for UI output.
+    
+    Returns:
+        color (str): Color name corresponding to the provided state (defaults to "white" for unknown states).
+    """
     return {
         "COMPLETED": "green",
         "RUNNING": "blue",
@@ -336,7 +346,12 @@ def _state_color(state: str) -> str:
 
 
 def _format_seconds(seconds: float) -> str:
-    """Format seconds as human-readable duration."""
+    """
+    Convert a duration in seconds to a compact human-readable string.
+
+    Returns:
+        A string like "3.5s", "2.0m", or "1.2h" depending on magnitude.
+    """
     if seconds < 60:
         return f"{seconds:.1f}s"
     elif seconds < 3600:
