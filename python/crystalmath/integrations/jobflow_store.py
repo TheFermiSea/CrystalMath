@@ -360,7 +360,15 @@ class SQLiteJobStore:
         """
         if self._connected and not force:
             return
+        import re
         import sqlite3
+
+        # Validate collection name is a safe SQL identifier
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", self._collection_name):
+            raise ValueError(
+                f"Invalid collection name: {self._collection_name!r}. "
+                "Must be a valid SQL identifier."
+            )
 
         self._conn = sqlite3.connect(str(self._db_path))
         self._conn.row_factory = sqlite3.Row
@@ -415,10 +423,15 @@ class SQLiteJobStore:
             self.connect()
         import json
 
+        import re
+
+        _VALID_COLUMN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
         where_clauses: List[str] = []
         params: List[Any] = []
         if criteria:
             for key, value in criteria.items():
+                if not _VALID_COLUMN.match(key):
+                    raise ValueError(f"Invalid column name in criteria: {key!r}")
                 if isinstance(value, dict) and "$regex" in value:
                     where_clauses.append(f"{key} LIKE ?")
                     pattern = value["$regex"].replace(".*", "%").replace(".", "_")
@@ -435,14 +448,18 @@ class SQLiteJobStore:
         if sort:
             sort_clauses = []
             for field_name, direction in sort.items():
+                if not _VALID_COLUMN.match(field_name):
+                    raise ValueError(f"Invalid column name in sort: {field_name!r}")
                 sort_clauses.append(
                     f"{field_name} {'ASC' if direction == 1 else 'DESC'}"
                 )
             sql += " ORDER BY " + ", ".join(sort_clauses)
-        if skip:
-            sql += f" OFFSET {skip}"
         if limit:
             sql += f" LIMIT {limit}"
+            if skip:
+                sql += f" OFFSET {skip}"
+        elif skip:
+            sql += f" LIMIT -1 OFFSET {skip}"
 
         cursor = self._conn.execute(sql, params)
         for row in cursor:

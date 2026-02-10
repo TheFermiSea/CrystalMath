@@ -277,13 +277,12 @@ class HighThroughput:
 
         # Populate from collected outputs
         for step_name, outputs in collected_outputs.items():
-            if "energy" in outputs:
-                results.band_gap_ev = outputs.get("band_gap")
-                results.is_direct_gap = outputs.get("is_direct_gap")
-                results.fermi_energy_ev = outputs.get("fermi_energy")
             if "band_gap" in outputs:
                 results.band_gap_ev = outputs["band_gap"]
-                results.is_direct_gap = outputs.get("is_direct_gap")
+            if "is_direct_gap" in outputs:
+                results.is_direct_gap = outputs["is_direct_gap"]
+            if "fermi_energy" in outputs:
+                results.fermi_energy_ev = outputs["fermi_energy"]
             if "structure" in outputs and isinstance(outputs["structure"], dict):
                 results.formula = outputs["structure"].get("formula", "")
 
@@ -299,8 +298,8 @@ class HighThroughput:
         """Fetch structure from Materials Project and run analysis.
 
         Convenience method that combines Materials Project structure retrieval
-        with run_standard_analysis(). Uses the MaterialsService from
-        tui/src/core/materials_api/ for structure fetching.
+        with run_standard_analysis(). Uses crystalmath.integrations.materials_project.MPClient
+        for structure fetching.
 
         Args:
             material_id: Materials Project ID (e.g., "mp-1234", "mp-149")
@@ -311,8 +310,7 @@ class HighThroughput:
             AnalysisResults with all computed properties
 
         Raises:
-            StructureNotFoundError: If material_id not found in Materials Project
-            AuthenticationError: If MP API key is invalid
+            WorkflowValidationError: If structure cannot be loaded from MP
 
         Example:
             # Calculate band structure of silicon (mp-149)
@@ -327,6 +325,10 @@ class HighThroughput:
             )
         """
         structure = cls._load_structure_from_mp(material_id)
+        if structure is None:
+            logger.warning(
+                f"Could not load structure for {material_id}, proceeding with None"
+            )
         return cls.run_standard_analysis(
             structure=structure,
             properties=properties,
@@ -582,6 +584,12 @@ class HighThroughput:
                     ordered.append((prop, wf_type, code))
                     added.add(prop)
                     remaining.remove(prop)
+
+        if remaining:
+            details = ", ".join(remaining)
+            raise WorkflowValidationError(
+                f"Cannot resolve workflow dependencies. Unresolved steps: {details}"
+            )
 
         return ordered
 

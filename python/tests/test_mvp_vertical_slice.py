@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import json
 import pytest
-from pathlib import Path
-from typing import Any, Dict, List
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import patch
 
 
 class TestBridgeSubmitAndRetrieve:
@@ -393,10 +391,11 @@ class TestWorkflowBuilder:
 
     def test_build_invalid_raises(self):
         """Build with invalid config raises WorkflowValidationError."""
+        from crystalmath.high_level.api import WorkflowValidationError
         from crystalmath.high_level.builder import WorkflowBuilder
 
         builder = WorkflowBuilder()  # No structure, no steps
-        with pytest.raises(Exception):  # WorkflowValidationError
+        with pytest.raises(WorkflowValidationError):
             builder.build()
 
 

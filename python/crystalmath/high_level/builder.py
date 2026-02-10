@@ -887,6 +887,13 @@ class WorkflowBuilder:
                 mp_id = self._structure_source[3:]
                 structure = HighThroughput._load_structure_from_mp(mp_id)
 
+        if structure is None and self._structure_source:
+            from .api import WorkflowValidationError
+
+            raise WorkflowValidationError(
+                f"Failed to load structure from source {self._structure_source!r}"
+            )
+
         return Workflow(
             structure=structure,
             steps=self._steps,

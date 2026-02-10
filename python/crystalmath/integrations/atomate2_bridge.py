@@ -841,13 +841,6 @@ class Atomate2Bridge:
             # Create the Flow
             flow = maker.make(pmg_structure, **kwargs)
 
-            # Create adapter
-            adapter = Atomate2FlowAdapter(
-                flow=flow,
-                execution_mode=self._execution_mode,
-                store=self._store,
-            )
-
             # Execute via jobflow.run_locally()
             try:
                 from jobflow import run_locally
