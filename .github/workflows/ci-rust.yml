@@ -1,0 +1,82 @@
+name: Rust CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+    inputs:
+      run_tests:
+        description: 'Run full test suite (expensive, requires PyO3)'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-quality:
+    name: Rust Format & Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt check
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy -- -D warnings
+
+  rust-tests:
+    name: Rust Tests (manual dispatch)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python + venv
+        run: |
+          uv python install 3.12
+          uv sync
+
+      - name: Run unit tests
+        run: PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test
+        env:
+          CRYSTALMATH_SKIP_IPC_TESTS: 1
+
+      - name: Run IPC integration tests
+        run: PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test --test ipc_integration -- --nocapture
+        continue-on-error: true

@@ -1,0 +1,28 @@
+name: CLI CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cli/**'
+
+concurrency:
+  group: cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cli-tests:
+    name: CLI Tests (bats)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: sudo apt-get install -yq bats
+
+      - name: Unit tests
+        run: bats cli/tests/unit/*.bats
+
+      - name: Integration tests
+        run: bats cli/tests/integration/*.bats
+        continue-on-error: true
