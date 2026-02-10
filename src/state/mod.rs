@@ -6,14 +6,14 @@
 
 use std::collections::HashSet;
 
-use ratatui::widgets::TableState;
-use tui_textarea::TextArea;
-use tachyonfx::{fx, Effect, Motion};
 use ratatui::style::Color;
+use ratatui::widgets::TableState;
+use tachyonfx::{fx, Effect, Motion};
+use tui_textarea::TextArea;
 
 use crate::models::{
-    D12GenerationConfig, DftCode, JobState, JobStatus, MaterialResult, RunnerType, StructurePreview, Template,
-    VaspGenerationConfig, WorkflowType,
+    D12GenerationConfig, DftCode, JobState, JobStatus, MaterialResult, RunnerType,
+    StructurePreview, Template, VaspGenerationConfig, WorkflowType,
 };
 
 pub mod actions;
@@ -332,7 +332,7 @@ impl BatchSubmissionState {
         self.active = true;
         self.closing = false;
         self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
-        
+
         self.jobs.clear();
         self.selected_job_index = None;
         self.focused_field = BatchSubmissionField::default();
@@ -521,7 +521,7 @@ impl<'a> MaterialsSearchState<'a> {
         self.closing = true;
         // Slide out to bottom
         self.effect = Some(fx::slide_out(Motion::UpToDown, 15, 0, Color::Black, 300));
-        
+
         // Increment request_id to ignore any pending responses
         self.request_id += 1;
         self.preview_request_id += 1;
@@ -833,7 +833,7 @@ impl NewJobState {
         self.closing = false;
         // Slide in from bottom (Motion::DownToUp)
         self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
-        
+
         self.focused_field = NewJobField::Name;
         self.job_name.clear();
         self.dft_code = DftCode::Crystal;
@@ -992,7 +992,7 @@ impl TemplateBrowserState {
         self.closing = false;
         // Slide in from bottom
         self.effect = Some(fx::slide_in(Motion::DownToUp, 15, 0, Color::Black, 300));
-        
+
         self.templates.clear();
         self.selected_index = None;
         self.loading = true;
@@ -1314,7 +1314,9 @@ impl WorkflowConfigState {
     pub fn reset_for(&mut self, workflow_type: WorkflowType) {
         match workflow_type {
             WorkflowType::Convergence => self.convergence.reset(),
-            WorkflowType::BandStructure => self.band_structure = BandStructureConfigState::default(),
+            WorkflowType::BandStructure => {
+                self.band_structure = BandStructureConfigState::default()
+            }
             WorkflowType::Phonon => self.phonon = PhononConfigState::default(),
             WorkflowType::Eos => self.eos = EosConfigState::default(),
             WorkflowType::GeometryOptimization => {

@@ -417,7 +417,9 @@ fn render_buttons(frame: &mut Frame, focused: WorkflowConfigField, area: Rect) {
             .bg(Color::Green)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
     };
 
     let cancel_style = if focused == WorkflowConfigField::BtnCancel {
@@ -426,7 +428,9 @@ fn render_buttons(frame: &mut Frame, focused: WorkflowConfigField, area: Rect) {
             .bg(Color::DarkGray)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
     };
 
     let buttons = Line::from(vec![

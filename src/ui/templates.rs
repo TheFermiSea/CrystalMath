@@ -129,13 +129,22 @@ fn render_template_details(frame: &mut Frame, app: &App, area: Rect) {
                 Span::raw(&template.author),
             ]),
             Line::from(""),
-            Line::from(Span::styled("Description:", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                "Description:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
             Line::from(template.description.clone()),
             Line::from(""),
-            Line::from(Span::styled("Tags:", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                "Tags:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
             Line::from(template.tags.join(", ")),
             Line::from(""),
-            Line::from(Span::styled("Parameters:", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                "Parameters:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
         ];
 
         for (name, param) in &template.parameters {
@@ -160,7 +169,12 @@ fn render_template_details(frame: &mut Frame, app: &App, area: Rect) {
 /// Render action buttons.
 fn render_buttons(frame: &mut Frame, area: Rect) {
     let buttons = Line::from(vec![
-        Span::styled(" [Enter] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [Enter] ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("Select", Style::default().fg(Color::White)),
         Span::raw("  "),
         Span::styled(" [Esc] ", Style::default().fg(Color::Yellow)),

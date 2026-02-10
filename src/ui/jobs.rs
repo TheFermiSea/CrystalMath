@@ -59,12 +59,12 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             // Status cell with color and icon
             let status_style = Style::default().fg(job.state.color());
             let status_icon = match job.state {
-                JobState::Created => "○", // Empty circle
+                JobState::Created => "○",   // Empty circle
                 JobState::Submitted => "◐", // Half circle
-                JobState::Queued => "⏳", // Hourglass
-                JobState::Running => "▶", // Play
+                JobState::Queued => "⏳",   // Hourglass
+                JobState::Running => "▶",   // Play
                 JobState::Completed => "✓", // Checkmark
-                JobState::Failed => "✗", // X
+                JobState::Failed => "✗",    // X
                 JobState::Cancelled => "○", // Empty circle
                 JobState::Unknown => "?",
             };
@@ -147,10 +147,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         let filter_info = app.jobs_state.filter_display().unwrap_or_default();
         format!(
             " Jobs │ {}/{} │ [{}] │ {} ",
-            filtered_count,
-            total_jobs,
-            filter_info,
-            refresh_info
+            filtered_count, total_jobs, filter_info, refresh_info
         )
     } else {
         format!(
@@ -225,7 +222,10 @@ fn render_no_filter_matches(frame: &mut Frame, app: &App, area: Rect) {
     let cyan = Style::default().fg(Color::Cyan);
     let gray = Style::default().fg(Color::DarkGray);
 
-    let filter_info = app.jobs_state.filter_display().unwrap_or_else(|| "Active".to_string());
+    let filter_info = app
+        .jobs_state
+        .filter_display()
+        .unwrap_or_else(|| "Active".to_string());
     let total_jobs = app.jobs_state.jobs.len();
 
     let message = vec![

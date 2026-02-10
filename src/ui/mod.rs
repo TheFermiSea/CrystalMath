@@ -2,6 +2,7 @@
 //!
 //! This module contains all the rendering logic for the TUI.
 
+mod batch_submission;
 mod cluster_manager;
 mod editor;
 mod footer;
@@ -16,13 +17,12 @@ mod output_viewer;
 pub mod recipes;
 mod results;
 mod slurm_queue;
-mod workflow_dashboard;
-mod workflow_config;
-mod workflow_results;
 mod templates;
 mod vasp_input;
+mod workflow_config;
+mod workflow_dashboard;
+mod workflow_results;
 mod workflows;
-mod batch_submission;
 
 pub use cluster_manager::{
     ClusterFormField, ClusterManagerMode, ClusterManagerState, ConnectionTestResult,
@@ -113,7 +113,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
     // Render modal overlays on top of everything
     if app.materials.active {
         materials::render(frame, app);
-        
+
         if let Some(ref mut effect) = app.materials.effect {
             let delta = std::time::Duration::from_millis(16);
             let area = frame.area();
@@ -121,7 +121,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
             let modal_height = (area.height * 70 / 100).clamp(20, 35);
             let modal_area = centered_rect_fixed(modal_width, modal_height, area);
             effect.process(delta.into(), frame.buffer_mut(), modal_area);
-            
+
             if !effect.running() {
                 if app.materials.closing {
                     app.materials.active = false;
@@ -139,14 +139,14 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
 
     if app.new_job.active {
         new_job::render(frame, app);
-        
+
         // Apply modal effect if active
         if let Some(ref mut effect) = app.new_job.effect {
             let delta = std::time::Duration::from_millis(16);
             // Calculate modal area (must match new_job::render logic)
             let modal_area = centered_rect(70, 85, frame.area());
             effect.process(delta.into(), frame.buffer_mut(), modal_area);
-            
+
             if !effect.running() {
                 if app.new_job.closing {
                     app.new_job.active = false;
@@ -164,12 +164,12 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
 
     if app.cluster_manager.active {
         cluster_manager::render(frame, app);
-        
+
         if let Some(ref mut effect) = app.cluster_manager.effect {
             let delta = std::time::Duration::from_millis(16);
             let modal_area = centered_rect(80, 85, frame.area());
             effect.process(delta.into(), frame.buffer_mut(), modal_area);
-            
+
             if !effect.running() {
                 if app.cluster_manager.closing {
                     app.cluster_manager.active = false;
@@ -187,12 +187,12 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
 
     if app.slurm_queue_state.active {
         slurm_queue::render(frame, app);
-        
+
         if let Some(ref mut effect) = app.slurm_queue_state.effect {
             let delta = std::time::Duration::from_millis(16);
             let modal_area = centered_rect(85, 80, frame.area());
             effect.process(delta.into(), frame.buffer_mut(), modal_area);
-            
+
             if !effect.running() {
                 if app.slurm_queue_state.closing {
                     app.slurm_queue_state.active = false;
@@ -210,12 +210,12 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
 
     if app.vasp_input_state.active {
         vasp_input::render(frame, app);
-        
+
         if let Some(ref mut effect) = app.vasp_input_state.effect {
             let delta = std::time::Duration::from_millis(16);
             let modal_area = centered_rect(90, 85, frame.area());
             effect.process(delta.into(), frame.buffer_mut(), modal_area);
-            
+
             if !effect.running() {
                 if app.vasp_input_state.closing {
                     app.vasp_input_state.active = false;

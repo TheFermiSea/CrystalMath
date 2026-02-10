@@ -674,11 +674,8 @@ impl Drop for BridgeHandle {
 /// enabling dependency injection and mock implementations for testing.
 impl BridgeService for BridgeHandle {
     fn request_fetch_jobs(&self, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "fetch_jobs",
-            serde_json::Value::Null,
-            request_id as u64,
-        );
+        let rpc_request =
+            JsonRpcRequest::new("fetch_jobs", serde_json::Value::Null, request_id as u64);
         self.request_rpc(rpc_request, request_id)
     }
 
@@ -794,11 +791,8 @@ impl BridgeService for BridgeHandle {
     }
 
     fn request_fetch_templates(&self, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "list_templates",
-            serde_json::Value::Null,
-            request_id as u64,
-        );
+        let rpc_request =
+            JsonRpcRequest::new("list_templates", serde_json::Value::Null, request_id as u64);
         self.request_rpc(rpc_request, request_id)
     }
 
@@ -817,11 +811,8 @@ impl BridgeService for BridgeHandle {
     }
 
     fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "fetch_clusters",
-            serde_json::Value::Null,
-            request_id as u64,
-        );
+        let rpc_request =
+            JsonRpcRequest::new("fetch_clusters", serde_json::Value::Null, request_id as u64);
         self.request_rpc(rpc_request, request_id)
     }
 
@@ -1159,15 +1150,17 @@ fn route_rpc_response(
                 let value = resp.into_result()?;
                 let api_resp: ApiResponse<serde_json::Value> = serde_json::from_value(value)?;
                 let data = api_resp.into_result().map_err(|e| anyhow::anyhow!(e))?;
-                Ok(data.get("success").and_then(|v| v.as_bool()).unwrap_or(false))
+                Ok(data
+                    .get("success")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false))
             }),
         },
         "test_cluster_connection" => BridgeResponse::ClusterConnectionTested {
             request_id,
             result: rpc_result.and_then(|resp| {
                 let value = resp.into_result()?;
-                let api_resp: ApiResponse<ClusterConnectionResult> =
-                    serde_json::from_value(value)?;
+                let api_resp: ApiResponse<ClusterConnectionResult> = serde_json::from_value(value)?;
                 api_resp.into_result().map_err(|e| anyhow::anyhow!(e))
             }),
         },

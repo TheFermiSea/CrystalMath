@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-quality:
+    name: Rust Quality Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action/setup@v1
+
+      - name: cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Check for duplicate dependencies
+        run: |
+          dupes=$(cargo tree -d 2>&1 | grep -c "^[a-z]" || true)
+          echo "Found $dupes duplicate dependency groups"
+          cargo tree -d
+
+  rust-tests:
+    name: Rust Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action/setup@v1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install Python packages
+        run: uv sync
+
+      - name: Run unit tests
+        run: |
+          PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test
+        env:
+          CRYSTALMATH_SKIP_IPC_TESTS: 1
+
+      - name: Run IPC integration tests
+        run: |
+          PYO3_PYTHON=$(pwd)/.venv/bin/python cargo test --test ipc_integration -- --nocapture
+        continue-on-error: true
+
+  python-quality:
+    name: Python Quality Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Ruff lint
+        run: uv run ruff check python/ tui/
+
+      - name: Ruff format check
+        run: uv run ruff format --check python/ tui/
+
+      - name: Run Python tests
+        run: uv run pytest python/tests/ tui/tests/ -x -q

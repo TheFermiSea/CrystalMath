@@ -107,8 +107,12 @@ fn render_workflow_jobs(frame: &mut Frame, app: &App, area: Rect) {
 
     let title = format!(
         " Workflow {} │ {} / {} done │ {} failed │ {} running │ {} pending ",
-        summary.workflow_id, summary.completed_jobs, summary.total_jobs, summary.failed_jobs
-        , summary.running_jobs, summary.pending_jobs
+        summary.workflow_id,
+        summary.completed_jobs,
+        summary.total_jobs,
+        summary.failed_jobs,
+        summary.running_jobs,
+        summary.pending_jobs
     );
 
     let header = Row::new(vec![
@@ -189,8 +193,7 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
         (msg.clone(), Style::default().fg(color))
     } else {
         (
-            "Tab: switch pane │ Enter: results/details │ r: retry failed │ Esc: back"
-                .to_string(),
+            "Tab: switch pane │ Enter: results/details │ r: retry failed │ Esc: back".to_string(),
             Style::default().fg(Color::DarkGray),
         )
     };

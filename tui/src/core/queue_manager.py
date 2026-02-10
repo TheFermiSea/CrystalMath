@@ -992,18 +992,18 @@ class QueueManager:
                 logger.warning(
                     f"Job {job_id} failed after {max_retries} retries, giving up"
                 )
-                # Mark as permanently failed
-                self.db.update_status(job_id, JobStatus.FAILED)
+                # Mark as permanently failed (non-blocking via thread)
+                await self._run_db(self.db.update_status, job_id, JobStatus.FAILED)
 
-                # Remove from queue_state on permanent failure
-                self._remove_job_from_database(job_id)
+                # Remove from queue_state on permanent failure (non-blocking via thread)
+                await self._run_db(self._remove_job_from_database, job_id)
 
                 # Cancel dependent jobs
                 if job_id in self._dependents:
                     for dependent_id in self._dependents[job_id]:
-                        self.db.update_status(dependent_id, JobStatus.FAILED)
-                        # Also remove dependent from queue
-                        self._remove_job_from_database(dependent_id)
+                        await self._run_db(self.db.update_status, dependent_id, JobStatus.FAILED)
+                        # Also remove dependent from queue (non-blocking via thread)
+                        await self._run_db(self._remove_job_from_database, dependent_id)
                         if dependent_id in self._jobs:
                             del self._jobs[dependent_id]
                         logger.warning(

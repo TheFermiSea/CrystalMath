@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -1911,6 +1912,24 @@ class WorkflowOrchestrator:
             # Render command template
             command = self._jinja_env.from_string(command).render(resolved_params)
 
+            # Security: Validate executable against allowlist
+            _SAFE_EXECUTABLES = {
+                "bash", "sh",
+                "crystal", "crystalOMP", "properties",
+                "vasp", "vasp_std", "vasp_gam", "vasp_ncl",
+                "pw.x", "ph.x", "pp.x", "bands.x", "dos.x", "projwfc.x",
+                "mpirun", "mpiexec", "srun",
+                "yambo", "p2y",
+                "cp", "mv", "cat", "mkdir", "echo", "grep", "sed", "awk",
+            }
+            cmd_parts = shlex.split(command)
+            executable = Path(cmd_parts[0]).name if cmd_parts else ""
+            if executable not in _SAFE_EXECUTABLES:
+                raise OrchestratorError(
+                    f"Script node {node.node_id}: executable '{executable}' "
+                    f"not in allowlist. Allowed: {sorted(_SAFE_EXECUTABLES)}"
+                )
+
             # Determine working directory (use last dependency's work_dir)
             work_dir = None
             for dep_id in reversed(node.dependencies):
@@ -1927,10 +1946,10 @@ class WorkflowOrchestrator:
             node.status = NodeStatus.RUNNING
             state.running_nodes.add(node.node_id)
 
-            # Execute command using async subprocess to avoid blocking event loop
+            # Execute command using async subprocess (exec, not shell)
             try:
-                process = await asyncio.create_subprocess_shell(
-                    command,
+                process = await asyncio.create_subprocess_exec(
+                    *cmd_parts,
                     cwd=str(work_dir),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,

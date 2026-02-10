@@ -282,14 +282,12 @@ fn render_preview_panel(frame: &mut Frame, state: &MaterialsSearchState, area: R
 
     // Build preview lines
     let mut lines = vec![
-        Line::from(vec![
-            Span::styled(
-                &preview.formula,
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        Line::from(vec![Span::styled(
+            &preview.formula,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(""),
     ];
 
@@ -312,9 +310,10 @@ fn render_preview_panel(frame: &mut Frame, state: &MaterialsSearchState, area: R
     lines.push(Line::from(""));
 
     // Lattice parameters
-    lines.push(Line::from(vec![
-        Span::styled("Lattice (Å):", Style::default().fg(Color::DarkGray)),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        "Lattice (Å):",
+        Style::default().fg(Color::DarkGray),
+    )]));
     lines.push(Line::from(vec![
         Span::styled(" a=", Style::default().fg(Color::DarkGray)),
         Span::styled(
@@ -381,14 +380,17 @@ fn render_preview_panel(frame: &mut Frame, state: &MaterialsSearchState, area: R
 
     // VASP config section
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled("─── VASP Config ───", Style::default().fg(Color::DarkGray)),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        "─── VASP Config ───",
+        Style::default().fg(Color::DarkGray),
+    )]));
     lines.push(Line::from(vec![
         Span::styled("Preset [p]: ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("{}", state.vasp_config.preset),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         ),
     ]));
     lines.push(Line::from(vec![

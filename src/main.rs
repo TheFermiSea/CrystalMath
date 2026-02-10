@@ -29,8 +29,8 @@ use ratatui::prelude::*;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use app::App;
 use crate::state::{BatchSubmissionField, OutputFileType, WorkflowConfigField};
+use app::App;
 
 /// Global flag to track if terminal is in raw mode (for panic cleanup)
 static TERMINAL_RAW: AtomicBool = AtomicBool::new(false);
@@ -57,7 +57,6 @@ impl TerminalGuard {
 
         Ok(Self { active: true })
     }
-
 }
 
 impl Drop for TerminalGuard {
@@ -127,7 +126,10 @@ fn configure_python_env() {
                     if !paths.contains(&site_packages_str) {
                         // Prepend venv site-packages so it takes priority
                         paths.insert(0, site_packages_str.clone());
-                        tracing::info!("Added venv site-packages to PYTHONPATH: {}", site_packages_str);
+                        tracing::info!(
+                            "Added venv site-packages to PYTHONPATH: {}",
+                            site_packages_str
+                        );
                     }
                 }
 
@@ -229,7 +231,11 @@ print(json.dumps({
 /// Build a path to the Python executable inside a directory (venv or prefix).
 fn python_exe_in(base: &Path) -> PathBuf {
     let bin_dir = if cfg!(windows) { "Scripts" } else { "bin" };
-    let exe_name = if cfg!(windows) { "python.exe" } else { "python" };
+    let exe_name = if cfg!(windows) {
+        "python.exe"
+    } else {
+        "python"
+    };
     base.join(bin_dir).join(exe_name)
 }
 
@@ -272,7 +278,11 @@ fn find_python_candidates() -> Vec<PathBuf> {
     }
 
     // 5. System python3 as last resort
-    let system_exe = if cfg!(windows) { "python.exe" } else { "python3" };
+    let system_exe = if cfg!(windows) {
+        "python.exe"
+    } else {
+        "python3"
+    };
     candidates.push(PathBuf::from(system_exe));
 
     candidates
@@ -1604,9 +1614,8 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
             }
 
             let allow_float = |ch: char| ch.is_ascii_digit() || matches!(ch, '.' | '-' | 'e' | 'E');
-            let allow_values = |ch: char| {
-                ch.is_ascii_digit() || matches!(ch, '.' | '-' | 'e' | 'E' | ',' | ' ')
-            };
+            let allow_values =
+                |ch: char| ch.is_ascii_digit() || matches!(ch, '.' | '-' | 'e' | 'E' | ',' | ' ');
 
             if c == ' ' {
                 match focused {
@@ -1791,7 +1800,9 @@ fn handle_batch_submission_input(app: &mut App, key: event::KeyEvent) {
         }
 
         // Field-specific input
-        KeyCode::Char('j') | KeyCode::Down if app.batch_submission.focused_field == BatchSubmissionField::JobList => {
+        KeyCode::Char('j') | KeyCode::Down
+            if app.batch_submission.focused_field == BatchSubmissionField::JobList =>
+        {
             let len = app.batch_submission.jobs.len();
             if len > 0 {
                 let i = match app.batch_submission.selected_job_index {
@@ -1803,7 +1814,9 @@ fn handle_batch_submission_input(app: &mut App, key: event::KeyEvent) {
                 app.mark_dirty();
             }
         }
-        KeyCode::Char('k') | KeyCode::Up if app.batch_submission.focused_field == BatchSubmissionField::JobList => {
+        KeyCode::Char('k') | KeyCode::Up
+            if app.batch_submission.focused_field == BatchSubmissionField::JobList =>
+        {
             let len = app.batch_submission.jobs.len();
             if len > 0 {
                 let i = match app.batch_submission.selected_job_index {
