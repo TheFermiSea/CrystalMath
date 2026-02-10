@@ -11,18 +11,18 @@ echo "=== CrystalMath Development Session Initializer ==="
 echo ""
 
 # 1. Verify working directory
-echo "[1/7] Verifying working directory..."
+echo "[1/8] Verifying working directory..."
 cd "$PROJECT_ROOT"
 pwd
 echo ""
 
 # 2. Check git status
-echo "[2/7] Checking git status..."
+echo "[2/8] Checking git status..."
 git status --short || true
 echo ""
 
 # 3. Sync beads from main (if on ephemeral branch)
-echo "[3/7] Syncing beads..."
+echo "[3/8] Syncing beads..."
 if command -v bd &> /dev/null; then
     bd sync --from-main 2>/dev/null || echo "  (Beads sync skipped or not needed)"
 else
@@ -30,8 +30,18 @@ else
 fi
 echo ""
 
-# 4. Read progress state
-echo "[4/7] Reading progress state..."
+# 4. Ensure pre-push hook is installed
+echo "[4/8] Checking pre-push quality hook..."
+if [[ -f "$PROJECT_ROOT/.git/hooks/pre-push" ]] && grep -q "quality checks" "$PROJECT_ROOT/.git/hooks/pre-push"; then
+    echo "  ✓ Composite pre-push hook installed"
+else
+    echo "  Installing composite pre-push hook..."
+    bash "$SCRIPT_DIR/install-hooks.sh"
+fi
+echo ""
+
+# 5. Read progress state
+echo "[5/8] Reading progress state..."
 if [[ -f "PROGRESS.json" ]]; then
     current_phase=$(jq -r '.current_phase // "1"' PROGRESS.json)
     current_task=$(jq -r '.current_task // "none"' PROGRESS.json)
@@ -43,8 +53,8 @@ else
 fi
 echo ""
 
-# 5. Check ready work in beads
-echo "[5/7] Checking ready work..."
+# 6. Check ready work in beads
+echo "[6/8] Checking ready work..."
 if command -v bd &> /dev/null; then
     bd ready 2>/dev/null | grep crystalmath | head -5 || echo "  No crystalmath tasks ready"
 else
@@ -52,8 +62,8 @@ else
 fi
 echo ""
 
-# 6. Verify Python environment
-echo "[6/7] Verifying Python environment..."
+# 7. Verify Python environment
+echo "[7/8] Verifying Python environment..."
 if [[ -d ".venv" ]]; then
     source .venv/bin/activate 2>/dev/null || true
     echo "  Python: $(python --version 2>&1)"
@@ -63,8 +73,8 @@ else
 fi
 echo ""
 
-# 7. Run sanity tests (optional, quick)
-echo "[7/7] Running sanity tests..."
+# 8. Run sanity tests (optional, quick)
+echo "[8/8] Running sanity tests..."
 if [[ -d "python/tests" ]]; then
     uv run pytest python/tests/ -x -q --tb=no 2>/dev/null || echo "  Tests skipped or failed"
 else
