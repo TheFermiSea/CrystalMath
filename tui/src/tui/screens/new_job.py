@@ -227,6 +227,7 @@ class NewJobScreen(ModalScreen):
         self.database = database
         self.calculations_dir = calculations_dir
         self.core_client = core_client
+        self._mp_metadata: dict | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the modal layout."""
@@ -918,10 +919,18 @@ class NewJobScreen(ModalScreen):
                     job_name_input.value = suggested_name
                     self._update_work_dir_preview()
 
+                # Store full MP metadata for inclusion in job metadata at creation time
+                self._mp_metadata = result
+
                 # Show success message with details
                 info_message = self.query_one("#info_message", Static)
                 formula = result.get("formula", "Structure")
                 material_id = result.get("material_id", "")
-                info_message.update(f"Imported {formula} ({material_id}) from Materials Project")
+                details = [f"Imported {formula} ({material_id}) from Materials Project"]
+                if result.get("band_gap") is not None:
+                    details.append(f"Band gap: {result['band_gap']:.2f} eV")
+                if result.get("space_group"):
+                    details.append(f"Space group: {result['space_group']}")
+                info_message.update(" | ".join(details))
 
         self.app.push_screen(MaterialsSearchScreen(), handle_result)

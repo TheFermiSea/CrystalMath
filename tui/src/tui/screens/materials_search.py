@@ -337,6 +337,10 @@ class MaterialsSearchScreen(ModalScreen[dict | None]):
                     "d12_content": d12_content,
                     "material_id": record.material_id,
                     "formula": formula,
+                    "space_group": record.space_group or "",
+                    "band_gap": record.band_gap,
+                    "energy_above_hull": record.energy_above_hull,
+                    "source": "materials_project",
                 }
             )
 

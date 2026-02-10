@@ -760,7 +760,7 @@ class Atomate2Bridge:
         self._registry = FlowMakerRegistry()
         self._execution_mode = execution_mode
         self._store = store
-        self._active_flows: Dict[str, Atomate2FlowAdapter] = {}
+        self._active_flows: Dict[str, Any] = {}
 
     @property
     def name(self) -> str:
@@ -799,6 +799,13 @@ class Atomate2Bridge:
         This method implements a WorkflowRunner-like interface, enabling
         atomate2 workflows to be run through CrystalMath's unified API.
 
+        Dual-path implementation:
+        - **Real path** (atomate2 installed): Creates Flow via registry,
+          executes via jobflow.run_locally(), and collects from Store.
+        - **Mock path** (no atomate2): Stores workflow metadata in
+          _active_flows dict and returns success, enabling full testing
+          without dependencies.
+
         Args:
             workflow_type: Type of workflow (RELAX, SCF, BANDS, etc.)
             structure: Input structure (pymatgen Structure, AiiDA StructureData,
@@ -814,52 +821,117 @@ class Atomate2Bridge:
 
         Raises:
             MakerNotFoundError: If no Maker exists for this workflow/code
-            ImportError: If atomate2 is not available
-
-        Note:
-            This is a STUB implementation. Full implementation in Phase 3.
+              (real path only)
         """
-        # STUB implementation - returns placeholder result
         from crystalmath.protocols import WorkflowResult
 
-        # Convert structure to pymatgen if needed
-        pmg_structure = self._convert_structure(structure)
+        if self.is_available:
+            # Real path: atomate2 is installed
+            # Convert structure to pymatgen if needed
+            pmg_structure = self._convert_structure(structure)
 
-        # Get the appropriate Maker
-        maker = self._registry.get_maker(
-            workflow_type=workflow_type,
-            code=code,
-            protocol=protocol,
-            **(parameters or {}),
-        )
+            # Get the appropriate Maker
+            maker = self._registry.get_maker(
+                workflow_type=workflow_type,
+                code=code,
+                protocol=protocol,
+                **(parameters or {}),
+            )
 
-        # Create the Flow
-        flow = maker.make(pmg_structure, **kwargs)
+            # Create the Flow
+            flow = maker.make(pmg_structure, **kwargs)
 
-        # Create adapter
-        adapter = Atomate2FlowAdapter(
-            flow=flow,
-            execution_mode=self._execution_mode,
-            store=self._store,
-        )
+            # Execute via jobflow.run_locally()
+            try:
+                from jobflow import run_locally
 
-        # Track the flow
-        self._active_flows[flow.uuid] = adapter
+                responses = run_locally(flow, store=self._store)
 
-        # STUB: Return placeholder result
-        # Full implementation will execute the flow
-        return WorkflowResult(
-            success=True,
-            workflow_id=flow.uuid,
-            outputs={},
-            metadata={
-                "source": "atomate2",
-                "maker": maker.__class__.__name__,
+                # Track the flow as a dict
+                self._active_flows[flow.uuid] = {
+                    "state": "completed",
+                    "outputs": responses,
+                    "workflow_type": str(workflow_type),
+                    "code": code,
+                    "metadata": {
+                        "source": "atomate2",
+                        "maker": maker.__class__.__name__,
+                        "code": code,
+                        "protocol": protocol.value,
+                    },
+                }
+
+                return WorkflowResult(
+                    success=True,
+                    workflow_id=flow.uuid,
+                    outputs=responses,
+                    metadata={
+                        "source": "atomate2",
+                        "maker": maker.__class__.__name__,
+                        "code": code,
+                        "protocol": protocol.value,
+                        "status": "completed",
+                    },
+                )
+            except Exception as e:
+                self._active_flows[flow.uuid] = {
+                    "state": "failed",
+                    "outputs": {},
+                    "workflow_type": str(workflow_type),
+                    "code": code,
+                    "metadata": {
+                        "source": "atomate2",
+                        "error": str(e),
+                    },
+                }
+
+                return WorkflowResult(
+                    success=False,
+                    workflow_id=flow.uuid,
+                    outputs={},
+                    errors=[str(e)],
+                    metadata={
+                        "source": "atomate2",
+                        "status": "failed",
+                    },
+                )
+        else:
+            # Mock path: no atomate2 installed
+            import uuid
+
+            workflow_id = str(uuid.uuid4())
+
+            wf_type_str = (
+                workflow_type.value
+                if hasattr(workflow_type, "value")
+                else str(workflow_type)
+            )
+
+            self._active_flows[workflow_id] = {
+                "state": "submitted",
+                "outputs": {},
+                "workflow_type": wf_type_str,
                 "code": code,
-                "protocol": protocol.value,
-                "status": "submitted",
-            },
-        )
+                "metadata": {
+                    "source": "atomate2_mock",
+                    "code": code,
+                    "protocol": protocol.value,
+                    "parameters": parameters or {},
+                    "status": "submitted",
+                },
+            }
+
+            return WorkflowResult(
+                success=True,
+                workflow_id=workflow_id,
+                outputs={},
+                metadata={
+                    "source": "atomate2_mock",
+                    "code": code,
+                    "protocol": protocol.value,
+                    "status": "submitted",
+                },
+            )
 
     def submit_composite(
         self,
@@ -897,16 +969,13 @@ class Atomate2Bridge:
             workflow_id: Workflow identifier (Flow UUID)
 
         Returns:
-            Current workflow state
-
-        Note:
-            This is a STUB implementation. Full implementation in Phase 3.
+            Current workflow state string from _active_flows,
+            or "failed" for unknown workflow_ids
         """
         if workflow_id not in self._active_flows:
             return "failed"
 
-        # STUB: Return placeholder state
-        return "submitted"
+        return self._active_flows[workflow_id]["state"]
 
     def get_result(self, workflow_id: str) -> "WorkflowResult":
         """
@@ -916,10 +985,10 @@ class Atomate2Bridge:
             workflow_id: Workflow identifier (Flow UUID)
 
         Returns:
-            WorkflowResult with outputs and metadata
-
-        Note:
-            This is a STUB implementation. Full implementation in Phase 3.
+            WorkflowResult with outputs and metadata.
+            Returns outputs when state is "completed",
+            status metadata for non-completed workflows,
+            and error result for unknown workflow_ids.
         """
         from crystalmath.protocols import WorkflowResult
 
@@ -930,12 +999,23 @@ class Atomate2Bridge:
                 errors=[f"Workflow {workflow_id} not found"],
             )
 
-        # STUB: Return placeholder result
+        flow_data = self._active_flows[workflow_id]
+        state = flow_data["state"]
+
+        if state == "completed":
+            return WorkflowResult(
+                success=True,
+                workflow_id=workflow_id,
+                outputs=flow_data["outputs"],
+                metadata=flow_data.get("metadata", {}),
+            )
+
+        # Non-completed workflow: return result with status in metadata
         return WorkflowResult(
-            success=True,
+            success=False,
             workflow_id=workflow_id,
             outputs={},
-            metadata={"status": "stub_implementation"},
+            metadata={"status": state, **flow_data.get("metadata", {})},
         )
 
     def cancel(self, workflow_id: str) -> bool:
@@ -952,6 +1032,40 @@ class Atomate2Bridge:
             del self._active_flows[workflow_id]
             return True
         return False
+
+    def complete_workflow(self, workflow_id: str, outputs: Dict[str, Any]) -> bool:
+        """Mark a workflow as completed with given outputs. Testing hook.
+
+        Args:
+            workflow_id: Workflow identifier
+            outputs: Output data dict. Contract:
+                {"energy": float, "band_gap": float, "is_direct_gap": bool,
+                 "fermi_energy": float, "structure": dict}
+
+        Returns:
+            True if workflow was found and completed
+        """
+        if workflow_id not in self._active_flows:
+            return False
+        self._active_flows[workflow_id]["state"] = "completed"
+        self._active_flows[workflow_id]["outputs"] = outputs
+        return True
+
+    def inject_result(self, workflow_id: str, key: str, value: Any) -> bool:
+        """Inject a single result key into a workflow's outputs.
+
+        Args:
+            workflow_id: Workflow identifier
+            key: Output key to set
+            value: Output value
+
+        Returns:
+            True if workflow was found
+        """
+        if workflow_id not in self._active_flows:
+            return False
+        self._active_flows[workflow_id]["outputs"][key] = value
+        return True
 
     def _convert_structure(self, structure: Any) -> "Structure":
         """

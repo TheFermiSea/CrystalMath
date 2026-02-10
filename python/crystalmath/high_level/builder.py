@@ -870,12 +870,38 @@ class WorkflowBuilder:
         is_valid, issues = self.validate()
         if not is_valid:
             from .api import WorkflowValidationError
+
             raise WorkflowValidationError(f"Invalid workflow: {'; '.join(issues)}")
 
-        # Stub implementation - will create Workflow in Phase 3
-        raise NotImplementedError(
-            "WorkflowBuilder.build() will be implemented in Phase 3. "
-            "See docs/architecture/HIGH-LEVEL-API.md for design specification."
+        # Resolve structure if needed
+        structure = self._structure
+        if structure is None and self._structure_source:
+            if self._structure_source.startswith("file:"):
+                from .api import HighThroughput
+
+                path = self._structure_source[5:]
+                structure = HighThroughput._load_structure(path)
+            elif self._structure_source.startswith("mp:"):
+                from .api import HighThroughput
+
+                mp_id = self._structure_source[3:]
+                structure = HighThroughput._load_structure_from_mp(mp_id)
+
+        if structure is None and self._structure_source:
+            from .api import WorkflowValidationError
+
+            raise WorkflowValidationError(
+                f"Failed to load structure from source {self._structure_source!r}"
+            )
+
+        return Workflow(
+            structure=structure,
+            steps=self._steps,
+            cluster=self._cluster,
+            resources=self._resources,
+            progress_callback=self._progress_callback,
+            output_dir=self._output_dir,
+            recovery_strategy=self._recovery_strategy,
         )
 
     def validate(self) -> Tuple[bool, List[str]]:

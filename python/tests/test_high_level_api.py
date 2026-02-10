@@ -286,24 +286,28 @@ class TestValidateProperties:
 class TestHighThroughputEntryPoints:
     """Tests for HighThroughput entry point methods."""
 
-    def test_run_standard_analysis_raises_not_implemented(
+    def test_run_standard_analysis_returns_results(
         self, mock_structure: Mock
     ) -> None:
-        """Test that run_standard_analysis raises NotImplementedError."""
+        """Test that run_standard_analysis returns AnalysisResults."""
         from crystalmath.high_level.api import HighThroughput
+        from crystalmath.high_level.results import AnalysisResults
 
-        with pytest.raises(NotImplementedError):
-            HighThroughput.run_standard_analysis(
-                structure=mock_structure,
-                properties=["bands"],
-            )
+        result = HighThroughput.run_standard_analysis(
+            structure=mock_structure,
+            properties=["bands"],
+        )
+        assert isinstance(result, AnalysisResults)
+        assert result.workflow_id is not None
 
-    def test_from_mp_raises_not_implemented(self) -> None:
-        """Test that from_mp raises NotImplementedError."""
+    def test_from_mp_returns_results(self) -> None:
+        """Test that from_mp returns AnalysisResults (MP client unavailable)."""
         from crystalmath.high_level.api import HighThroughput
+        from crystalmath.high_level.results import AnalysisResults
 
-        with pytest.raises(NotImplementedError):
-            HighThroughput.from_mp("mp-149", properties=["bands"])
+        result = HighThroughput.from_mp("mp-149", properties=["bands"])
+        assert isinstance(result, AnalysisResults)
+        assert result.workflow_id is not None
 
     def test_from_poscar_raises_not_implemented(self, tmp_path: Path) -> None:
         """Test that from_poscar raises NotImplementedError."""
@@ -328,6 +332,15 @@ class TestHighThroughputEntryPoints:
 
         with pytest.raises(NotImplementedError):
             HighThroughput.from_aiida(12345, properties=["bands"])
+
+    def test_determine_workflow_steps(self) -> None:
+        """Test workflow step determination."""
+        from crystalmath.high_level.api import HighThroughput
+
+        steps = HighThroughput._determine_workflow_steps(["bands"], None)
+        step_names = [s[0] for s in steps]
+        assert "scf" in step_names
+        assert "bands" in step_names
 
 
 # =============================================================================
