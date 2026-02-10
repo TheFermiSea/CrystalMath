@@ -1286,27 +1286,16 @@ impl BridgeService for BridgeHandle {
     }
 
     /// Request creation of a band structure workflow using the provided workflow configuration JSON.
-    
     ///
-    
     /// The function wraps `config_json` into a JSON-RPC `create_band_structure_workflow` request and
-    
     /// enqueues it for the Python backend using the provided `request_id`.
-    
     ///
-    
     /// # Examples
-    
     ///
-    
     /// ```
-    
     /// // `handle` is an instance implementing the bridge service (e.g. BridgeHandle).
-    
     /// let config = r#"{"kpoints": 100, "parameters": {"ecut": 50}}"#;
-    
     /// handle.request_create_band_structure_workflow(config, 42).unwrap();
-    
     /// ```
     fn request_create_band_structure_workflow(
         &self,
@@ -1487,7 +1476,6 @@ fn bridge_worker_loop(
 /// // Build a JsonRpcRequest and a Py controller, then:
 /// // let resp = process_bridge_request(&py_controller, BridgeRequest::Rpc { rpc_request, request_id: 1 });
 /// ```
-/* no outer attributes */
 fn process_bridge_request(py_controller: &Py<PyAny>, request: BridgeRequest) -> BridgeResponse {
     match request {
         BridgeRequest::Shutdown => unreachable!("Shutdown handled in worker loop"),

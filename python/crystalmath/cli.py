@@ -124,9 +124,10 @@ def list(
 ) -> None:
     """
     Display a table of recent jobs with summary details.
-    
-    Parameters:
-    	limit (int): Maximum number of most-recent jobs to show.
+
+    Examples:
+        crystal list            # Show last 100 jobs
+        crystal list --limit 10 # Show last 10 jobs
     """
     try:
         controller = _get_controller()
@@ -252,12 +253,12 @@ def log(
 ) -> None:
     """
     Show the tail of a job's stdout and stderr logs.
-    
-    Prints the last `lines` lines of `stdout` and `stderr` for the job identified by `pk`, with `stderr` highlighted when present.
-    
-    Parameters:
-        pk (int): Job ID.
-        lines (int): Number of tail lines to display.
+
+    Prints the last `lines` lines for the job, with `stderr` highlighted.
+
+    Examples:
+        crystal log 42           # Show last 100 lines
+        crystal log 42 -n 50     # Show last 50 lines
     """
     try:
         controller = _get_controller()
@@ -291,13 +292,10 @@ def cancel(
     pk: int = typer.Argument(..., help="Job ID"),
 ) -> None:
     """
-    Cancel the job with the given primary key and report the outcome to the console.
-    
-    Parameters:
-        pk (int): Job ID to cancel.
-    
-    Raises:
-        typer.Exit: If an unexpected error occurs while attempting cancellation (exits with status code 1).
+    Cancel a running job.
+
+    Examples:
+        crystal cancel 42    # Cancel job 42
     """
     try:
         controller = _get_controller()
@@ -336,9 +334,9 @@ def _state_color(state: str) -> str:
 def _format_seconds(seconds: float) -> str:
     """
     Convert a duration in seconds to a compact human-readable string.
-    
+
     Returns:
-    	A string formatted with one decimal and a unit suffix: seconds ('s') if < 60, minutes ('m') if < 3600, otherwise hours ('h') — e.g. "3.5s", "2.0m", "1.2h".
+        A string like "3.5s", "2.0m", or "1.2h" depending on magnitude.
     """
     if seconds < 60:
         return f"{seconds:.1f}s"
