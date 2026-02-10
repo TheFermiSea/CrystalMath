@@ -33,7 +33,11 @@ pub fn render(frame: &mut Frame, help: &HelpState) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
         .title(" Help ")
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
 
     let inner_area = outer_block.inner(modal_area);
     frame.render_widget(outer_block, modal_area);
@@ -111,7 +115,9 @@ fn render_sidebar(frame: &mut Frame, help: &HelpState, area: Rect) {
         .border_style(border_style)
         .title(" Topics ")
         .title_style(if is_focused {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         });
@@ -176,7 +182,9 @@ fn render_content_pane(frame: &mut Frame, help: &HelpState, area: Rect) {
         .border_style(border_style)
         .title(format!(" {} ", title))
         .title_style(if is_focused {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         });

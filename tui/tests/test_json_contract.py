@@ -1143,21 +1143,34 @@ class TestMaterialsApiContract:
 
 
 class TestClusterConfigContract:
-    """Tests for ClusterConfig model serialization."""
+    """Tests for ClusterConfig model serialization.
+
+    Canonical schema (aligned between Python and Rust):
+        - cluster_type: "ssh" | "slurm" (Rust: ClusterType enum)
+        - status: "active" | "inactive" | "error" (Rust: ClusterStatus enum)
+        - key_file, remote_workdir, queue_name, max_concurrent: flat fields
+          (Python DB stores these in connection_config JSON, API flattens them)
+    """
 
     def test_cluster_response_from_api(self):
         """Test cluster config response format from get_clusters_json().
 
-        The API returns clusters in this format (from api.py):
+        The API returns clusters with flattened fields matching Rust ClusterConfig:
             {
                 "id": cluster.id,
                 "name": cluster.name,
                 "hostname": cluster.hostname,
                 "port": cluster.port,
                 "username": cluster.username,
-                "cluster_type": cluster.type,  # matches Rust ClusterConfig field
+                "cluster_type": cluster.type,
                 "status": cluster.status,
-                "connection_config": conn_config,
+                "key_file": "~/.ssh/id_ed25519",
+                "remote_workdir": "/scratch/user",
+                "queue_name": "compute",
+                "max_concurrent": 4,
+                "cry23_root": None,
+                "vasp_root": None,
+                "setup_commands": [],
             }
         """
         cluster = {
@@ -1166,11 +1179,15 @@ class TestClusterConfigContract:
             "hostname": "cluster.example.com",
             "port": 22,
             "username": "testuser",
-            "cluster_type": "slurm",  # Must use cluster_type to match Rust ClusterConfig
+            "cluster_type": "slurm",
             "status": "active",
-            "connection_config": {
-                "key_file": "~/.ssh/id_ed25519",
-            },
+            "key_file": "~/.ssh/id_ed25519",
+            "remote_workdir": "/scratch/user",
+            "queue_name": "compute",
+            "max_concurrent": 4,
+            "cry23_root": None,
+            "vasp_root": None,
+            "setup_commands": [],
         }
 
         # Verify required fields
@@ -1183,7 +1200,61 @@ class TestClusterConfigContract:
         assert isinstance(cluster["name"], str)
         assert isinstance(cluster["port"], int)
         assert cluster["cluster_type"] in ("ssh", "slurm")
-        assert cluster["status"] in ("active", "inactive", "error")
+        # Status must match Rust ClusterStatus enum (snake_case)
+        assert cluster["status"] in ("active", "inactive", "error", "testing")
+        # Flat fields (no more nested connection_config)
+        assert "key_file" in cluster
+        assert "max_concurrent" in cluster
+        assert isinstance(cluster["max_concurrent"], int)
+
+    def test_cluster_config_roundtrip_serde(self):
+        """Roundtrip test: verify JSON matches what Rust serde expects.
+
+        Rust struct ClusterConfig fields:
+            id: Option<i32>, name: String, cluster_type: ClusterType,
+            hostname: String, port: i32, username: String,
+            key_file: Option<String>, remote_workdir: Option<String>,
+            queue_name: Option<String>, max_concurrent: i32,
+            cry23_root: Option<String>, vasp_root: Option<String>,
+            setup_commands: Vec<String>, status: ClusterStatus
+        """
+        cluster_json = {
+            "id": 1,
+            "name": "hpc-cluster",
+            "cluster_type": "slurm",
+            "hostname": "hpc.example.com",
+            "port": 22,
+            "username": "researcher",
+            "key_file": "~/.ssh/id_ed25519",
+            "remote_workdir": "/scratch/researcher",
+            "queue_name": "gpu",
+            "max_concurrent": 8,
+            "cry23_root": "/opt/crystal23",
+            "vasp_root": None,
+            "setup_commands": ["module load crystal/23"],
+            "status": "active",
+        }
+
+        # Verify all Rust ClusterConfig fields are present
+        rust_fields = {
+            "id", "name", "cluster_type", "hostname", "port", "username",
+            "key_file", "remote_workdir", "queue_name", "max_concurrent",
+            "cry23_root", "vasp_root", "setup_commands", "status",
+        }
+        assert rust_fields == set(cluster_json.keys()), (
+            f"Missing fields: {rust_fields - set(cluster_json.keys())}, "
+            f"Extra fields: {set(cluster_json.keys()) - rust_fields}"
+        )
+
+        # Verify serialization roundtrip
+        serialized = json.dumps(cluster_json)
+        deserialized = json.loads(serialized)
+        assert deserialized == cluster_json
+
+        # Wrap in ApiResponse and validate
+        response = build_ok_response(cluster_json)
+        errors = validate_rust_api_response_schema(response)
+        assert not errors, f"Schema validation errors: {errors}"
 
     def test_connection_test_result(self):
         """Test cluster connection test response format.
@@ -1202,20 +1273,37 @@ class TestClusterConfigContract:
         """
         # Success case
         success_result = {
-            "connected": True,
+            "success": True,
             "hostname": "cluster01",
             "system_info": "Linux cluster01 5.4.0",
-            "message": "Successfully connected",
         }
 
         response = build_ok_response(success_result)
         errors = validate_rust_api_response_schema(response)
         assert not errors, f"Schema validation errors: {errors}"
 
-        # Verify field types
+        # Verify field types match Rust ClusterConnectionResult
         data = response["data"]
-        assert isinstance(data["connected"], bool)
+        assert isinstance(data["success"], bool)
+        assert data["success"] is True
         assert isinstance(data["hostname"], str)
+        assert isinstance(data["system_info"], str)
+        # error field should be absent (defaults to None in Rust via serde(default))
+        assert "error" not in data
+
+    def test_connection_test_result_roundtrip_serde(self):
+        """Roundtrip test for ClusterConnectionResult.
+
+        Verifies the exact field set matches Rust serde expectations.
+        """
+        # Success case - no error field
+        success = {"success": True, "hostname": "node01", "system_info": "Linux 5.4"}
+        rust_fields_success = {"success", "hostname", "system_info"}
+        assert set(success.keys()) == rust_fields_success
+
+        # Error would come via ApiResponse error envelope, not inside data
+        # So a failed connection returns _error_response("CONNECTION_FAILED", ...)
+        # not {"success": false, "error": "..."}
 
 
 class TestSlurmCancelContract:

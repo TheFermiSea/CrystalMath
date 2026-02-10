@@ -264,16 +264,23 @@ impl ClusterType {
 ///
 /// # Serialization
 ///
-/// Uses snake_case for JSON: `"active"`, `"offline"`, `"testing"`.
+/// Uses snake_case for JSON: `"active"`, `"inactive"`, `"error"`, `"testing"`.
+///
+/// # Canonical Values (Python DB)
+///
+/// The Python database stores `"active"`, `"inactive"`, `"error"`.
+/// `Testing` is a Rust-only transient state used during connection tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ClusterStatus {
     /// Cluster is online and accepting jobs
     #[default]
     Active,
-    /// Cluster is offline or unreachable
-    Offline,
-    /// Cluster is being tested for connectivity
+    /// Cluster has been disabled or is not in use
+    Inactive,
+    /// Cluster encountered a connection error
+    Error,
+    /// Cluster is being tested for connectivity (Rust-only transient state)
     Testing,
     /// Forward-compatible fallback for unknown statuses
     #[serde(other)]
@@ -285,13 +292,15 @@ impl ClusterStatus {
     ///
     /// Returns properly-cased names suitable for UI display:
     /// - `Active` → `"Active"`
-    /// - `Offline` → `"Offline"`
+    /// - `Inactive` → `"Inactive"`
+    /// - `Error` → `"Error"`
     /// - `Testing` → `"Testing"`
     /// - `Unknown` → `"Unknown"`
     pub fn as_str(&self) -> &'static str {
         match self {
             ClusterStatus::Active => "Active",
-            ClusterStatus::Offline => "Offline",
+            ClusterStatus::Inactive => "Inactive",
+            ClusterStatus::Error => "Error",
             ClusterStatus::Testing => "Testing",
             ClusterStatus::Unknown => "Unknown",
         }
@@ -308,13 +317,15 @@ impl ClusterStatus {
     ///
     /// Color scheme designed for quick visual scanning:
     /// - Green = Active (ready for jobs)
-    /// - Red = Offline (unavailable)
+    /// - DarkGray = Inactive (disabled)
+    /// - Red = Error (connection problem)
     /// - Yellow = Testing (in progress)
     /// - Gray = Unknown (unknown state)
     pub fn color(&self) -> Color {
         match self {
             ClusterStatus::Active => Color::Green,
-            ClusterStatus::Offline => Color::Red,
+            ClusterStatus::Inactive => Color::DarkGray,
+            ClusterStatus::Error => Color::Red,
             ClusterStatus::Testing => Color::Yellow,
             ClusterStatus::Unknown => Color::Gray,
         }
@@ -1466,7 +1477,8 @@ impl ErrorSuggestion {
 
     /// Add an INCAR change suggestion.
     pub fn with_incar_change(mut self, tag: &str, value: &str) -> Self {
-        self.incar_changes.insert(tag.to_string(), value.to_string());
+        self.incar_changes
+            .insert(tag.to_string(), value.to_string());
         self
     }
 }
@@ -1941,8 +1953,12 @@ mod tests {
             ClusterStatus::Active
         );
         assert_eq!(
-            serde_json::from_str::<ClusterStatus>("\"offline\"").unwrap(),
-            ClusterStatus::Offline
+            serde_json::from_str::<ClusterStatus>("\"inactive\"").unwrap(),
+            ClusterStatus::Inactive
+        );
+        assert_eq!(
+            serde_json::from_str::<ClusterStatus>("\"error\"").unwrap(),
+            ClusterStatus::Error
         );
         assert_eq!(
             serde_json::from_str::<ClusterStatus>("\"testing\"").unwrap(),
@@ -1957,8 +1973,12 @@ mod tests {
             "\"active\""
         );
         assert_eq!(
-            serde_json::to_string(&ClusterStatus::Offline).unwrap(),
-            "\"offline\""
+            serde_json::to_string(&ClusterStatus::Inactive).unwrap(),
+            "\"inactive\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ClusterStatus::Error).unwrap(),
+            "\"error\""
         );
         assert_eq!(
             serde_json::to_string(&ClusterStatus::Testing).unwrap(),
@@ -1979,7 +1999,8 @@ mod tests {
     #[test]
     fn test_cluster_status_display() {
         assert_eq!(ClusterStatus::Active.as_str(), "Active");
-        assert_eq!(ClusterStatus::Offline.as_str(), "Offline");
+        assert_eq!(ClusterStatus::Inactive.as_str(), "Inactive");
+        assert_eq!(ClusterStatus::Error.as_str(), "Error");
         assert_eq!(ClusterStatus::Testing.as_str(), "Testing");
         assert_eq!(ClusterStatus::Unknown.as_str(), "Unknown");
     }
@@ -1987,7 +2008,8 @@ mod tests {
     #[test]
     fn test_cluster_status_is_available() {
         assert!(ClusterStatus::Active.is_available());
-        assert!(!ClusterStatus::Offline.is_available());
+        assert!(!ClusterStatus::Inactive.is_available());
+        assert!(!ClusterStatus::Error.is_available());
         assert!(!ClusterStatus::Testing.is_available());
         assert!(!ClusterStatus::Unknown.is_available());
     }
@@ -2001,7 +2023,8 @@ mod tests {
     fn test_cluster_status_color() {
         use ratatui::style::Color;
         assert_eq!(ClusterStatus::Active.color(), Color::Green);
-        assert_eq!(ClusterStatus::Offline.color(), Color::Red);
+        assert_eq!(ClusterStatus::Inactive.color(), Color::DarkGray);
+        assert_eq!(ClusterStatus::Error.color(), Color::Red);
         assert_eq!(ClusterStatus::Testing.color(), Color::Yellow);
         assert_eq!(ClusterStatus::Unknown.color(), Color::Gray);
     }

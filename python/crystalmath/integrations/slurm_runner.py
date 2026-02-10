@@ -149,6 +149,7 @@ class SLURMConfig:
     default_partition: Optional[str] = None
     default_account: Optional[str] = None
     default_qos: Optional[str] = None
+    allow_insecure: bool = False  # Disable SSH host key verification (opt-in)
 
     @classmethod
     def from_cluster_profile(cls, profile: "ClusterProfile") -> "SLURMConfig":
@@ -292,6 +293,24 @@ class SLURMWorkflowRunner:
         config = SLURMConfig.from_cluster_profile(profile)
         return cls(config=config, default_code=default_code)
 
+    @staticmethod
+    def _run_sync(coro):
+        """Run an async coroutine from synchronous context.
+
+        Uses asyncio.run() which safely creates a new event loop.
+        Raises RuntimeError if called from within a running event loop
+        (caller should use the async method directly).
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop running — safe to create one
+            return asyncio.run(coro)
+        raise RuntimeError(
+            "Cannot call sync API from within a running event loop. "
+            "Use the async method (e.g., submit_async, get_status_async) instead."
+        )
+
     # =========================================================================
     # WorkflowRunner Protocol Properties
     # =========================================================================
@@ -334,7 +353,7 @@ class SLURMWorkflowRunner:
     # WorkflowRunner Protocol Methods
     # =========================================================================
 
-    def submit(
+    async def submit_async(
         self,
         workflow_type: "WorkflowType",
         structure: Any,
@@ -344,7 +363,7 @@ class SLURMWorkflowRunner:
         **kwargs: Any,
     ) -> "WorkflowResult":
         """
-        Submit a workflow for execution via SLURM.
+        Submit a workflow for execution via SLURM (async).
 
         This method:
         1. Generates input files for the DFT code
@@ -381,17 +400,15 @@ class SLURMWorkflowRunner:
         )
 
         try:
-            # Run async submission in event loop
-            slurm_job_id, remote_dir = asyncio.get_event_loop().run_until_complete(
-                self._submit_async(
-                    workflow_id=workflow_id,
-                    workflow_type=workflow_type,
-                    structure=structure,
-                    parameters=parameters,
-                    code=dft_code,
-                    resources=resources,
-                    **kwargs,
-                )
+            # Await async submission directly
+            slurm_job_id, remote_dir = await self._submit_async(
+                workflow_id=workflow_id,
+                workflow_type=workflow_type,
+                structure=structure,
+                parameters=parameters,
+                code=dft_code,
+                resources=resources,
+                **kwargs,
             )
 
             # Track job
@@ -431,6 +448,22 @@ class SLURMWorkflowRunner:
                 errors=[str(e)],
                 metadata={"runner": "slurm", "status": "failed"},
             )
+
+    def submit(
+        self,
+        workflow_type: "WorkflowType",
+        structure: Any,
+        parameters: Dict[str, Any],
+        code: Optional["DFTCode"] = None,
+        resources: Optional["ResourceRequirements"] = None,
+        **kwargs: Any,
+    ) -> "WorkflowResult":
+        """Sync entry point for submit. Use submit_async() in async contexts."""
+        return self._run_sync(
+            self.submit_async(
+                workflow_type, structure, parameters, code, resources, **kwargs
+            )
+        )
 
     async def _submit_async(
         self,
@@ -521,6 +554,28 @@ class SLURMWorkflowRunner:
             )
             self._connection_manager = "asyncssh"  # Flag for direct mode
 
+    def _get_known_hosts(self) -> Optional[str]:
+        """Resolve known_hosts file for SSH host key verification.
+
+        Returns:
+            Path to known_hosts file, or None to skip verification
+            (only when allow_insecure is explicitly True).
+        """
+        if self._config.allow_insecure:
+            logger.warning(
+                "SSH host key verification DISABLED for %s. "
+                "Set allow_insecure=False in SLURMConfig for production use.",
+                self._config.cluster_host,
+            )
+            return None
+
+        known_hosts = Path.home() / ".ssh" / "known_hosts"
+        if known_hosts.exists():
+            return str(known_hosts)
+
+        # Default: let asyncssh use its own defaults (will verify)
+        return ()  # type: ignore[return-value]
+
     async def _submit_to_slurm(
         self,
         work_dir: Path,
@@ -550,7 +605,7 @@ class SLURMWorkflowRunner:
                 host=self._config.cluster_host,
                 port=self._config.cluster_port,
                 username=self._config.username,
-                known_hosts=None,  # TODO: proper host key handling
+                known_hosts=self._get_known_hosts(),
             ) as conn:
                 # Create remote directory
                 await conn.run(f"mkdir -p {shlex.quote(remote_dir)}")
@@ -1105,14 +1160,14 @@ class SLURMWorkflowRunner:
 
         return input_path
 
-    def submit_composite(
+    async def submit_composite_async(
         self,
         steps: Sequence["WorkflowStep"],
         structure: Any,
         **kwargs: Any,
     ) -> "WorkflowResult":
         """
-        Submit a composite multi-step workflow.
+        Submit a composite multi-step workflow (async).
 
         Creates a SLURM job array or dependent jobs for multi-step workflows.
 
@@ -1145,7 +1200,7 @@ class SLURMWorkflowRunner:
 
         # Submit first step
         first_step = steps[0]
-        result = self.submit(
+        result = await self.submit_async(
             workflow_type=first_step.workflow_type,
             structure=structure,
             parameters=first_step.parameters,
@@ -1167,9 +1222,20 @@ class SLURMWorkflowRunner:
 
         return result
 
-    def get_status(self, workflow_id: str) -> "WorkflowState":
+    def submit_composite(
+        self,
+        steps: Sequence["WorkflowStep"],
+        structure: Any,
+        **kwargs: Any,
+    ) -> "WorkflowResult":
+        """Sync entry point for submit_composite. Use submit_composite_async() in async contexts."""
+        return self._run_sync(
+            self.submit_composite_async(steps, structure, **kwargs)
+        )
+
+    async def get_status_async(self, workflow_id: str) -> "WorkflowState":
         """
-        Get current state of a workflow.
+        Get current state of a workflow (async).
 
         Args:
             workflow_id: Workflow identifier
@@ -1184,9 +1250,7 @@ class SLURMWorkflowRunner:
 
         # Query SLURM for current state
         try:
-            state = asyncio.get_event_loop().run_until_complete(
-                self._get_slurm_status(job_info.slurm_job_id)
-            )
+            state = await self._get_slurm_status(job_info.slurm_job_id)
             job_info.state = state
         except Exception as e:
             logger.warning(f"Failed to get SLURM status: {e}")
@@ -1202,6 +1266,10 @@ class SLURMWorkflowRunner:
         }
 
         return state_map.get(job_info.state, "running")
+
+    def get_status(self, workflow_id: str) -> "WorkflowState":
+        """Sync entry point for get_status. Use get_status_async() in async contexts."""
+        return self._run_sync(self.get_status_async(workflow_id))
 
     async def _get_slurm_status(self, slurm_job_id: str) -> str:
         """Get SLURM job state via squeue.
@@ -1223,7 +1291,7 @@ class SLURMWorkflowRunner:
                 host=self._config.cluster_host,
                 port=self._config.cluster_port,
                 username=self._config.username,
-                known_hosts=None,
+                known_hosts=self._get_known_hosts(),
             ) as conn:
                 result = await conn.run(cmd, check=False)
                 return result.stdout.strip() or "UNKNOWN"
@@ -1232,9 +1300,9 @@ class SLURMWorkflowRunner:
                 result = await conn.run(cmd, check=False)
                 return result.stdout.strip() or "UNKNOWN"
 
-    def get_result(self, workflow_id: str) -> "WorkflowResult":
+    async def get_result_async(self, workflow_id: str) -> "WorkflowResult":
         """
-        Get complete result of a finished workflow.
+        Get complete result of a finished workflow (async).
 
         Args:
             workflow_id: Workflow identifier
@@ -1254,7 +1322,7 @@ class SLURMWorkflowRunner:
         job_info = self._jobs[workflow_id]
 
         # Check if complete
-        state = self.get_status(workflow_id)
+        state = await self.get_status_async(workflow_id)
         if state not in ("completed", "failed"):
             return WorkflowResult(
                 success=True,
@@ -1268,9 +1336,7 @@ class SLURMWorkflowRunner:
 
         # Retrieve results
         try:
-            outputs = asyncio.get_event_loop().run_until_complete(
-                self._retrieve_results(job_info)
-            )
+            outputs = await self._retrieve_results(job_info)
             job_info.outputs = outputs
             job_info.completed_at = datetime.now()
 
@@ -1290,6 +1356,10 @@ class SLURMWorkflowRunner:
                 workflow_id=workflow_id,
                 errors=[str(e)],
             )
+
+    def get_result(self, workflow_id: str) -> "WorkflowResult":
+        """Sync entry point for get_result. Use get_result_async() in async contexts."""
+        return self._run_sync(self.get_result_async(workflow_id))
 
     async def _retrieve_results(self, job_info: SLURMJobInfo) -> Dict[str, Any]:
         """Retrieve results from completed job.
@@ -1333,7 +1403,7 @@ class SLURMWorkflowRunner:
                     host=self._config.cluster_host,
                     port=self._config.cluster_port,
                     username=self._config.username,
-                    known_hosts=None,
+                    known_hosts=self._get_known_hosts(),
                 ) as conn:
                     async with conn.start_sftp_client() as sftp:
                         for filename in files_to_get:
@@ -1442,9 +1512,9 @@ class SLURMWorkflowRunner:
 
         return results
 
-    def cancel(self, workflow_id: str) -> bool:
+    async def cancel_async(self, workflow_id: str) -> bool:
         """
-        Cancel a running workflow.
+        Cancel a running workflow (async).
 
         Args:
             workflow_id: Workflow identifier
@@ -1458,15 +1528,17 @@ class SLURMWorkflowRunner:
         job_info = self._jobs[workflow_id]
 
         try:
-            asyncio.get_event_loop().run_until_complete(
-                self._cancel_slurm_job(job_info.slurm_job_id)
-            )
+            await self._cancel_slurm_job(job_info.slurm_job_id)
             job_info.state = "CANCELLED"
             return True
 
         except Exception as e:
             logger.error(f"Failed to cancel job: {e}")
             return False
+
+    def cancel(self, workflow_id: str) -> bool:
+        """Sync entry point for cancel. Use cancel_async() in async contexts."""
+        return self._run_sync(self.cancel_async(workflow_id))
 
     async def _cancel_slurm_job(self, slurm_job_id: str) -> None:
         """Cancel SLURM job via scancel."""
@@ -1481,20 +1553,20 @@ class SLURMWorkflowRunner:
                 host=self._config.cluster_host,
                 port=self._config.cluster_port,
                 username=self._config.username,
-                known_hosts=None,
+                known_hosts=self._get_known_hosts(),
             ) as conn:
                 await conn.run(cmd, check=False)
         else:
             async with self._connection_manager.get_connection(1) as conn:
                 await conn.run(cmd, check=False)
 
-    def list_workflows(
+    async def list_workflows_async(
         self,
         state: Optional["WorkflowState"] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """
-        List workflows with optional state filter.
+        List workflows with optional state filter (async).
 
         Args:
             state: Filter by state (None for all)
@@ -1506,7 +1578,7 @@ class SLURMWorkflowRunner:
         workflows = []
 
         for wf_id, job_info in list(self._jobs.items())[:limit]:
-            current_state = self.get_status(wf_id)
+            current_state = await self.get_status_async(wf_id)
 
             if state is None or current_state == state:
                 workflows.append({
@@ -1523,6 +1595,14 @@ class SLURMWorkflowRunner:
                 })
 
         return workflows
+
+    def list_workflows(
+        self,
+        state: Optional["WorkflowState"] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Sync entry point for list_workflows. Use list_workflows_async() in async contexts."""
+        return self._run_sync(self.list_workflows_async(state, limit))
 
 
 # =============================================================================

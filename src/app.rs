@@ -855,10 +855,8 @@ impl<'a> App<'a> {
                         self.clear_error();
                         if pending_retry {
                             let Some(workflow_id) = retry_workflow_id else {
-                                self.workflow_list.set_status(
-                                    "Retry failed: missing workflow link",
-                                    true,
-                                );
+                                self.workflow_list
+                                    .set_status("Retry failed: missing workflow link", true);
                                 return;
                             };
                             let Some(ref d) = self.current_job_details else {
@@ -868,10 +866,8 @@ impl<'a> App<'a> {
                             };
                             let input_content = d.input_file.clone().unwrap_or_default();
                             if input_content.trim().is_empty() {
-                                self.workflow_list.set_status(
-                                    "Retry failed: missing input content",
-                                    true,
-                                );
+                                self.workflow_list
+                                    .set_status("Retry failed: missing input content", true);
                                 return;
                             }
                             let dft_code = d.dft_code.unwrap_or(crate::models::DftCode::Crystal);
@@ -906,10 +902,8 @@ impl<'a> App<'a> {
                                     );
                                 }
                                 Err(e) => {
-                                    self.workflow_list.set_status(
-                                        format!("Retry failed: {}", e),
-                                        true,
-                                    );
+                                    self.workflow_list
+                                        .set_status(format!("Retry failed: {}", e), true);
                                 }
                             }
                         }
@@ -918,10 +912,8 @@ impl<'a> App<'a> {
                         if self.pending_retry_job_pk.is_some() {
                             self.pending_retry_job_pk = None;
                             self.pending_retry_workflow_id = None;
-                            self.workflow_list.set_status(
-                                format!("Retry failed: {}", e),
-                                true,
-                            );
+                            self.workflow_list
+                                .set_status(format!("Retry failed: {}", e), true);
                         }
                         self.set_error(format!("Failed to fetch job details: {}", e));
                     }
@@ -1221,8 +1213,7 @@ impl<'a> App<'a> {
                         self.cluster_manager.loading = false;
                         match result {
                             Ok(()) => {
-                                self.cluster_manager
-                                    .set_status("Cluster updated", false);
+                                self.cluster_manager.set_status("Cluster updated", false);
                                 self.cluster_manager.cancel(); // Return to list view
                                 self.request_fetch_clusters(); // Refresh the list
                             }
@@ -1276,7 +1267,8 @@ impl<'a> App<'a> {
                     }
                 }
                 BridgeResponse::Templates { request_id, result } => {
-                    if request_id == self.template_browser.request_id && self.template_browser.active
+                    if request_id == self.template_browser.request_id
+                        && self.template_browser.active
                     {
                         self.template_browser.loading = false;
                         match result {
@@ -1345,8 +1337,7 @@ impl<'a> App<'a> {
                                 if let Ok(response) =
                                     serde_json::from_str::<serde_json::Value>(&workflow_json)
                                 {
-                                    if response.get("ok").and_then(|v| v.as_bool()) == Some(false)
-                                    {
+                                    if response.get("ok").and_then(|v| v.as_bool()) == Some(false) {
                                         let msg = response
                                             .get("error")
                                             .and_then(|e| e.get("message"))
@@ -1367,15 +1358,13 @@ impl<'a> App<'a> {
                                         response
                                     };
 
-                                    if let Some(wf) = data
-                                        .get("workflow_json")
-                                        .and_then(|v| v.as_str())
+                                    if let Some(wf) =
+                                        data.get("workflow_json").and_then(|v| v.as_str())
                                     {
                                         workflow_json_str = wf.to_string();
                                     }
 
-                                    if let Some(arr) =
-                                        data.get("inputs").and_then(|i| i.as_array())
+                                    if let Some(arr) = data.get("inputs").and_then(|i| i.as_array())
                                     {
                                         inputs = arr.clone();
                                     }
@@ -1440,7 +1429,9 @@ impl<'a> App<'a> {
                                         );
                                         cluster_id = None;
                                     }
-                                } else if let Some(cluster) = self.cluster_manager.selected_cluster() {
+                                } else if let Some(cluster) =
+                                    self.cluster_manager.selected_cluster()
+                                {
                                     if let Some(cid) = cluster.id {
                                         cluster_id = Some(cid);
                                         runner_type = match cluster.cluster_type {
@@ -1461,11 +1452,10 @@ impl<'a> App<'a> {
                                         job_ids: Vec::new(),
                                         expected_jobs: input_count,
                                         workflow_type,
-                                        results_cache: self
-                                            .build_workflow_results_cache(
-                                                workflow_type,
-                                                &workflow_json_str,
-                                            ),
+                                        results_cache: self.build_workflow_results_cache(
+                                            workflow_type,
+                                            &workflow_json_str,
+                                        ),
                                     },
                                 );
 
@@ -1475,9 +1465,8 @@ impl<'a> App<'a> {
                                             .to_string(),
                                         false,
                                     );
-                                    self.workflow_config.status = Some(
-                                        "Workflow created (no inputs generated)".to_string(),
-                                    );
+                                    self.workflow_config.status =
+                                        Some("Workflow created (no inputs generated)".to_string());
                                     self.mark_dirty();
                                     continue;
                                 }
@@ -1490,13 +1479,9 @@ impl<'a> App<'a> {
                                         .and_then(|v| v.as_str())
                                         .filter(|s| !s.trim().is_empty())
                                         .map(|s| s.to_string())
-                                        .unwrap_or_else(|| {
-                                            format!("{}_{}", workflow_id, idx + 1)
-                                        });
-                                    let content = input
-                                        .get("content")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
+                                        .unwrap_or_else(|| format!("{}_{}", workflow_id, idx + 1));
+                                    let content =
+                                        input.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
                                     if content.trim().is_empty() {
                                         warn!(
@@ -1507,12 +1492,10 @@ impl<'a> App<'a> {
                                         continue;
                                     }
 
-                                    let mut submission = crate::models::JobSubmission::new(
-                                        &name,
-                                        dft_code,
-                                    )
-                                    .with_input_content(content)
-                                    .with_workflow_id(&workflow_id);
+                                    let mut submission =
+                                        crate::models::JobSubmission::new(&name, dft_code)
+                                            .with_input_content(content)
+                                            .with_workflow_id(&workflow_id);
 
                                     if runner_type != crate::models::RunnerType::Local {
                                         submission = submission.with_runner_type(runner_type);
@@ -1529,10 +1512,7 @@ impl<'a> App<'a> {
                                         .request_submit_job(&submission, submit_request_id)
                                     {
                                         self.workflow_job_requests.remove(&submit_request_id);
-                                        warn!(
-                                            "Failed to submit workflow job {}: {}",
-                                            name, e
-                                        );
+                                        warn!("Failed to submit workflow job {}: {}", name, e);
                                     } else {
                                         submitted += 1;
                                     }
@@ -1549,10 +1529,8 @@ impl<'a> App<'a> {
                                     ),
                                     false,
                                 );
-                                self.workflow_config.status = Some(format!(
-                                    "Submitting {} jobs...",
-                                    submitted
-                                ));
+                                self.workflow_config.status =
+                                    Some(format!("Submitting {} jobs...", submitted));
                                 info!(
                                     "Workflow {} created with {} inputs (submitted {})",
                                     workflow_id, input_count, submitted
@@ -1588,7 +1566,10 @@ impl<'a> App<'a> {
                                 match rpc_response.into_result() {
                                     Ok(value) => {
                                         // DEBUG: Log the raw response
-                                        debug!("recipes.list raw response: {}", serde_json::to_string(&value).unwrap_or_default());
+                                        debug!(
+                                            "recipes.list raw response: {}",
+                                            serde_json::to_string(&value).unwrap_or_default()
+                                        );
                                         // Deserialize the JSON value into RecipesListResponse
                                         match serde_json::from_value::<
                                             crate::models::RecipesListResponse,
@@ -1612,7 +1593,10 @@ impl<'a> App<'a> {
                                                     engine_status,
                                                     response.error,
                                                 );
-                                                info!("Recipe browser updated: quacc_installed={}", quacc_installed);
+                                                info!(
+                                                    "Recipe browser updated: quacc_installed={}",
+                                                    quacc_installed
+                                                );
                                             }
                                             Err(e) => {
                                                 self.recipe_browser.error =
@@ -1727,8 +1711,9 @@ impl<'a> App<'a> {
                                         // First unwrap the ApiResponse wrapper
                                         let inner_value = match serde_json::from_value::<
                                             ApiResponse<serde_json::Value>,
-                                        >(value.clone())
-                                        {
+                                        >(
+                                            value.clone()
+                                        ) {
                                             Ok(api_response) => match api_response.into_result() {
                                                 Ok(data) => data,
                                                 Err(e) => {
@@ -1751,7 +1736,8 @@ impl<'a> App<'a> {
                                                     response.available, response.quacc_available,
                                                     response.aiida_available, response.workflows
                                                 );
-                                                let combined_available = response.available || response.quacc_available;
+                                                let combined_available =
+                                                    response.available || response.quacc_available;
                                                 info!("Setting workflow availability: combined={}, aiida={}", combined_available, response.aiida_available);
                                                 self.workflow_state.set_availability(
                                                     combined_available,
@@ -1904,9 +1890,14 @@ impl<'a> App<'a> {
                                                         .selected_for_import
                                                         .as_ref()
                                                         .map(|mp_id| {
-                                                            format!("{}_vasp.txt", mp_id.replace('-', "_"))
+                                                            format!(
+                                                                "{}_vasp.txt",
+                                                                mp_id.replace('-', "_")
+                                                            )
                                                         })
-                                                        .unwrap_or_else(|| "vasp_inputs.txt".to_string());
+                                                        .unwrap_or_else(|| {
+                                                            "vasp_inputs.txt".to_string()
+                                                        });
 
                                                     // Store POSCAR for potential quacc job submission
                                                     self.materials.generated_poscar =
@@ -1973,45 +1964,41 @@ impl<'a> App<'a> {
                     {
                         self.vasp_input_state.status = None;
                         match result {
-                            Ok(rpc_response) => {
-                                match rpc_response.into_result() {
-                                    Ok(value) => {
-                                        match serde_json::from_value::<
-                                            ApiResponse<crate::models::ValidationResult>,
-                                        >(value)
-                                        {
-                                            Ok(api_response) => match api_response.into_result() {
-                                                Ok(val_result) => {
-                                                    if val_result.valid {
-                                                        self.vasp_input_state.status =
-                                                            Some("Validation passed!".to_string());
-                                                    } else {
-                                                        self.vasp_input_state.set_error(
-                                                            "Validation failed. See details."
-                                                                .to_string(),
-                                                        );
-                                                    }
-                                                    self.vasp_input_state.validation =
-                                                        Some(val_result);
+                            Ok(rpc_response) => match rpc_response.into_result() {
+                                Ok(value) => {
+                                    match serde_json::from_value::<
+                                        ApiResponse<crate::models::ValidationResult>,
+                                    >(value)
+                                    {
+                                        Ok(api_response) => match api_response.into_result() {
+                                            Ok(val_result) => {
+                                                if val_result.valid {
+                                                    self.vasp_input_state.status =
+                                                        Some("Validation passed!".to_string());
+                                                } else {
+                                                    self.vasp_input_state.set_error(
+                                                        "Validation failed. See details."
+                                                            .to_string(),
+                                                    );
                                                 }
-                                                Err(e) => {
-                                                    self.vasp_input_state.set_error(e);
-                                                }
-                                            },
-                                            Err(e) => {
-                                                self.vasp_input_state.set_error(format!(
-                                                    "Failed to parse validation result: {}",
-                                                    e
-                                                ));
+                                                self.vasp_input_state.validation = Some(val_result);
                                             }
+                                            Err(e) => {
+                                                self.vasp_input_state.set_error(e);
+                                            }
+                                        },
+                                        Err(e) => {
+                                            self.vasp_input_state.set_error(format!(
+                                                "Failed to parse validation result: {}",
+                                                e
+                                            ));
                                         }
                                     }
-                                    Err(e) => {
-                                        self.vasp_input_state
-                                            .set_error(format!("RPC error: {}", e));
-                                    }
                                 }
-                            }
+                                Err(e) => {
+                                    self.vasp_input_state.set_error(format!("RPC error: {}", e));
+                                }
+                            },
                             Err(e) => {
                                 self.vasp_input_state
                                     .set_error(format!("Bridge error: {}", e));
@@ -2033,50 +2020,71 @@ impl<'a> App<'a> {
                                             Ok(api_response) => match api_response.into_result() {
                                                 Ok(submit_response) => {
                                                     if submit_response.status == "pending" {
-                                                        let job_id = submit_response
-                                                            .job_id
-                                                            .unwrap_or_else(|| "unknown".to_string());
-                                                        self.materials.submit_success(job_id.clone());
+                                                        let job_id =
+                                                            submit_response.job_id.unwrap_or_else(
+                                                                || "unknown".to_string(),
+                                                            );
+                                                        self.materials
+                                                            .submit_success(job_id.clone());
                                                         self.materials.set_status(
                                                             &format!("Job submitted: {}", job_id),
                                                             false,
                                                         );
-                                                        info!("Job submitted successfully: {}", job_id);
+                                                        info!(
+                                                            "Job submitted successfully: {}",
+                                                            job_id
+                                                        );
                                                     } else {
-                                                        let error = submit_response
-                                                            .error
-                                                            .unwrap_or_else(|| "Unknown error".to_string());
-                                                        self.materials.submit_failure(error.clone());
+                                                        let error =
+                                                            submit_response.error.unwrap_or_else(
+                                                                || "Unknown error".to_string(),
+                                                            );
                                                         self.materials
-                                                            .set_status(&format!("Submit error: {}", error), true);
+                                                            .submit_failure(error.clone());
+                                                        self.materials.set_status(
+                                                            &format!("Submit error: {}", error),
+                                                            true,
+                                                        );
                                                         warn!("Job submission failed: {}", error);
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    self.materials.submit_failure(format!("API error: {}", e));
-                                                    self.materials
-                                                        .set_status(&format!("API error: {}", e), true);
+                                                    self.materials.submit_failure(format!(
+                                                        "API error: {}",
+                                                        e
+                                                    ));
+                                                    self.materials.set_status(
+                                                        &format!("API error: {}", e),
+                                                        true,
+                                                    );
                                                     error!("Job submit API error: {}", e);
                                                 }
                                             },
                                             Err(e) => {
                                                 self.materials
                                                     .submit_failure(format!("Parse error: {}", e));
-                                                self.materials
-                                                    .set_status(&format!("Parse error: {}", e), true);
-                                                error!("Failed to deserialize submit response: {}", e);
+                                                self.materials.set_status(
+                                                    &format!("Parse error: {}", e),
+                                                    true,
+                                                );
+                                                error!(
+                                                    "Failed to deserialize submit response: {}",
+                                                    e
+                                                );
                                             }
                                         }
                                     }
                                     Err(e) => {
                                         self.materials.submit_failure(format!("RPC error: {}", e));
-                                        self.materials.set_status(&format!("RPC error: {}", e), true);
+                                        self.materials
+                                            .set_status(&format!("RPC error: {}", e), true);
                                         warn!("JSON-RPC error for job submission: {}", e);
                                     }
                                 }
                             }
                             Err(e) => {
-                                self.materials.submit_failure(format!("Bridge error: {}", e));
+                                self.materials
+                                    .submit_failure(format!("Bridge error: {}", e));
                                 self.materials
                                     .set_status(&format!("Bridge error: {}", e), true);
                                 error!("Bridge dispatch failed for job submission: {}", e);
@@ -2096,20 +2104,30 @@ impl<'a> App<'a> {
                                         // Expected format: {"ok": true, "data": {"content": "...lines...", "truncated": bool}}
                                         // or direct lines array
                                         let content_str = if let Some(data) = value.get("data") {
-                                            if let Some(content) = data.get("content").and_then(|c| c.as_str()) {
+                                            if let Some(content) =
+                                                data.get("content").and_then(|c| c.as_str())
+                                            {
                                                 content.to_string()
-                                            } else if let Some(lines) = data.get("lines").and_then(|l| l.as_array()) {
-                                                lines.iter()
+                                            } else if let Some(lines) =
+                                                data.get("lines").and_then(|l| l.as_array())
+                                            {
+                                                lines
+                                                    .iter()
                                                     .filter_map(|l| l.as_str())
                                                     .collect::<Vec<_>>()
                                                     .join("\n")
                                             } else {
                                                 String::new()
                                             }
-                                        } else if let Some(content) = value.get("content").and_then(|c| c.as_str()) {
+                                        } else if let Some(content) =
+                                            value.get("content").and_then(|c| c.as_str())
+                                        {
                                             content.to_string()
-                                        } else if let Some(lines) = value.get("lines").and_then(|l| l.as_array()) {
-                                            lines.iter()
+                                        } else if let Some(lines) =
+                                            value.get("lines").and_then(|l| l.as_array())
+                                        {
+                                            lines
+                                                .iter()
                                                 .filter_map(|l| l.as_str())
                                                 .collect::<Vec<_>>()
                                                 .join("\n")
@@ -2119,16 +2137,19 @@ impl<'a> App<'a> {
                                             String::new()
                                         };
 
-                                        let lines: Vec<String> = content_str
-                                            .lines()
-                                            .map(|l| l.to_string())
-                                            .collect();
+                                        let lines: Vec<String> =
+                                            content_str.lines().map(|l| l.to_string()).collect();
 
                                         if lines.is_empty() {
-                                            self.output_viewer.set_error("Output file is empty or not found".to_string());
+                                            self.output_viewer.set_error(
+                                                "Output file is empty or not found".to_string(),
+                                            );
                                         } else {
                                             self.output_viewer.set_content(lines);
-                                            debug!("Output file loaded: {} lines", self.output_viewer.content.len());
+                                            debug!(
+                                                "Output file loaded: {} lines",
+                                                self.output_viewer.content.len()
+                                            );
                                         }
                                     }
                                     Err(e) => {
@@ -2172,7 +2193,10 @@ impl<'a> App<'a> {
                                                 }
                                             },
                                             Err(e) => {
-                                                debug!("Failed to deserialize structure preview: {}", e);
+                                                debug!(
+                                                    "Failed to deserialize structure preview: {}",
+                                                    e
+                                                );
                                                 self.materials.preview = None;
                                             }
                                         }
@@ -2203,7 +2227,9 @@ impl<'a> App<'a> {
                                     Ok(value) => {
                                         // Parse the status response
                                         // Expected format: {"job_id": "123", "status": "running", "error": null}
-                                        if let Some(status_str) = value.get("status").and_then(|v| v.as_str()) {
+                                        if let Some(status_str) =
+                                            value.get("status").and_then(|v| v.as_str())
+                                        {
                                             let new_state = match status_str {
                                                 "created" => crate::models::JobState::Created,
                                                 "submitted" => crate::models::JobState::Submitted,
@@ -2215,12 +2241,20 @@ impl<'a> App<'a> {
                                                 _ => crate::models::JobState::Unknown,
                                             };
                                             if let Ok(pk) = job_id.parse::<i32>() {
-                                                if let Some(job) = self.jobs_state.jobs.iter_mut().find(|j| j.pk == pk) {
+                                                if let Some(job) = self
+                                                    .jobs_state
+                                                    .jobs
+                                                    .iter_mut()
+                                                    .find(|j| j.pk == pk)
+                                                {
                                                     let old_state = job.state;
                                                     if old_state != new_state {
                                                         job.state = new_state;
                                                         self.jobs_state.changed_pks.insert(pk);
-                                                        info!("Job {} status: {:?} -> {:?}", pk, old_state, new_state);
+                                                        info!(
+                                                            "Job {} status: {:?} -> {:?}",
+                                                            pk, old_state, new_state
+                                                        );
                                                     }
                                                 }
                                             }
@@ -2315,8 +2349,12 @@ impl<'a> App<'a> {
                 warn!("Failed to send status request for job {}: {}", job_id, e);
                 continue;
             }
-            self.pending_status_requests.insert(job_id.clone(), request_id);
-            debug!("Sent status request for job {} (request_id: {})", job_id, request_id);
+            self.pending_status_requests
+                .insert(job_id.clone(), request_id);
+            debug!(
+                "Sent status request for job {} (request_id: {})",
+                job_id, request_id
+            );
         }
 
         self.last_job_poll = std::time::Instant::now();
@@ -2566,12 +2604,9 @@ impl<'a> App<'a> {
                                     .get("parameter_value")
                                     .map(value_to_string)
                                     .unwrap_or_else(|| "-".to_string());
-                                let energy = point
-                                    .get("energy")
-                                    .and_then(|v| parse_f64(v));
-                                let energy_per_atom = point
-                                    .get("energy_per_atom")
-                                    .and_then(|v| parse_f64(v));
+                                let energy = point.get("energy").and_then(|v| parse_f64(v));
+                                let energy_per_atom =
+                                    point.get("energy_per_atom").and_then(|v| parse_f64(v));
                                 let status = point
                                     .get("status")
                                     .and_then(|v| v.as_str())
@@ -2589,9 +2624,7 @@ impl<'a> App<'a> {
                     })
                     .unwrap_or_default();
 
-                let converged_value = result
-                    .get("converged_value")
-                    .map(value_to_string);
+                let converged_value = result.get("converged_value").map(value_to_string);
                 let recommendation = result
                     .get("recommendation")
                     .and_then(|v| v.as_str())
@@ -2614,18 +2647,14 @@ impl<'a> App<'a> {
                     .and_then(|v| v.as_array())
                     .map(|arr| {
                         arr.iter()
-                            .map(|point| {
-                                crate::state::EosPointCache {
-                                    volume_scale: point
-                                        .get("volume_scale")
-                                        .and_then(|v| parse_f64(v)),
-                                    volume: point.get("volume").and_then(|v| parse_f64(v)),
-                                    energy: point.get("energy").and_then(|v| parse_f64(v)),
-                                    status: point
-                                        .get("status")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string()),
-                                }
+                            .map(|point| crate::state::EosPointCache {
+                                volume_scale: point.get("volume_scale").and_then(|v| parse_f64(v)),
+                                volume: point.get("volume").and_then(|v| parse_f64(v)),
+                                energy: point.get("energy").and_then(|v| parse_f64(v)),
+                                status: point
+                                    .get("status")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
                             })
                             .collect::<Vec<_>>()
                     })
@@ -3080,7 +3109,6 @@ impl<'a> App<'a> {
         self.mark_dirty();
     }
 
-
     // ===== SLURM Queue Management =====
 
     /// Resolve the best SLURM cluster ID to use.
@@ -3179,7 +3207,6 @@ impl<'a> App<'a> {
         }
         self.mark_dirty();
     }
-
 
     /// Load job details with non-fatal error handling (async).
     ///
@@ -3628,10 +3655,8 @@ impl<'a> App<'a> {
         self.vasp_request_id = self.next_request_id();
         self.materials.loading = true;
         self.materials.selected_for_import = Some(mp_id.clone());
-        self.materials.set_status(
-            &format!("Generating VASP inputs for {}...", formula),
-            false,
-        );
+        self.materials
+            .set_status(&format!("Generating VASP inputs for {}...", formula), false);
         self.mark_dirty();
 
         // Serialize config to JSON
@@ -3652,15 +3677,15 @@ impl<'a> App<'a> {
             "config_json": config_json
         });
 
-        let rpc_request = JsonRpcRequest::new(
-            "vasp.generate_from_mp",
-            params,
-            self.vasp_request_id as u64,
-        );
+        let rpc_request =
+            JsonRpcRequest::new("vasp.generate_from_mp", params, self.vasp_request_id as u64);
 
         match self.bridge.request_rpc(rpc_request, self.vasp_request_id) {
             Ok(()) => {
-                info!("VASP generation requested for {} (id={})", mp_id, self.vasp_request_id);
+                info!(
+                    "VASP generation requested for {} (id={})",
+                    mp_id, self.vasp_request_id
+                );
             }
             Err(e) => {
                 self.materials.loading = false;
@@ -3683,7 +3708,9 @@ impl<'a> App<'a> {
         let poscar = match &self.materials.generated_poscar {
             Some(p) => p.clone(),
             None => {
-                self.materials.submit_failure("No structure available. Generate VASP inputs first.".to_string());
+                self.materials.submit_failure(
+                    "No structure available. Generate VASP inputs first.".to_string(),
+                );
                 self.mark_dirty();
                 return;
             }
@@ -3701,7 +3728,8 @@ impl<'a> App<'a> {
         self.submit_request_id = self.next_request_id();
         self.materials.submit_request_id = self.submit_request_id;
         self.materials.start_submit();
-        self.materials.set_status("Submitting job to quacc...", false);
+        self.materials
+            .set_status("Submitting job to quacc...", false);
         self.mark_dirty();
 
         // Build submit request
@@ -3716,23 +3744,21 @@ impl<'a> App<'a> {
         let params = match serde_json::to_value(&submit_request) {
             Ok(v) => v,
             Err(e) => {
-                self.materials.submit_failure(format!("Serialization error: {}", e));
+                self.materials
+                    .submit_failure(format!("Serialization error: {}", e));
                 return;
             }
         };
 
-        let rpc_request = JsonRpcRequest::new(
-            "jobs.submit",
-            params,
-            self.submit_request_id as u64,
-        );
+        let rpc_request = JsonRpcRequest::new("jobs.submit", params, self.submit_request_id as u64);
 
         match self.bridge.request_rpc(rpc_request, self.submit_request_id) {
             Ok(()) => {
                 info!("Job submission requested (id={})", self.submit_request_id);
             }
             Err(e) => {
-                self.materials.submit_failure(format!("Submission failed: {}", e));
+                self.materials
+                    .submit_failure(format!("Submission failed: {}", e));
             }
         }
     }
@@ -4350,7 +4376,10 @@ impl<'a> App<'a> {
             self.recipe_request_id as u64,
         );
 
-        info!("Sending recipes.list RPC request (id={})", self.recipe_request_id);
+        info!(
+            "Sending recipes.list RPC request (id={})",
+            self.recipe_request_id
+        );
         if let Err(e) = self.bridge.request_rpc(rpc_request, self.recipe_request_id) {
             self.recipe_browser.loading = false;
             self.recipe_browser.error = Some(format!("Failed to request recipes: {}", e));
@@ -4444,10 +4473,8 @@ impl<'a> App<'a> {
         use crate::state::BandPathPreset;
 
         if !self.workflow_config.active {
-            self.workflow_state.set_status(
-                "Open workflow config to launch".to_string(),
-                true,
-            );
+            self.workflow_state
+                .set_status("Open workflow config to launch".to_string(), true);
             self.mark_dirty();
             return;
         }
@@ -4496,10 +4523,14 @@ impl<'a> App<'a> {
 
         let config_json = match workflow_type {
             WorkflowType::Convergence => {
-                let base_input = self.workflow_config.convergence.base_input.lines().join("\n");
+                let base_input = self
+                    .workflow_config
+                    .convergence
+                    .base_input
+                    .lines()
+                    .join("\n");
                 if base_input.trim().is_empty() {
-                    self.workflow_config
-                        .error = Some("Base input (.d12) is required".to_string());
+                    self.workflow_config.error = Some("Base input (.d12) is required".to_string());
                     self.mark_dirty();
                     return;
                 }
@@ -4519,8 +4550,7 @@ impl<'a> App<'a> {
 
                 if values.is_empty() {
                     if self.workflow_config.error.is_none() {
-                        self.workflow_config
-                            .error = Some("Values cannot be empty".to_string());
+                        self.workflow_config.error = Some("Values cannot be empty".to_string());
                     }
                     self.mark_dirty();
                     return;
@@ -4589,39 +4619,33 @@ impl<'a> App<'a> {
                         }
                     };
 
-                let supercell_a = match parse_i32(
-                    "Supercell A",
-                    &self.workflow_config.phonon.supercell_a,
-                ) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        self.workflow_config.error = Some(err);
-                        self.mark_dirty();
-                        return;
-                    }
-                };
-                let supercell_b = match parse_i32(
-                    "Supercell B",
-                    &self.workflow_config.phonon.supercell_b,
-                ) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        self.workflow_config.error = Some(err);
-                        self.mark_dirty();
-                        return;
-                    }
-                };
-                let supercell_c = match parse_i32(
-                    "Supercell C",
-                    &self.workflow_config.phonon.supercell_c,
-                ) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        self.workflow_config.error = Some(err);
-                        self.mark_dirty();
-                        return;
-                    }
-                };
+                let supercell_a =
+                    match parse_i32("Supercell A", &self.workflow_config.phonon.supercell_a) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            self.workflow_config.error = Some(err);
+                            self.mark_dirty();
+                            return;
+                        }
+                    };
+                let supercell_b =
+                    match parse_i32("Supercell B", &self.workflow_config.phonon.supercell_b) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            self.workflow_config.error = Some(err);
+                            self.mark_dirty();
+                            return;
+                        }
+                    };
+                let supercell_c =
+                    match parse_i32("Supercell C", &self.workflow_config.phonon.supercell_c) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            self.workflow_config.error = Some(err);
+                            self.mark_dirty();
+                            return;
+                        }
+                    };
 
                 let displacement = match parse_positive_f64(
                     "Displacement",
@@ -4673,8 +4697,8 @@ impl<'a> App<'a> {
                     }
                 };
                 if strain_min >= strain_max {
-                    self.workflow_config
-                        .error = Some("Strain min must be less than strain max".to_string());
+                    self.workflow_config.error =
+                        Some("Strain min must be less than strain max".to_string());
                     self.mark_dirty();
                     return;
                 }
@@ -4697,8 +4721,7 @@ impl<'a> App<'a> {
                     }
                 };
                 if steps <= 1 {
-                    self.workflow_config
-                        .error = Some("Steps must be > 1".to_string());
+                    self.workflow_config.error = Some("Steps must be > 1".to_string());
                     self.mark_dirty();
                     return;
                 }
@@ -4714,8 +4737,8 @@ impl<'a> App<'a> {
             }
             WorkflowType::GeometryOptimization => {
                 if !self.workflow_state.aiida_available {
-                    self.workflow_config
-                        .error = Some("AiiDA is required for geometry optimization".to_string());
+                    self.workflow_config.error =
+                        Some("AiiDA is required for geometry optimization".to_string());
                     self.mark_dirty();
                     return;
                 }
@@ -4734,13 +4757,15 @@ impl<'a> App<'a> {
 
                 let code_label = self.workflow_config.geometry_opt.code_label.trim();
                 if code_label.is_empty() {
-                    self.workflow_config
-                        .error = Some("Code label is required".to_string());
+                    self.workflow_config.error = Some("Code label is required".to_string());
                     self.mark_dirty();
                     return;
                 }
 
-                let fmax = match parse_positive_f64("Fmax threshold", &self.workflow_config.geometry_opt.fmax) {
+                let fmax = match parse_positive_f64(
+                    "Fmax threshold",
+                    &self.workflow_config.geometry_opt.fmax,
+                ) {
                     Ok(value) => value,
                     Err(err) => {
                         self.workflow_config.error = Some(err);
@@ -4749,7 +4774,10 @@ impl<'a> App<'a> {
                     }
                 };
 
-                let max_steps = match parse_i32("Max iterations", &self.workflow_config.geometry_opt.max_steps) {
+                let max_steps = match parse_i32(
+                    "Max iterations",
+                    &self.workflow_config.geometry_opt.max_steps,
+                ) {
                     Ok(value) => value,
                     Err(err) => {
                         self.workflow_config.error = Some(err);
@@ -5005,7 +5033,12 @@ impl<'a> App<'a> {
         let filtered = self.jobs_state.filtered_jobs();
         if filtered.is_empty() {
             self.jobs_state.selected_index = None;
-        } else if self.jobs_state.selected_index.map(|i| i >= filtered.len()).unwrap_or(false) {
+        } else if self
+            .jobs_state
+            .selected_index
+            .map(|i| i >= filtered.len())
+            .unwrap_or(false)
+        {
             self.jobs_state.selected_index = Some(0);
         }
         self.mark_dirty();
@@ -5018,7 +5051,12 @@ impl<'a> App<'a> {
         let filtered = self.jobs_state.filtered_jobs();
         if filtered.is_empty() {
             self.jobs_state.selected_index = None;
-        } else if self.jobs_state.selected_index.map(|i| i >= filtered.len()).unwrap_or(false) {
+        } else if self
+            .jobs_state
+            .selected_index
+            .map(|i| i >= filtered.len())
+            .unwrap_or(false)
+        {
             self.jobs_state.selected_index = Some(0);
         }
         self.mark_dirty();
@@ -5031,7 +5069,12 @@ impl<'a> App<'a> {
     }
 
     /// Open the output file viewer modal for a specific job and file type.
-    pub fn open_output_viewer(&mut self, file_type: OutputFileType, job_pk: i32, job_name: Option<String>) {
+    pub fn open_output_viewer(
+        &mut self,
+        file_type: OutputFileType,
+        job_pk: i32,
+        job_name: Option<String>,
+    ) {
         self.output_viewer.open(file_type, job_pk, job_name);
         self.request_fetch_output_file(job_pk, file_type);
         self.mark_dirty();
@@ -5064,9 +5107,13 @@ impl<'a> App<'a> {
             self.output_viewer_request_id as u64,
         );
 
-        if let Err(e) = self.bridge.request_rpc(rpc_request, self.output_viewer_request_id) {
+        if let Err(e) = self
+            .bridge
+            .request_rpc(rpc_request, self.output_viewer_request_id)
+        {
             self.output_viewer.loading = false;
-            self.output_viewer.set_error(format!("Failed to request output file: {}", e));
+            self.output_viewer
+                .set_error(format!("Failed to request output file: {}", e));
         }
     }
 

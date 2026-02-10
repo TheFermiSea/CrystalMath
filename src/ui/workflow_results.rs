@@ -26,7 +26,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
         .title(" Workflow Results ")
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
 
     let inner = block.inner(modal_area);
     frame.render_widget(block, modal_area);
@@ -40,11 +44,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         ])
         .split(inner);
 
-    let workflow_id = app
-        .workflow_results
-        .workflow_id
-        .as_deref()
-        .unwrap_or("-");
+    let workflow_id = app.workflow_results.workflow_id.as_deref().unwrap_or("-");
 
     let (status_text, status_style) = if let Some(ref err) = app.workflow_results.error {
         (format!("Error: {}", err), Style::default().fg(Color::Red))
@@ -94,8 +94,12 @@ fn build_convergence_text(workflow_id: &str, cache: &ConvergenceResultsCache) ->
     }
     lines.push(Line::from(""));
 
-    lines.push(Line::from("Value       Energy           E/atom          Status"));
-    lines.push(Line::from("----------------------------------------------------"));
+    lines.push(Line::from(
+        "Value       Energy           E/atom          Status",
+    ));
+    lines.push(Line::from(
+        "----------------------------------------------------",
+    ));
 
     for point in &cache.points {
         let value = truncate(&point.parameter_value, 10);
@@ -138,7 +142,11 @@ fn build_convergence_plot(points: &[crate::state::ConvergencePointCache]) -> Vec
             max = *value;
         }
     }
-    let span = if (max - min).abs() < 1e-12 { 1.0 } else { max - min };
+    let span = if (max - min).abs() < 1e-12 {
+        1.0
+    } else {
+        max - min
+    };
 
     let width: usize = 40;
     let mut lines = Vec::new();
@@ -149,7 +157,11 @@ fn build_convergence_plot(points: &[crate::state::ConvergencePointCache]) -> Vec
             chars[pos] = '*';
         }
         let plot: String = chars.into_iter().collect();
-        lines.push(Line::from(format!("{:<10} |{}", truncate(&label, 10), plot)));
+        lines.push(Line::from(format!(
+            "{:<10} |{}",
+            truncate(&label, 10),
+            plot
+        )));
     }
 
     lines

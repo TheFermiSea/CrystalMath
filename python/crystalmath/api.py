@@ -161,16 +161,8 @@ class CrystalController:
     def _init_sqlite(self, db_path: str) -> None:
         """Initialize SQLite database for fallback mode."""
         try:
-            # Import the existing TUI database module
-            # Path: python/crystalmath/api.py -> need to go up 3 levels to repo root
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent  # crystalmath/
-            tui_path = repo_root / "tui" / "src"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
-            from core.database import Database
+            # Import TUI database module via uv workspace (crystal-tui package)
+            from src.core.database import Database
 
             self._db = Database(Path(db_path))
             logger.info(f"Loaded SQLite database: {db_path}")
@@ -862,15 +854,8 @@ class CrystalController:
 
         async def _run() -> List[Dict[str, Any]]:
             # Lazy import to avoid loading heavy dependencies on startup
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent
-            tui_path = repo_root / "tui" / "src"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
-            from core.materials_api.service import MaterialsService
-            from core.materials_api.settings import MaterialsSettings
+            from src.core.materials_api.service import MaterialsService
+            from src.core.materials_api.settings import MaterialsSettings
 
             settings = MaterialsSettings.get_instance()
 
@@ -915,15 +900,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> str:
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent
-            tui_path = repo_root / "tui" / "src"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
-            from core.materials_api.service import MaterialsService
-            from core.materials_api.settings import MaterialsSettings
+            from src.core.materials_api.service import MaterialsService
+            from src.core.materials_api.settings import MaterialsSettings
 
             settings = MaterialsSettings.get_instance()
 
@@ -960,15 +938,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> Dict[str, Any]:
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent
-            tui_path = repo_root / "tui" / "src"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
-            from core.materials_api.service import MaterialsService
-            from core.materials_api.settings import MaterialsSettings
+            from src.core.materials_api.service import MaterialsService
+            from src.core.materials_api.settings import MaterialsSettings
 
             settings = MaterialsSettings.get_instance()
 
@@ -1019,14 +990,6 @@ class CrystalController:
         import asyncio
 
         async def _run() -> List[Dict[str, Any]]:
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent
-            # Add tui/ (not tui/src/) so relative imports in src.runners work correctly
-            tui_path = repo_root / "tui"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
             from src.core.connection_manager import ConnectionManager, ConnectionConfig
             from src.runners.slurm_runner import SLURMRunner
 
@@ -1115,14 +1078,6 @@ class CrystalController:
         import asyncio
 
         async def _run() -> None:
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent
-            # Add tui/ (not tui/src/) so relative imports in src.runners work correctly
-            tui_path = repo_root / "tui"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
             from src.core.connection_manager import ConnectionManager
             from src.runners.slurm_runner import SLURMRunner, SLURMJobState
 
@@ -1287,13 +1242,6 @@ class CrystalController:
         import os
 
         async def _run() -> None:
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent
-            tui_path = repo_root / "tui"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
             from src.core.connection_manager import ConnectionManager
             from src.runners.slurm_runner import SLURMRunner
 
@@ -1405,14 +1353,6 @@ class CrystalController:
         import asyncio
 
         async def _run() -> Dict[str, Any]:
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent
-            # Add tui/ (not tui/src/) so relative imports in src.runners work correctly
-            tui_path = repo_root / "tui"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
             from src.core.connection_manager import ConnectionManager
             from src.runners.slurm_runner import SLURMRunner
 
@@ -1524,10 +1464,14 @@ class CrystalController:
                         "username": cluster.username,
                         "cluster_type": cluster.type,  # Must match Rust ClusterConfig field name
                         "status": cluster.status,
-                        "connection_config": conn_config,
+                        # Flatten connection_config to match Rust ClusterConfig
+                        "key_file": conn_config.get("key_file"),
+                        "remote_workdir": conn_config.get("remote_workdir"),
+                        "queue_name": conn_config.get("queue_name"),
+                        "max_concurrent": conn_config.get("max_concurrent", 4),
                         "cry23_root": cluster.cry23_root,
                         "vasp_root": cluster.vasp_root,
-                        "setup_commands": cluster.setup_commands,
+                        "setup_commands": cluster.setup_commands or [],
                     }
                 )
 
@@ -1570,10 +1514,14 @@ class CrystalController:
                     "username": cluster.username,
                     "cluster_type": cluster.type,  # Must match Rust ClusterConfig field name
                     "status": cluster.status,
-                    "connection_config": conn_config,
+                    # Flatten connection_config to match Rust ClusterConfig
+                    "key_file": conn_config.get("key_file"),
+                    "remote_workdir": conn_config.get("remote_workdir"),
+                    "queue_name": conn_config.get("queue_name"),
+                    "max_concurrent": conn_config.get("max_concurrent", 4),
                     "cry23_root": cluster.cry23_root,
                     "vasp_root": cluster.vasp_root,
-                    "setup_commands": cluster.setup_commands,
+                    "setup_commands": cluster.setup_commands or [],
                 }
             )
         except Exception as e:
@@ -1581,16 +1529,25 @@ class CrystalController:
             return _error_response("INTERNAL_ERROR", str(e))
 
     def create_cluster_json(self, json_payload: str) -> str:
-        """Create a new cluster from JSON payload."""
+        """Create a new cluster from JSON payload.
+
+        Accepts flat fields matching Rust ClusterConfig (key_file, remote_workdir,
+        queue_name, max_concurrent) and packs them into connection_config for DB storage.
+        """
         try:
             config = json.loads(json_payload)
+            # Build connection_config from flat fields (Rust sends flat ClusterConfig)
+            conn_config = config.get("connection_config", {})
+            for field in ("key_file", "remote_workdir", "queue_name", "max_concurrent"):
+                if field in config and config[field] is not None:
+                    conn_config[field] = config[field]
             cluster_id = self._db.create_cluster(
                 name=config["name"],
                 type=config["cluster_type"],
                 hostname=config["hostname"],
                 port=config.get("port", 22),
                 username=config["username"],
-                connection_config=config.get("connection_config", {}),
+                connection_config=conn_config,
                 cry23_root=config.get("cry23_root"),
                 vasp_root=config.get("vasp_root"),
                 setup_commands=config.get("setup_commands", []),
@@ -1603,6 +1560,9 @@ class CrystalController:
     def update_cluster_json(self, cluster_id: int, json_payload: str) -> str:
         """
         Update an existing cluster configuration.
+
+        Accepts flat fields matching Rust ClusterConfig (key_file, remote_workdir,
+        queue_name, max_concurrent) and packs them into connection_config for DB storage.
 
         Args:
             cluster_id: Cluster database ID
@@ -1617,13 +1577,22 @@ class CrystalController:
 
             data = json.loads(json_payload)
 
+            # Build connection_config from flat fields (Rust sends flat ClusterConfig)
+            conn_config = data.get("connection_config")
+            flat_fields = ("key_file", "remote_workdir", "queue_name", "max_concurrent")
+            if any(f in data for f in flat_fields):
+                conn_config = conn_config or {}
+                for field in flat_fields:
+                    if field in data and data[field] is not None:
+                        conn_config[field] = data[field]
+
             self._db.update_cluster(
                 cluster_id=cluster_id,
                 name=data.get("name"),
                 hostname=data.get("hostname"),
                 port=data.get("port"),
                 username=data.get("username"),
-                connection_config=data.get("connection_config"),
+                connection_config=conn_config,
                 cry23_root=data.get("cry23_root"),
                 vasp_root=data.get("vasp_root"),
                 setup_commands=data.get("setup_commands"),
@@ -1665,20 +1634,12 @@ class CrystalController:
 
         Returns:
             JSON string with connection test result:
-            - Success: {"ok": true, "data": {"connected": true, "hostname": "...", "message": "..."}}
+            - Success: {"ok": true, "data": {"success": true, "hostname": "...", "system_info": "..."}}
             - Error: {"ok": false, "error": {"code": "...", "message": "..."}}
         """
         import asyncio
 
         async def _test() -> Dict[str, Any]:
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent
-            # Add tui/ (not tui/src/) so relative imports work correctly
-            tui_path = repo_root / "tui"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
             from src.core.connection_manager import ConnectionManager
 
             if not hasattr(self, "_db") or not self._db:
@@ -1715,10 +1676,9 @@ class CrystalController:
                     system_info = lines[1] if len(lines) > 1 else ""
 
                     return {
-                        "connected": True,
+                        "success": True,
                         "hostname": remote_hostname,
                         "system_info": system_info,
-                        "message": f"Successfully connected to {remote_hostname}",
                     }
             finally:
                 await conn_manager.stop()
@@ -2070,16 +2030,10 @@ class CrystalController:
             - Error: {"ok": false, "error": {"code": "...", "message": "..."}}
         """
         try:
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent
-            tui_path = repo_root / "tui" / "src"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
-            from core.templates import TemplateManager
+            from src.core.templates import TemplateManager
 
             # Use monorepo templates directory
+            repo_root = Path(__file__).parent.parent.parent
             template_dir = repo_root / "templates"
             manager = TemplateManager(template_dir)
 
@@ -2137,16 +2091,10 @@ class CrystalController:
             - Error: {"ok": false, "error": {"code": "...", "message": "..."}}
         """
         try:
-            import sys
-
-            repo_root = Path(__file__).parent.parent.parent
-            tui_path = repo_root / "tui" / "src"
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
-            from core.templates import TemplateManager
+            from src.core.templates import TemplateManager
 
             # Use monorepo templates directory
+            repo_root = Path(__file__).parent.parent.parent
             template_dir = repo_root / "templates"
             manager = TemplateManager(template_dir)
 

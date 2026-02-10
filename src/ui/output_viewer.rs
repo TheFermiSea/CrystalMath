@@ -16,20 +16,73 @@ use crate::state::{OutputFileType, OutputViewerState};
 
 /// VASP keywords to highlight in output files.
 const VASP_KEYWORDS: &[&str] = &[
-    "TOTEN", "EDIFF", "ENCUT", "ISMEAR", "SIGMA", "IBRION", "ISIF", "NSW",
-    "POTIM", "NELM", "NELMIN", "NELMDL", "PREC", "ALGO", "LREAL", "LWAVE",
-    "LCHARG", "LORBIT", "ISPIN", "MAGMOM", "KPOINTS", "POSCAR", "POTCAR",
-    "WARNING", "ERROR", "REACHED", "CONVERGED", "iteration", "LOOP",
-    "energy", "forces", "stress", "magnetization", "TOTAL-FORCE",
-    "E-fermi", "band", "EIGENVAL", "DOSCAR", "OUTCAR", "vasprun.xml",
+    "TOTEN",
+    "EDIFF",
+    "ENCUT",
+    "ISMEAR",
+    "SIGMA",
+    "IBRION",
+    "ISIF",
+    "NSW",
+    "POTIM",
+    "NELM",
+    "NELMIN",
+    "NELMDL",
+    "PREC",
+    "ALGO",
+    "LREAL",
+    "LWAVE",
+    "LCHARG",
+    "LORBIT",
+    "ISPIN",
+    "MAGMOM",
+    "KPOINTS",
+    "POSCAR",
+    "POTCAR",
+    "WARNING",
+    "ERROR",
+    "REACHED",
+    "CONVERGED",
+    "iteration",
+    "LOOP",
+    "energy",
+    "forces",
+    "stress",
+    "magnetization",
+    "TOTAL-FORCE",
+    "E-fermi",
+    "band",
+    "EIGENVAL",
+    "DOSCAR",
+    "OUTCAR",
+    "vasprun.xml",
 ];
 
 /// CRYSTAL keywords to highlight.
 const CRYSTAL_KEYWORDS: &[&str] = &[
-    "CRYSTAL", "SLAB", "POLYMER", "MOLECULE", "EXTERNAL", "OPTGEOM",
-    "FREQCALC", "ELASTIC", "EOS", "SCF", "TOTAL ENERGY", "CONVERGENCE",
-    "GEOMETRY OPTIMIZATION", "CYCLE", "ITERATION", "WARNING", "ERROR",
-    "SHRINK", "TOLINTEG", "TOLDEE", "TOLENE", "ANDERSON", "BROYDEN",
+    "CRYSTAL",
+    "SLAB",
+    "POLYMER",
+    "MOLECULE",
+    "EXTERNAL",
+    "OPTGEOM",
+    "FREQCALC",
+    "ELASTIC",
+    "EOS",
+    "SCF",
+    "TOTAL ENERGY",
+    "CONVERGENCE",
+    "GEOMETRY OPTIMIZATION",
+    "CYCLE",
+    "ITERATION",
+    "WARNING",
+    "ERROR",
+    "SHRINK",
+    "TOLINTEG",
+    "TOLDEE",
+    "TOLENE",
+    "ANDERSON",
+    "BROYDEN",
 ];
 
 /// Render the output file viewer modal.
@@ -60,7 +113,11 @@ pub fn render(frame: &mut Frame, state: &OutputViewerState) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
         .title(title)
-        .title_style(Style::default().fg(border_color).add_modifier(Modifier::BOLD));
+        .title_style(
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        );
 
     let inner_area = outer_block.inner(modal_area);
     frame.render_widget(outer_block, modal_area);
@@ -84,7 +141,7 @@ pub fn render(frame: &mut Frame, state: &OutputViewerState) {
 /// Build the modal title string.
 fn build_title(state: &OutputViewerState) -> String {
     let file_type_str = state.file_type.as_str();
-    
+
     match (&state.job_name, state.job_pk) {
         (Some(name), Some(pk)) => format!(" {} - {} (pk:{}) ", file_type_str, name, pk),
         (None, Some(pk)) => format!(" {} (pk:{}) ", file_type_str, pk),
@@ -192,9 +249,7 @@ fn render_error(frame: &mut Frame, error: &str, area: Rect) {
         Line::from(""),
         Line::from(vec![Span::styled(
             "⚠ Error Loading File",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )]),
         Line::from(""),
         Line::from(Span::styled(error, Style::default().fg(Color::Red))),
@@ -248,7 +303,7 @@ fn highlight_line(line: &str, file_type: OutputFileType) -> Vec<Span<'static>> {
 
     // Simple highlighting: check if line contains any keyword
     let line_upper = line.to_uppercase();
-    
+
     // Check for special patterns
     if line_upper.contains("ERROR") || line_upper.contains("FAILED") {
         return vec![Span::styled(
@@ -256,14 +311,14 @@ fn highlight_line(line: &str, file_type: OutputFileType) -> Vec<Span<'static>> {
             Style::default().fg(Color::Red),
         )];
     }
-    
+
     if line_upper.contains("WARNING") || line_upper.contains("CAUTION") {
         return vec![Span::styled(
             line.to_string(),
             Style::default().fg(Color::Yellow),
         )];
     }
-    
+
     if line_upper.contains("CONVERGED") || line_upper.contains("REACHED REQUIRED") {
         return vec![Span::styled(
             line.to_string(),
@@ -275,12 +330,17 @@ fn highlight_line(line: &str, file_type: OutputFileType) -> Vec<Span<'static>> {
     if line_upper.contains("TOTEN") || line_upper.contains("TOTAL ENERGY") {
         return vec![Span::styled(
             line.to_string(),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )];
     }
 
     // Check for iteration/cycle lines
-    if line_upper.contains("ITERATION") || line_upper.contains("CYCLE") || line_upper.contains("LOOP") {
+    if line_upper.contains("ITERATION")
+        || line_upper.contains("CYCLE")
+        || line_upper.contains("LOOP")
+    {
         return vec![Span::styled(
             line.to_string(),
             Style::default().fg(Color::Blue),
@@ -379,12 +439,9 @@ fn render_status_bar(frame: &mut Frame, state: &OutputViewerState, area: Rect) {
     ];
 
     let mut spans: Vec<Span> = Vec::new();
-    
+
     // Position info on the left
-    spans.push(Span::styled(
-        position,
-        Style::default().fg(Color::Cyan),
-    ));
+    spans.push(Span::styled(position, Style::default().fg(Color::Cyan)));
     spans.push(Span::raw(" │ "));
 
     // Keybindings

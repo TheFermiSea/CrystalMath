@@ -8,8 +8,8 @@
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs, Wrap};
-use tui_textarea::TextArea;
 use tachyonfx::{fx, Effect, Motion};
+use tui_textarea::TextArea;
 
 use crate::app::App;
 use crate::models::VaspInputFiles;
@@ -428,13 +428,21 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         (format!("Error: {}", error), Style::default().fg(Color::Red))
     } else if let Some(ref val) = state.validation {
         if val.valid {
-            ("Validation Passed!".to_string(), Style::default().fg(Color::Green))
+            (
+                "Validation Passed!".to_string(),
+                Style::default().fg(Color::Green),
+            )
         } else {
-            let err_msg = val.errors.iter()
+            let err_msg = val
+                .errors
+                .iter()
                 .map(|e| format!("{}: {}", e.file, e.message))
                 .collect::<Vec<_>>()
                 .join(" | ");
-            (format!("Validation Failed: {}", err_msg), Style::default().fg(Color::Red))
+            (
+                format!("Validation Failed: {}", err_msg),
+                Style::default().fg(Color::Red),
+            )
         }
     } else if let Some(ref status) = state.status {
         (status.clone(), Style::default().fg(Color::Green))

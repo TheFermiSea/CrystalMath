@@ -100,7 +100,13 @@ fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
 
     // MPI Ranks
     let is_ranks_focused = state.focused_field == BatchSubmissionField::MpiRanks;
-    render_setting_field(frame, row1[1], "MPI Ranks", &state.common_mpi_ranks, is_ranks_focused);
+    render_setting_field(
+        frame,
+        row1[1],
+        "MPI Ranks",
+        &state.common_mpi_ranks,
+        is_ranks_focused,
+    );
 
     // Row 2: Walltime, Memory
     let row2 = Layout::default()
@@ -109,10 +115,22 @@ fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
         .split(chunks[1]);
 
     let is_wt_focused = state.focused_field == BatchSubmissionField::Walltime;
-    render_setting_field(frame, row2[0], "Walltime", &state.common_walltime, is_wt_focused);
+    render_setting_field(
+        frame,
+        row2[0],
+        "Walltime",
+        &state.common_walltime,
+        is_wt_focused,
+    );
 
     let is_mem_focused = state.focused_field == BatchSubmissionField::Memory;
-    render_setting_field(frame, row2[1], "Memory (GB)", &state.common_memory_gb, is_mem_focused);
+    render_setting_field(
+        frame,
+        row2[1],
+        "Memory (GB)",
+        &state.common_memory_gb,
+        is_mem_focused,
+    );
 }
 
 /// Helper to render a single setting field.
@@ -150,10 +168,16 @@ fn render_job_list(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     if state.jobs.is_empty() {
-        let empty = Paragraph::new("No jobs added to batch. Press 'a' to add a job from current editor.")
-            .style(Style::default().fg(Color::DarkGray))
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_style(border_style).title(" Jobs "));
+        let empty =
+            Paragraph::new("No jobs added to batch. Press 'a' to add a job from current editor.")
+                .style(Style::default().fg(Color::DarkGray))
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(border_style)
+                        .title(" Jobs "),
+                );
         frame.render_widget(empty, area);
         return;
     }
@@ -176,7 +200,12 @@ fn render_job_list(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).border_style(border_style).title(format!(" Jobs ({}) ", state.jobs.len())));
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(format!(" Jobs ({}) ", state.jobs.len())),
+    );
     frame.render_widget(list, area);
 }
 
@@ -187,7 +216,10 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
     let (text, style) = if let Some(ref error) = state.error {
         (error.clone(), Style::default().fg(Color::Red))
     } else if state.submitting {
-        ("Submitting jobs...".to_string(), Style::default().fg(Color::Yellow))
+        (
+            "Submitting jobs...".to_string(),
+            Style::default().fg(Color::Yellow),
+        )
     } else {
         let hint = match state.focused_field {
             BatchSubmissionField::Cluster => "Space to cycle runner type / cluster",
@@ -217,7 +249,13 @@ fn render_buttons(frame: &mut Frame, app: &App, area: Rect) {
     let render_btn = |label: &str, field: BatchSubmissionField, color: Color| {
         let is_focused = state.focused_field == field;
         if is_focused {
-            Span::styled(format!(" [{}] ", label), Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD))
+            Span::styled(
+                format!(" [{}] ", label),
+                Style::default()
+                    .bg(color)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
             Span::styled(format!("  {}  ", label), Style::default().fg(color))
         }

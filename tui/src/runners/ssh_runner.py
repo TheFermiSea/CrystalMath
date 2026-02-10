@@ -1033,6 +1033,20 @@ exit $EXIT_CODE
         potcar_elements = metadata.get("potcar_elements")
         potcar_type = metadata.get("potcar_type", "potpaw_PBE")
 
+        # Security: Validate potcar_type against known pseudopotential libraries
+        _VALID_POTCAR_TYPES = {
+            "potpaw_PBE", "potpaw_LDA", "potpaw_GGA",
+            "PAW_PBE", "PAW_LDA", "PAW_GGA", "PAW_PW91",
+            "USPP_LDA", "USPP_GGA",
+            "potpaw_PBE.52", "potpaw_PBE.54",
+            "potpaw_PBE.64",
+        }
+        if potcar_type not in _VALID_POTCAR_TYPES:
+            raise JobSubmissionError(
+                f"Invalid potcar_type '{potcar_type}': must be one of "
+                f"{sorted(_VALID_POTCAR_TYPES)}"
+            )
+
         if not potcar_elements:
             # Fallback to legacy single element format
             element = metadata.get("potcar_element", "Si")
@@ -1055,9 +1069,11 @@ exit $EXIT_CODE
         # Try to get explicit VASP_PP_PATH from cluster config, otherwise use env var
         vasp_pp_path = getattr(cluster_config, 'vasp_pp_path', None)
         if vasp_pp_path:
-            base_path = vasp_pp_path
+            # Literal path: shlex.quote to protect against spaces/special chars
+            base_path = shlex.quote(vasp_pp_path)
         else:
-            base_path = "$VASP_PP_PATH"
+            # Env var: double-quote for safe expansion with word-splitting protection
+            base_path = '"$VASP_PP_PATH"'
 
         logger.info(f"Retrieving POTCARs for elements: {potcar_elements} (type: {potcar_type})")
 
