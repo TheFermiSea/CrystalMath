@@ -124,6 +124,7 @@ pub struct MonitorState {
     pub selected_index: usize,
     pub receiver: Option<Receiver<MonitorMessage>>,
     shutdown_tx: Option<watch::Sender<bool>>,
+    polling_thread: Option<std::thread::JoinHandle<()>>,
     polling_active: bool,
 }
 
@@ -142,6 +143,7 @@ impl MonitorState {
             selected_index: 0,
             receiver: None,
             shutdown_tx: None,
+            polling_thread: None,
             polling_active: false,
         }
     }
@@ -189,9 +191,9 @@ impl MonitorState {
         self.shutdown_tx = Some(shutdown_tx);
         self.polling_active = true;
 
-        std::thread::spawn(move || {
+        self.polling_thread = Some(std::thread::spawn(move || {
             runtime.block_on(poll_loop(tx, shutdown_rx, client));
-        });
+        }));
 
         Some(())
     }
@@ -200,6 +202,12 @@ impl MonitorState {
     pub fn stop_polling(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(true);
+        }
+        if let Some(handle) = self.polling_thread.take() {
+            if handle.join().is_err() {
+                self.connected = false;
+                self.error = Some("Monitor polling thread panicked".to_string());
+            }
         }
         self.polling_active = false;
         self.receiver = None;
@@ -221,6 +229,11 @@ impl MonitorState {
             MonitorSubView::SlurmStatus => self.last_slurm_update,
         };
         instant.map(|t| t.elapsed())
+    }
+
+    #[cfg(test)]
+    pub fn is_polling(&self) -> bool {
+        self.polling_active
     }
 }
 
@@ -281,7 +294,11 @@ async fn poll_loop(
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "GPU poller") {
+                            break;
+                        }
+                    }
                     result = client.fetch_gpu_metrics() => match result {
                     Ok(metrics) => {
                         if !connected.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -295,7 +312,11 @@ async fn poll_loop(
                     }
                 }
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "GPU poller sleep") {
+                            break;
+                        }
+                    }
                     _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {}
                 }
             }
@@ -311,7 +332,11 @@ async fn poll_loop(
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "Node poller") {
+                            break;
+                        }
+                    }
                     result = client.fetch_node_metrics() => match result {
                     Ok(metrics) => {
                         if !connected.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -325,7 +350,11 @@ async fn poll_loop(
                     }
                 }
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "Node poller sleep") {
+                            break;
+                        }
+                    }
                     _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
                 }
             }
@@ -340,7 +369,11 @@ async fn poll_loop(
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "SLURM poller") {
+                            break;
+                        }
+                    }
                     result = client.fetch_slurm_metrics() => match result {
                     Ok(metrics) => {
                         if !connected.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -354,7 +387,11 @@ async fn poll_loop(
                     }
                 }
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "SLURM poller sleep") {
+                            break;
+                        }
+                    }
                     _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
                 }
             }
@@ -363,6 +400,25 @@ async fn poll_loop(
 
     // Wait for all (they loop forever, so this blocks indefinitely)
     let _ = tokio::join!(gpu_handle, node_handle, slurm_handle);
+}
+
+fn should_stop_polling(
+    result: Result<(), watch::error::RecvError>,
+    shutdown: &watch::Receiver<bool>,
+    tx: &Sender<MonitorMessage>,
+    poller_name: &str,
+) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(err) => {
+            if !*shutdown.borrow() {
+                let _ = tx.send(MonitorMessage::Error(format!(
+                    "{poller_name} shutdown channel closed: {err}"
+                )));
+            }
+            true
+        }
+    }
 }
 
 /// Push to sparkline history with bounded length.

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use thiserror::Error;
+use tracing::warn;
 
 use crate::monitor::{GpuMetrics, NodeMetrics, SlurmClusterMetrics};
 
@@ -116,6 +117,30 @@ impl PrometheusClient {
         instance.split(':').next().unwrap_or(instance).to_string()
     }
 
+    fn gpu_sample_key(sample: &InstantSample) -> (String, u32) {
+        let instance = sample.labels.get("instance").cloned().unwrap_or_default();
+        let idx = sample
+            .labels
+            .get("gpu")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        (instance, idx)
+    }
+
+    fn ensure_gpu_entry(
+        map: &mut HashMap<(String, u32), GpuMetrics>,
+        sample: &InstantSample,
+    ) -> (String, u32) {
+        let (instance, idx) = Self::gpu_sample_key(sample);
+        map.entry((instance.clone(), idx))
+            .or_insert_with(|| GpuMetrics {
+                node: Self::hostname(&instance),
+                gpu_index: idx,
+                ..Default::default()
+            });
+        (instance, idx)
+    }
+
     /// Fetch GPU metrics from all-smi exporter.
     pub async fn fetch_gpu_metrics(&self) -> Result<Vec<GpuMetrics>, PrometheusError> {
         // Query all GPU metrics in parallel
@@ -131,79 +156,53 @@ impl PrometheusClient {
         // Build lookup: (instance, gpu_index) -> partial GpuMetrics
         let mut map: HashMap<(String, u32), GpuMetrics> = HashMap::new();
 
+        for samples in [
+            &util[..],
+            &temp[..],
+            &power[..],
+            &mem_used[..],
+            &mem_total[..],
+            &freq[..],
+        ] {
+            for sample in samples {
+                Self::ensure_gpu_entry(&mut map, sample);
+            }
+        }
+
         for sample in &util {
-            let instance = sample.labels.get("instance").cloned().unwrap_or_default();
-            let idx: u32 = sample
-                .labels
-                .get("gpu")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            let key = (instance.clone(), idx);
-            let entry = map.entry(key).or_insert_with(|| GpuMetrics {
-                node: Self::hostname(&instance),
-                gpu_index: idx,
-                ..Default::default()
-            });
+            let key = Self::gpu_sample_key(sample);
+            let entry = map.get_mut(&key).expect("GPU entry initialized");
             entry.utilization_pct = sample.value;
         }
 
         for sample in &temp {
-            let instance = sample.labels.get("instance").cloned().unwrap_or_default();
-            let idx: u32 = sample
-                .labels
-                .get("gpu")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            if let Some(entry) = map.get_mut(&(instance, idx)) {
+            if let Some(entry) = map.get_mut(&Self::gpu_sample_key(sample)) {
                 entry.temperature_c = sample.value;
             }
         }
 
         for sample in &power {
-            let instance = sample.labels.get("instance").cloned().unwrap_or_default();
-            let idx: u32 = sample
-                .labels
-                .get("gpu")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            if let Some(entry) = map.get_mut(&(instance, idx)) {
+            if let Some(entry) = map.get_mut(&Self::gpu_sample_key(sample)) {
                 entry.power_watts = sample.value;
             }
         }
 
         for sample in &mem_used {
-            let instance = sample.labels.get("instance").cloned().unwrap_or_default();
-            let idx: u32 = sample
-                .labels
-                .get("gpu")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            if let Some(entry) = map.get_mut(&(instance, idx)) {
-                // all-smi reports in MiB, convert to GB
+            if let Some(entry) = map.get_mut(&Self::gpu_sample_key(sample)) {
+                // all-smi reports in MiB, convert to GiB
                 entry.memory_used_gb = sample.value / 1024.0;
             }
         }
 
         for sample in &mem_total {
-            let instance = sample.labels.get("instance").cloned().unwrap_or_default();
-            let idx: u32 = sample
-                .labels
-                .get("gpu")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            if let Some(entry) = map.get_mut(&(instance, idx)) {
+            if let Some(entry) = map.get_mut(&Self::gpu_sample_key(sample)) {
+                // all-smi reports in MiB, convert to GiB
                 entry.memory_total_gb = sample.value / 1024.0;
             }
         }
 
         for sample in &freq {
-            let instance = sample.labels.get("instance").cloned().unwrap_or_default();
-            let idx: u32 = sample
-                .labels
-                .get("gpu")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            if let Some(entry) = map.get_mut(&(instance, idx)) {
+            if let Some(entry) = map.get_mut(&Self::gpu_sample_key(sample)) {
                 entry.frequency_mhz = sample.value;
             }
         }
@@ -347,21 +346,25 @@ impl PrometheusClient {
             self.query("slurm_mem_total"),
         )?;
 
-        fn first_val(samples: &[InstantSample]) -> f64 {
-            samples.first().map(|s| s.value).unwrap_or(0.0)
+        fn first_val(samples: &[InstantSample], metric_name: &str) -> Result<f64, PrometheusError> {
+            samples.first().map(|sample| sample.value).ok_or_else(|| {
+                warn!("Prometheus metric '{}' returned no samples", metric_name);
+                PrometheusError::Parse(format!("missing Prometheus data for {}", metric_name))
+            })
         }
 
         Ok(SlurmClusterMetrics {
-            cpus_idle: first_val(&cpus_idle) as u64,
-            cpus_total: first_val(&cpus_total) as u64,
-            nodes_idle: first_val(&nodes_idle) as u64,
-            nodes_alloc: first_val(&nodes_alloc) as u64,
-            nodes_down: first_val(&nodes_down) as u64,
-            nodes_drain: first_val(&nodes_drain) as u64,
-            jobs_running: first_val(&jobs_running) as u64,
-            jobs_pending: first_val(&jobs_pending) as u64,
-            mem_alloc_gb: first_val(&mem_alloc) / 1024.0,
-            mem_total_gb: first_val(&mem_total) / 1024.0,
+            cpus_idle: first_val(&cpus_idle, "slurm_cpus_idle")? as u64,
+            cpus_total: first_val(&cpus_total, "slurm_cpus_total")? as u64,
+            nodes_idle: first_val(&nodes_idle, "slurm_nodes_idle")? as u64,
+            nodes_alloc: first_val(&nodes_alloc, "slurm_nodes_alloc")? as u64,
+            nodes_down: first_val(&nodes_down, "slurm_nodes_down")? as u64,
+            nodes_drain: first_val(&nodes_drain, "slurm_nodes_drain")? as u64,
+            jobs_running: first_val(&jobs_running, "slurm_queue_running")? as u64,
+            jobs_pending: first_val(&jobs_pending, "slurm_queue_pending")? as u64,
+            // slurm_exporter reports memory in MiB, convert to GiB
+            mem_alloc_gb: first_val(&mem_alloc, "slurm_mem_alloc")? / 1024.0,
+            mem_total_gb: first_val(&mem_total, "slurm_mem_total")? / 1024.0,
         })
     }
 }

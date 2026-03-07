@@ -417,11 +417,13 @@ impl HelpState {
     }
 
     /// Scroll content pane up.
+    #[allow(dead_code)]
     pub fn scroll_content_up(&mut self) {
         self.content_scroll = self.content_scroll.saturating_sub(1);
     }
 
     /// Scroll content pane down.
+    #[allow(dead_code)]
     pub fn scroll_content_down(&mut self) {
         self.content_scroll = self.content_scroll.saturating_add(1);
     }

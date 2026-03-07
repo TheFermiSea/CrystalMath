@@ -227,6 +227,7 @@ impl VaspInputState {
     }
 
     /// Set a status message.
+    #[cfg(test)]
     pub fn set_status(&mut self, status: String) {
         self.status = Some(status);
         self.error = None;

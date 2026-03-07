@@ -2644,9 +2644,9 @@ impl<'a> App<'a> {
                                     .get("parameter_value")
                                     .map(value_to_string)
                                     .unwrap_or_else(|| "-".to_string());
-                                let energy = point.get("energy").and_then(|v| parse_f64(v));
+                                let energy = point.get("energy").and_then(parse_f64);
                                 let energy_per_atom =
-                                    point.get("energy_per_atom").and_then(|v| parse_f64(v));
+                                    point.get("energy_per_atom").and_then(parse_f64);
                                 let status = point
                                     .get("status")
                                     .and_then(|v| v.as_str())
@@ -2688,9 +2688,9 @@ impl<'a> App<'a> {
                     .map(|arr| {
                         arr.iter()
                             .map(|point| crate::state::EosPointCache {
-                                volume_scale: point.get("volume_scale").and_then(|v| parse_f64(v)),
-                                volume: point.get("volume").and_then(|v| parse_f64(v)),
-                                energy: point.get("energy").and_then(|v| parse_f64(v)),
+                                volume_scale: point.get("volume_scale").and_then(parse_f64),
+                                volume: point.get("volume").and_then(parse_f64),
+                                energy: point.get("energy").and_then(parse_f64),
                                 status: point
                                     .get("status")
                                     .and_then(|v| v.as_str())
@@ -2706,11 +2706,11 @@ impl<'a> App<'a> {
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
                     points,
-                    v0: result.get("v0").and_then(|v| parse_f64(v)),
-                    e0: result.get("e0").and_then(|v| parse_f64(v)),
-                    b0: result.get("b0").and_then(|v| parse_f64(v)),
-                    bp: result.get("bp").and_then(|v| parse_f64(v)),
-                    residual: result.get("residual").and_then(|v| parse_f64(v)),
+                    v0: result.get("v0").and_then(parse_f64),
+                    e0: result.get("e0").and_then(parse_f64),
+                    b0: result.get("b0").and_then(parse_f64),
+                    bp: result.get("bp").and_then(parse_f64),
+                    residual: result.get("residual").and_then(parse_f64),
                     error_message: result
                         .get("error_message")
                         .and_then(|v| v.as_str())
@@ -6066,42 +6066,54 @@ mod tests {
     fn test_tab_navigation_wraps_forward() {
         let mut app = create_test_app();
         assert_eq!(app.current_tab, AppTab::Jobs);
+        assert!(!app.monitor.is_polling());
 
         app.next_tab();
         assert_eq!(app.current_tab, AppTab::Editor);
+        assert!(!app.monitor.is_polling());
 
         app.next_tab();
         assert_eq!(app.current_tab, AppTab::Results);
+        assert!(!app.monitor.is_polling());
 
         app.next_tab();
         assert_eq!(app.current_tab, AppTab::Log);
+        assert!(!app.monitor.is_polling());
 
         app.next_tab();
         assert_eq!(app.current_tab, AppTab::Monitor);
+        assert!(app.monitor.is_polling());
 
         app.next_tab();
         assert_eq!(app.current_tab, AppTab::Jobs);
+        assert!(!app.monitor.is_polling());
     }
 
     #[test]
     fn test_tab_navigation_wraps_backward() {
         let mut app = create_test_app();
         assert_eq!(app.current_tab, AppTab::Jobs);
+        assert!(!app.monitor.is_polling());
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Monitor);
+        assert!(app.monitor.is_polling());
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Log);
+        assert!(!app.monitor.is_polling());
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Results);
+        assert!(!app.monitor.is_polling());
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Editor);
+        assert!(!app.monitor.is_polling());
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Jobs);
+        assert!(!app.monitor.is_polling());
     }
 
     #[test]

@@ -411,7 +411,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
         app.maybe_clear_error();
 
         // Only redraw if state has changed (dirty-flag optimization)
-        if app.take_needs_redraw() {
+        if app.needs_redraw() {
+            app.take_needs_redraw();
             terminal.draw(|f| ui::render(f, app))?;
         }
 
@@ -473,10 +474,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             handle_batch_submission_input(app, key);
                         }
                     } else {
-                        if app.current_tab == app::AppTab::Jobs && app.workflow_list.active {
-                            if handle_workflow_dashboard_input(app, key) {
-                                continue;
-                            }
+                        if app.current_tab == app::AppTab::Jobs
+                            && app.workflow_list.active
+                            && handle_workflow_dashboard_input(app, key)
+                        {
+                            continue;
                         }
                         // Global key handlers
                         match (key.code, key.modifiers) {
@@ -1779,10 +1781,10 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
             app.mark_dirty();
         }
         _ => {
-            if focused == WorkflowConfigField::ConvergenceBaseInput {
-                if app.workflow_config.convergence.base_input.input(key) {
-                    app.mark_dirty();
-                }
+            if focused == WorkflowConfigField::ConvergenceBaseInput
+                && app.workflow_config.convergence.base_input.input(key)
+            {
+                app.mark_dirty();
             }
         }
     }

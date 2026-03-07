@@ -41,6 +41,7 @@ pub struct RecipeBrowserState {
 
 impl RecipeBrowserState {
     /// Create a new recipe browser state.
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
     }
