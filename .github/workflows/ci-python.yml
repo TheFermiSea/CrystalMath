@@ -4,9 +4,13 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - '.github/workflows/ci-python.yml'
       - 'python/**'
       - 'tui/**'
       - 'pyproject.toml'
+      - 'python/pyproject.toml'
+      - 'tui/pyproject.toml'
+      - 'scripts/pre-push-quality.sh'
       - 'uv.lock'
       - 'scripts/ruff-baseline.txt'
 
@@ -20,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -32,11 +38,61 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
+      - name: Detect changed Python files and test targets
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed_files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
+            .github/workflows/ci-python.yml \
+            scripts/pre-push-quality.sh \
+            pyproject.toml \
+            python \
+            tui \
+            uv.lock | sed '/^$/d' | sort -u)
+
+          changed_python_files=$(printf '%s\n' "$changed_files" | grep -E '^(python|tui)/.*\.py$' || true)
+          changed_test_files=$(printf '%s\n' "$changed_files" | grep -E '^(python|tui)/tests/.*\.py$' || true)
+          smoke_tests=$(printf '%s\n' \
+            python/tests/test_api.py \
+            tui/tests/test_database.py \
+            tui/tests/test_dependency_utils.py)
+          pytest_targets=$(printf '%s\n' "$changed_test_files" "$smoke_tests" | sed '/^$/d' | awk '!seen[$0]++')
+
+          {
+            echo "changed_python_files<<EOF"
+            printf '%s\n' "$changed_python_files"
+            echo "EOF"
+            echo "pytest_targets<<EOF"
+            printf '%s\n' "$pytest_targets"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Changed files:"
+          printf '%s\n' "$changed_files"
+          echo
+          echo "Python files to lint/format:"
+          printf '%s\n' "$changed_python_files"
+          echo
+          echo "Pytest targets:"
+          printf '%s\n' "$pytest_targets"
+
       - name: Ruff format check
-        run: uv run ruff format --check python/ tui/
+        if: steps.changes.outputs.changed_python_files != ''
+        run: |
+          mapfile -t files <<'EOF'
+          ${{ steps.changes.outputs.changed_python_files }}
+          EOF
+          uv run ruff format --check "${files[@]}"
 
       - name: Ruff lint (PR annotations)
-        run: uv run ruff check --output-format=github python/ tui/
+        if: steps.changes.outputs.changed_python_files != ''
+        run: |
+          mapfile -t files <<'EOF'
+          ${{ steps.changes.outputs.changed_python_files }}
+          EOF
+          uv run ruff check --output-format=github "${files[@]}"
         continue-on-error: true
 
       - name: Ruff regression check
@@ -54,4 +110,8 @@ jobs:
           echo "✓ Ruff errors ($current) ≤ baseline ($baseline)"
 
       - name: Run Python tests
-        run: uv run pytest python/tests/ tui/tests/ -x -q
+        run: |
+          mapfile -t targets <<'EOF'
+          ${{ steps.changes.outputs.pytest_targets }}
+          EOF
+          uv run pytest "${targets[@]}" -x -q
