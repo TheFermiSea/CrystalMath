@@ -7,12 +7,12 @@ import logging
 import shutil
 import sys
 from importlib import metadata
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def _detect_module(module_name: str, distribution_name: Optional[str] = None) -> Dict[str, Any]:
+def _detect_module(module_name: str, distribution_name: str | None = None) -> dict[str, Any]:
     """Detect whether a Python module is importable and report its version if possible."""
     try:
         spec = importlib.util.find_spec(module_name)
@@ -35,7 +35,7 @@ def _detect_module(module_name: str, distribution_name: Optional[str] = None) ->
     return {"available": True, "version": version}
 
 
-def _detect_executable(executable: str) -> Dict[str, Any]:
+def _detect_executable(executable: str) -> dict[str, Any]:
     """Detect whether an external executable is available on PATH."""
     path = shutil.which(executable)
     if path is None:
@@ -43,7 +43,7 @@ def _detect_executable(executable: str) -> Dict[str, Any]:
     return {"available": True, "path": path}
 
 
-def _detect_aiida(profile_name: str) -> Dict[str, Any]:
+def _detect_aiida(profile_name: str) -> dict[str, Any]:
     """Probe AiiDA availability and whether the requested profile can be loaded."""
     info = _detect_module("aiida", "aiida-core")
     info["profile_name"] = profile_name
@@ -67,10 +67,10 @@ def _detect_aiida(profile_name: str) -> Dict[str, Any]:
 def get_runtime_capabilities(
     *,
     profile_name: str = "default",
-    db_path: Optional[str] = None,
-    selected_backend: Optional[str] = None,
+    db_path: str | None = None,
+    selected_backend: str | None = None,
     backend_preference: str = "auto",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Collect runtime capability information for optional integrations."""
     aiida_info = _detect_aiida(profile_name)
     integrations = {

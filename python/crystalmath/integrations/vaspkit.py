@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from crystalmath.integrations.pymatgen_bridge import (
     Dimensionality,
@@ -32,11 +32,11 @@ def _task_for_dimensionality(dimensionality: Dimensionality) -> int:
     return 303
 
 
-def _format_kpoint_line(coords: List[float], label: str) -> str:
+def _format_kpoint_line(coords: list[float], label: str) -> str:
     return f"  {coords[0]:.6f}  {coords[1]:.6f}  {coords[2]:.6f}  ! {label}"
 
 
-def _generate_with_vaspkit(poscar: str, task_id: int, line_density: int) -> Dict[str, Any]:
+def _generate_with_vaspkit(poscar: str, task_id: int, line_density: int) -> dict[str, Any]:
     """Best-effort VASPKIT wrapper for line-mode K-path generation."""
     if shutil.which("vaspkit") is None:
         raise BandPathGenerationError("vaspkit executable is not available")
@@ -72,7 +72,7 @@ def _generate_with_vaspkit(poscar: str, task_id: int, line_density: int) -> Dict
         )
 
 
-def _generate_with_seekpath(structure: Any, line_density: int) -> Dict[str, Any]:
+def _generate_with_seekpath(structure: Any, line_density: int) -> dict[str, Any]:
     """Generate a line-mode KPOINTS file using SeeK-path."""
     import seekpath
 
@@ -104,7 +104,7 @@ def _generate_with_seekpath(structure: Any, line_density: int) -> Dict[str, Any]
     }
 
 
-def _generate_with_pymatgen(structure: Any, line_density: int) -> Dict[str, Any]:
+def _generate_with_pymatgen(structure: Any, line_density: int) -> dict[str, Any]:
     """Generate a line-mode KPOINTS file using pymatgen's HighSymmKpath."""
     return {
         "kpoints": generate_band_path_kpoints(structure, line_density=line_density) + "\n",
@@ -117,7 +117,7 @@ def generate_band_path_from_structure(
     *,
     line_density: int = 20,
     prefer_vaspkit: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate a band-structure KPOINTS file with VASPKIT-first fallback behavior."""
     if line_density <= 0:
         raise BandPathGenerationError("line_density must be greater than zero")

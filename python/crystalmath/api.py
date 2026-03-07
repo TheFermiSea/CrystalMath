@@ -14,15 +14,12 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from crystalmath.models import (
-    DftCode,
     JobDetails,
-    JobState,
     JobStatus,
     JobSubmission,
-    RunnerType,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,7 +58,7 @@ JSONRPC_INTERNAL_ERROR = -32603
 
 def _jsonrpc_error(code: int, message: str, data: Any = None, request_id: Any = None) -> str:
     """Create a JSON-RPC 2.0 error response."""
-    error_obj: Dict[str, Any] = {"code": code, "message": message}
+    error_obj: dict[str, Any] = {"code": code, "message": message}
     if data is not None:
         error_obj["data"] = data
     return json.dumps(
@@ -102,7 +99,7 @@ class CrystalController:
         self,
         profile_name: str = "default",
         use_aiida: bool = True,
-        db_path: Optional[str] = None,
+        db_path: str | None = None,
         backend_preference: str = "auto",
     ) -> None:
         """
@@ -141,7 +138,7 @@ class CrystalController:
         # JSON-RPC method registry: method_name -> (handler_callable, param_names)
         # This enables the thin IPC pattern where Rust sends generic JSON-RPC
         # requests rather than specific enum variants
-        self._rpc_registry: Dict[str, tuple] = self._build_rpc_registry()
+        self._rpc_registry: dict[str, tuple] = self._build_rpc_registry()
 
     def _init_aiida(self, profile_name: str) -> bool:
         """
@@ -178,7 +175,7 @@ class CrystalController:
             logger.warning(f"Failed to load SQLite database: {e}")
             self._db = None
 
-    def _build_rpc_registry(self) -> Dict[str, tuple]:
+    def _build_rpc_registry(self) -> dict[str, tuple]:
         """Build the JSON-RPC method registry.
 
         Maps method names to (handler, param_names) tuples. Only methods
@@ -393,11 +390,11 @@ class CrystalController:
 
     # ========== Public API Methods (primary Python interface) ==========
 
-    def get_jobs(self, limit: int = 100) -> List[JobStatus]:
+    def get_jobs(self, limit: int = 100) -> list[JobStatus]:
         """Get list of jobs as native JobStatus objects."""
         return self._backend.get_jobs(limit)
 
-    def get_job_details(self, pk: int) -> Optional[JobDetails]:
+    def get_job_details(self, pk: int) -> JobDetails | None:
         """Get detailed job info as a JobDetails object (or None if not found)."""
         return self._backend.get_job_details(pk)
 
@@ -405,7 +402,7 @@ class CrystalController:
         """Submit a new job from a JobSubmission object."""
         return self._backend.submit_job(submission)
 
-    def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
+    def get_job_log(self, pk: int, tail_lines: int = 100) -> dict[str, list[str]]:
         """Get job stdout/stderr log as a dict with stdout/stderr arrays."""
         return self._backend.get_job_log(pk, tail_lines)
 
@@ -457,7 +454,7 @@ class CrystalController:
         logs = self.get_job_log(pk, tail_lines)
         return json.dumps(logs)
 
-    def get_capabilities(self) -> Dict[str, Any]:
+    def get_capabilities(self) -> dict[str, Any]:
         """Report optional integration and backend capabilities."""
         from crystalmath.integrations.capabilities import get_runtime_capabilities
 
@@ -474,7 +471,7 @@ class CrystalController:
 
     # ========== quacc Integration Methods ==========
 
-    def get_recipes_list(self) -> Dict[str, Any]:
+    def get_recipes_list(self) -> dict[str, Any]:
         """Get list of available quacc VASP recipes.
 
         Returns:
@@ -511,7 +508,7 @@ class CrystalController:
                 "error": f"Error discovering recipes: {e}",
             }
 
-    def get_quacc_clusters_list(self) -> Dict[str, Any]:
+    def get_quacc_clusters_list(self) -> dict[str, Any]:
         """Get list of configured quacc clusters and workflow engine status.
 
         Returns:
@@ -527,7 +524,7 @@ class CrystalController:
                 "clusters": store.list_clusters(),
                 "workflow_engine": get_engine_status(),
             }
-        except ImportError as e:
+        except ImportError:
             return {
                 "clusters": [],
                 "workflow_engine": {
@@ -548,8 +545,8 @@ class CrystalController:
             }
 
     def get_quacc_jobs_list(
-        self, status: Optional[str] = None, limit: Optional[int] = None
-    ) -> Dict[str, Any]:
+        self, status: str | None = None, limit: int | None = None
+    ) -> dict[str, Any]:
         """Get list of quacc jobs with optional filtering.
 
         Args:
@@ -569,7 +566,7 @@ class CrystalController:
                 "jobs": [job.model_dump() for job in jobs],
                 "total": len(jobs),
             }
-        except ImportError as e:
+        except ImportError:
             return {
                 "jobs": [],
                 "total": 0,
@@ -808,14 +805,16 @@ class CrystalController:
         source_data: str,
         conventional: bool = False,
         backend: str = "auto",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Standardize a structure and return both metadata and POSCAR output."""
         from crystalmath.integrations.pymatgen_bridge import (
             get_dimensionality,
             get_symmetry_info,
-            standardize_structure as standardize_structure_impl,
             structure_to_poscar,
             validate_for_dft,
+        )
+        from crystalmath.integrations.pymatgen_bridge import (
+            standardize_structure as standardize_structure_impl,
         )
 
         structure = self._load_structure_from_source(source_type, source_data)
@@ -874,7 +873,7 @@ class CrystalController:
         poscar_content: str,
         line_density: int = 20,
         prefer_vaspkit: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generate a line-mode VASP KPOINTS file for band-structure calculations."""
         from crystalmath.integrations.vaspkit import generate_band_path_from_structure
 
@@ -987,7 +986,7 @@ class CrystalController:
         """
         import asyncio
 
-        async def _run() -> List[Dict[str, Any]]:
+        async def _run() -> list[dict[str, Any]]:
             # Lazy import to avoid loading heavy dependencies on startup
             from src.core.materials_api.service import MaterialsService
             from src.core.materials_api.settings import MaterialsSettings
@@ -1072,7 +1071,7 @@ class CrystalController:
         """
         import asyncio
 
-        async def _run() -> Dict[str, Any]:
+        async def _run() -> dict[str, Any]:
             from src.core.materials_api.service import MaterialsService
             from src.core.materials_api.settings import MaterialsSettings
 
@@ -1124,8 +1123,8 @@ class CrystalController:
         """
         import asyncio
 
-        async def _run() -> List[Dict[str, Any]]:
-            from src.core.connection_manager import ConnectionManager, ConnectionConfig
+        async def _run() -> list[dict[str, Any]]:
+            from src.core.connection_manager import ConnectionManager
             from src.runners.slurm_runner import SLURMRunner
 
             # Get cluster config from database
@@ -1214,7 +1213,7 @@ class CrystalController:
 
         async def _run() -> None:
             from src.core.connection_manager import ConnectionManager
-            from src.runners.slurm_runner import SLURMRunner, SLURMJobState
+            from src.runners.slurm_runner import SLURMRunner
 
             if not hasattr(self, "_db") or not self._db:
                 logger.warning("Database not available - cannot sync remote jobs")
@@ -1240,7 +1239,7 @@ class CrystalController:
                 return
 
             # Group by cluster
-            jobs_by_cluster: Dict[int, List[Dict[str, Any]]] = {}
+            jobs_by_cluster: dict[int, list[dict[str, Any]]] = {}
             for job in active_jobs:
                 cid = job["cluster_id"]
                 if cid not in jobs_by_cluster:
@@ -1487,7 +1486,7 @@ class CrystalController:
         """
         import asyncio
 
-        async def _run() -> Dict[str, Any]:
+        async def _run() -> dict[str, Any]:
             from src.core.connection_manager import ConnectionManager
             from src.runners.slurm_runner import SLURMRunner
 
@@ -1579,7 +1578,7 @@ class CrystalController:
                 return _error_response("NO_DATABASE", "Database not available")
 
             clusters = self._db.get_all_clusters()
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
 
             for cluster in clusters:
                 # Parse connection_config if it's a string
@@ -1774,7 +1773,7 @@ class CrystalController:
         """
         import asyncio
 
-        async def _test() -> Dict[str, Any]:
+        async def _test() -> dict[str, Any]:
             from src.core.connection_manager import ConnectionManager
 
             if not hasattr(self, "_db") or not self._db:
@@ -1928,7 +1927,7 @@ class CrystalController:
             logger.error(f"Job error analysis failed for pk={pk}: {e}")
             return _error_response("AI_ERROR", str(e))
 
-    def _get_job_error_context(self, pk: int) -> Optional[Dict[str, Any]]:
+    def _get_job_error_context(self, pk: int) -> dict[str, Any] | None:
         """
         Fetch error context for a job from the database.
 
@@ -1949,7 +1948,7 @@ class CrystalController:
         else:
             return self._get_demo_job_error_context(pk)
 
-    def _get_aiida_job_error_context(self, pk: int) -> Optional[Dict[str, Any]]:
+    def _get_aiida_job_error_context(self, pk: int) -> dict[str, Any] | None:
         """Get error context from AiiDA."""
         from aiida import orm
         from aiida.common import NotExistent
@@ -1958,8 +1957,8 @@ class CrystalController:
             node = orm.load_node(pk)
 
             # Get stdout/stderr
-            stdout_lines: List[str] = []
-            stderr_lines: List[str] = []
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
 
             if "retrieved" in node.outputs:
                 try:
@@ -2004,7 +2003,7 @@ class CrystalController:
             logger.error(f"Error fetching AiiDA job context for pk={pk}: {e}")
             return None
 
-    def _get_sqlite_job_error_context(self, pk: int) -> Optional[Dict[str, Any]]:
+    def _get_sqlite_job_error_context(self, pk: int) -> dict[str, Any] | None:
         """Get error context from SQLite database."""
         try:
             job = self._db.get_job(pk)
@@ -2061,7 +2060,7 @@ class CrystalController:
             logger.error(f"Error fetching SQLite job context for pk={pk}: {e}")
             return None
 
-    def _get_demo_job_error_context(self, pk: int) -> Optional[Dict[str, Any]]:
+    def _get_demo_job_error_context(self, pk: int) -> dict[str, Any] | None:
         """Get error context for demo jobs."""
         for job in self._backend.get_jobs():
             if job.pk == pk:
@@ -2270,12 +2269,12 @@ class CrystalController:
             capabilities = self.get_capabilities()
             integrations = capabilities["integrations"]
             from crystalmath.workflows import (
-                WORKFLOWS_AVAILABLE,
                 AIIDA_LAUNCHER_AVAILABLE,
-                ConvergenceWorkflow,
+                WORKFLOWS_AVAILABLE,
                 BandStructureWorkflow,
-                PhononWorkflow,
+                ConvergenceWorkflow,
                 EOSWorkflow,
+                PhononWorkflow,
             )
 
             available_workflows = []
@@ -2345,9 +2344,9 @@ class CrystalController:
         """
         try:
             from crystalmath.workflows.convergence import (
+                ConvergenceParameter,
                 ConvergenceStudy,
                 ConvergenceStudyConfig,
-                ConvergenceParameter,
             )
 
             config_data = json.loads(config_json)
@@ -2460,9 +2459,9 @@ class CrystalController:
         """
         try:
             from crystalmath.workflows.bands import (
-                BandStructureWorkflow,
-                BandStructureConfig,
                 BandPathType,
+                BandStructureConfig,
+                BandStructureWorkflow,
             )
 
             config_data = json.loads(config_json)
@@ -2525,10 +2524,10 @@ class CrystalController:
         """
         try:
             from crystalmath.workflows.phonon import (
-                PhononWorkflow,
+                DFTCode,
                 PhononConfig,
                 PhononMethod,
-                DFTCode,
+                PhononWorkflow,
             )
 
             config_data = json.loads(config_json)
@@ -2641,7 +2640,7 @@ class CrystalController:
             JSON with workflow state
         """
         try:
-            from crystalmath.workflows.eos import EOSWorkflow, EOSConfig
+            from crystalmath.workflows.eos import EOSConfig, EOSWorkflow
 
             config_data = json.loads(config_json)
 
@@ -2953,7 +2952,7 @@ class CrystalController:
 def create_controller(
     profile_name: str = "default",
     use_aiida: bool = True,
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
     backend_preference: str = "auto",
 ) -> CrystalController:
     """

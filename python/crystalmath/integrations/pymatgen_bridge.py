@@ -60,11 +60,6 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Union,
 )
 
 if TYPE_CHECKING:
@@ -168,11 +163,11 @@ class SymmetryInfo:
     crystal_system: CrystalSystem
     hall_symbol: str = ""
     is_centrosymmetric: bool = False
-    wyckoff_symbols: List[str] = field(default_factory=list)
+    wyckoff_symbols: list[str] = field(default_factory=list)
     symmetry_operations: int = 0
     tolerance: float = 0.01
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "space_group_number": self.space_group_number,
@@ -204,7 +199,7 @@ class StructureMetadata:
     """
 
     source: str
-    source_id: Optional[str] = None
+    source_id: str | None = None
     formula: str = ""
     reduced_formula: str = ""
     num_sites: int = 0
@@ -264,7 +259,7 @@ def _check_mp_api() -> None:
 # =============================================================================
 
 
-def structure_from_cif(path: Union[str, Path]) -> "Structure":
+def structure_from_cif(path: str | Path) -> Structure:
     """
     Load a structure from a CIF file.
 
@@ -298,7 +293,7 @@ def structure_from_cif(path: Union[str, Path]) -> "Structure":
         raise StructureLoadError(f"Failed to parse CIF file {path}: {e}") from e
 
 
-def structure_from_poscar(path: Union[str, Path]) -> "Structure":
+def structure_from_poscar(path: str | Path) -> Structure:
     """
     Load a structure from a VASP POSCAR/CONTCAR file.
 
@@ -318,7 +313,6 @@ def structure_from_poscar(path: Union[str, Path]) -> "Structure":
         8
     """
     _check_pymatgen()
-    from pymatgen.core import Structure
     from pymatgen.io.vasp import Poscar
 
     path = Path(path)
@@ -334,7 +328,7 @@ def structure_from_poscar(path: Union[str, Path]) -> "Structure":
         raise StructureLoadError(f"Failed to parse POSCAR file {path}: {e}") from e
 
 
-def structure_to_poscar(structure: "Structure", comment: Optional[str] = None) -> str:
+def structure_to_poscar(structure: Structure, comment: str | None = None) -> str:
     """
     Convert a pymatgen Structure to VASP POSCAR format.
 
@@ -366,9 +360,9 @@ def structure_to_poscar(structure: "Structure", comment: Optional[str] = None) -
 
 def structure_from_mp(
     mp_id: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     conventional: bool = False,
-) -> "Structure":
+) -> Structure:
     """
     Load a structure from the Materials Project database.
 
@@ -429,7 +423,7 @@ def structure_from_mp(
 def structure_from_cod(
     cod_id: int,
     timeout: float = 60.0,
-) -> "Structure":
+) -> Structure:
     """
     Load a structure from the Crystallography Open Database (COD).
 
@@ -454,10 +448,10 @@ def structure_from_cod(
         See: https://www.crystallography.net/cod/
     """
     _check_pymatgen()
-    from pymatgen.core import Structure
-
-    import urllib.request
     import tempfile
+    import urllib.request
+
+    from pymatgen.core import Structure
 
     # COD CIF download URL
     url = f"https://www.crystallography.net/cod/{cod_id}.cif"
@@ -492,7 +486,7 @@ def structure_from_cod(
             tmp_path.unlink(missing_ok=True)
 
 
-def structure_from_file(path: Union[str, Path]) -> "Structure":
+def structure_from_file(path: str | Path) -> Structure:
     """
     Load a structure from any supported file format.
 
@@ -538,7 +532,7 @@ def structure_from_file(path: Union[str, Path]) -> "Structure":
 # =============================================================================
 
 
-def to_aiida_structure(structure: "Structure") -> "StructureData":
+def to_aiida_structure(structure: Structure) -> StructureData:
     """
     Convert pymatgen Structure to AiiDA StructureData.
 
@@ -593,7 +587,7 @@ def to_aiida_structure(structure: "Structure") -> "StructureData":
         raise StructureConversionError(f"Failed to convert to AiiDA StructureData: {e}") from e
 
 
-def from_aiida_structure(node: "StructureData") -> "Structure":
+def from_aiida_structure(node: StructureData) -> Structure:
     """
     Convert AiiDA StructureData to pymatgen Structure.
 
@@ -653,7 +647,7 @@ def from_aiida_structure(node: "StructureData") -> "Structure":
         raise StructureConversionError(f"Failed to convert from AiiDA StructureData: {e}") from e
 
 
-def to_ase_atoms(structure: "Structure") -> "Atoms":
+def to_ase_atoms(structure: Structure) -> Atoms:
     """
     Convert pymatgen Structure to ASE Atoms object.
 
@@ -713,7 +707,7 @@ def to_ase_atoms(structure: "Structure") -> "Atoms":
         raise StructureConversionError(f"Failed to convert to ASE Atoms: {e}") from e
 
 
-def from_ase_atoms(atoms: "Atoms") -> "Structure":
+def from_ase_atoms(atoms: Atoms) -> Structure:
     """
     Convert ASE Atoms object to pymatgen Structure.
 
@@ -784,7 +778,7 @@ def from_ase_atoms(atoms: "Atoms") -> "Structure":
 
 
 def get_symmetry_info(
-    structure: "Structure",
+    structure: Structure,
     symprec: float = 0.01,
     angle_tolerance: float = 5.0,
 ) -> SymmetryInfo:
@@ -876,7 +870,7 @@ def get_symmetry_info(
 
 
 def get_dimensionality(
-    structure: "Structure",
+    structure: Structure,
     tolerance: float = 0.45,
 ) -> int:
     """
@@ -946,12 +940,12 @@ def get_dimensionality(
 
 
 def validate_for_dft(
-    structure: "Structure",
+    structure: Structure,
     check_overlapping: bool = True,
     check_oxidation: bool = True,
     min_distance: float = 0.5,
     max_atoms: int = 500,
-) -> Tuple[bool, List[str]]:
+) -> tuple[bool, list[str]]:
     """
     Validate a structure for DFT calculations.
 
@@ -993,7 +987,7 @@ def validate_for_dft(
     if not isinstance(structure, PymatgenStructure):
         return False, [f"Expected pymatgen Structure, got {type(structure)}"]
 
-    issues: List[str] = []
+    issues: list[str] = []
     is_valid = True
 
     # Check number of atoms
@@ -1034,8 +1028,6 @@ def validate_for_dft(
     # Check for overlapping atoms
     if check_overlapping:
         try:
-            from pymatgen.core.structure import Structure
-
             # Get all pairwise distances
             dist_matrix = structure.distance_matrix
 
@@ -1086,7 +1078,7 @@ def validate_for_dft(
     return is_valid, issues
 
 
-def get_structure_metadata(structure: "Structure") -> StructureMetadata:
+def get_structure_metadata(structure: Structure) -> StructureMetadata:
     """
     Extract metadata from a structure.
 
@@ -1120,12 +1112,12 @@ def get_structure_metadata(structure: "Structure") -> StructureMetadata:
 
 
 def standardize_structure(
-    structure: "Structure",
+    structure: Structure,
     *,
     conventional: bool = False,
     backend: str = "auto",
     symprec: float = 0.01,
-) -> Tuple["Structure", str]:
+) -> tuple[Structure, str]:
     """
     Standardize a structure for downstream workflow use.
 

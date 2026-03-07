@@ -1,5 +1,4 @@
 import pytest
-
 from src.tui.screens.vasp_input_manager import (
     parse_band_line_density,
     validate_vasp_job_name,
