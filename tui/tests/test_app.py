@@ -17,9 +17,11 @@ import pytest
 import asyncio
 
 from src.tui.app_enhanced import CrystalTUI, JobLog, JobStatus, JobResults
+from src.tui.app import CrystalTUI as ClassicCrystalTUI
 from src.core.database import Database, Job
 from src.core.environment import CrystalConfig
 from src.runners.local import LocalRunner, JobResult
+from src.tui.screens.vasp_input_manager import VASPFilesReady
 
 
 @pytest.fixture
@@ -283,6 +285,35 @@ class TestMessageHandling:
             # Check database has energy
             job = app.db.get_job(job_id)
             assert job.final_energy == -123.456
+
+    def test_classic_app_rolls_back_vasp_staging_directory_on_failure(
+        self, temp_project, mock_config
+    ):
+        """Failed VASP job creation should remove the staged work directory."""
+        app = ClassicCrystalTUI(project_dir=temp_project, config=mock_config)
+        app.calculations_dir.mkdir(parents=True, exist_ok=True)
+
+        app.db = Mock()
+        app.db.get_all_jobs.return_value = []
+        app.db.create_job.side_effect = RuntimeError("db failed")
+
+        mock_log = Mock()
+        message = VASPFilesReady(
+            poscar="POSCAR",
+            incar="INCAR",
+            kpoints="KPOINTS",
+            potcar_elements=["Si"],
+            potcar_type="potpaw_PBE",
+            job_name="silicon",
+        )
+
+        with (
+            patch.object(app, "query_one", return_value=mock_log),
+            patch.object(app, "_refresh_job_list"),
+        ):
+            app.on_vasp_files_ready(message)
+
+        assert not (app.calculations_dir / "0001_silicon").exists()
 
 
 class TestKeyboardActions:

@@ -14,10 +14,12 @@ Tests cover:
 from __future__ import annotations
 
 import pytest
+import types
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import Mock, MagicMock, patch, PropertyMock
 import tempfile
+import sys
 
 # Import the module under test
 from crystalmath.integrations import pymatgen_bridge
@@ -441,6 +443,49 @@ class TestStructureFromCOD:
         structure = structure_from_cod(1000041)  # NaCl
         assert structure is not None
 
+    def test_structure_from_cod_cleans_up_tempfile_on_parse_error(self, monkeypatch, tmp_path):
+        """Temporary CIF files should not leak if parsing fails."""
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return b"data_test"
+
+        seen_path: Path | None = None
+
+        class DummyStructure:
+            @staticmethod
+            def from_file(path: str):
+                nonlocal seen_path
+                seen_path = Path(path)
+                raise ValueError("parse failure")
+
+        fake_core = types.ModuleType("pymatgen.core")
+        fake_core.Structure = DummyStructure
+        fake_package = types.ModuleType("pymatgen")
+        fake_package.core = fake_core
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+
+        def _named_temporary_file(*args, **kwargs):
+            return real_named_temporary_file(*args, dir=tmp_path, **kwargs)
+
+        monkeypatch.setattr(pymatgen_bridge, "_check_pymatgen", lambda: None)
+        monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: _Response())
+        monkeypatch.setattr("tempfile.NamedTemporaryFile", _named_temporary_file)
+
+        with patch.dict(sys.modules, {"pymatgen": fake_package, "pymatgen.core": fake_core}):
+            with pytest.raises(pymatgen_bridge.StructureLoadError):
+                pymatgen_bridge.structure_from_cod(1000041)
+
+        assert seen_path is not None
+        assert seen_path.parent == tmp_path
+        assert not seen_path.exists()
+
 
 # =============================================================================
 # Test AiiDA Conversion
@@ -459,14 +504,17 @@ class TestAiiDAConversion:
         """Test that to_aiida_structure raises DependencyError if AiiDA missing."""
         mock_structure = Mock()
 
-        with patch.object(
-            pymatgen_bridge,
-            "_check_pymatgen",
-            return_value=None,
-        ), patch.object(
-            pymatgen_bridge,
-            "_check_aiida",
-            side_effect=pymatgen_bridge.DependencyError("aiida not installed"),
+        with (
+            patch.object(
+                pymatgen_bridge,
+                "_check_pymatgen",
+                return_value=None,
+            ),
+            patch.object(
+                pymatgen_bridge,
+                "_check_aiida",
+                side_effect=pymatgen_bridge.DependencyError("aiida not installed"),
+            ),
         ):
             with pytest.raises(pymatgen_bridge.DependencyError):
                 pymatgen_bridge.to_aiida_structure(mock_structure)
@@ -475,14 +523,17 @@ class TestAiiDAConversion:
         """Test that from_aiida_structure raises DependencyError if AiiDA missing."""
         mock_node = Mock()
 
-        with patch.object(
-            pymatgen_bridge,
-            "_check_pymatgen",
-            return_value=None,
-        ), patch.object(
-            pymatgen_bridge,
-            "_check_aiida",
-            side_effect=pymatgen_bridge.DependencyError("aiida not installed"),
+        with (
+            patch.object(
+                pymatgen_bridge,
+                "_check_pymatgen",
+                return_value=None,
+            ),
+            patch.object(
+                pymatgen_bridge,
+                "_check_aiida",
+                side_effect=pymatgen_bridge.DependencyError("aiida not installed"),
+            ),
         ):
             with pytest.raises(pymatgen_bridge.DependencyError):
                 pymatgen_bridge.from_aiida_structure(mock_node)
@@ -505,14 +556,17 @@ class TestASEConversion:
         """Test that to_ase_atoms raises DependencyError if ASE missing."""
         mock_structure = Mock()
 
-        with patch.object(
-            pymatgen_bridge,
-            "_check_pymatgen",
-            return_value=None,
-        ), patch.object(
-            pymatgen_bridge,
-            "_check_ase",
-            side_effect=pymatgen_bridge.DependencyError("ASE not installed"),
+        with (
+            patch.object(
+                pymatgen_bridge,
+                "_check_pymatgen",
+                return_value=None,
+            ),
+            patch.object(
+                pymatgen_bridge,
+                "_check_ase",
+                side_effect=pymatgen_bridge.DependencyError("ASE not installed"),
+            ),
         ):
             with pytest.raises(pymatgen_bridge.DependencyError):
                 pymatgen_bridge.to_ase_atoms(mock_structure)
@@ -521,14 +575,17 @@ class TestASEConversion:
         """Test that from_ase_atoms raises DependencyError if ASE missing."""
         mock_atoms = Mock()
 
-        with patch.object(
-            pymatgen_bridge,
-            "_check_pymatgen",
-            return_value=None,
-        ), patch.object(
-            pymatgen_bridge,
-            "_check_ase",
-            side_effect=pymatgen_bridge.DependencyError("ASE not installed"),
+        with (
+            patch.object(
+                pymatgen_bridge,
+                "_check_pymatgen",
+                return_value=None,
+            ),
+            patch.object(
+                pymatgen_bridge,
+                "_check_ase",
+                side_effect=pymatgen_bridge.DependencyError("ASE not installed"),
+            ),
         ):
             with pytest.raises(pymatgen_bridge.DependencyError):
                 pymatgen_bridge.from_ase_atoms(mock_atoms)

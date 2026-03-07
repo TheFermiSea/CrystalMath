@@ -461,6 +461,7 @@ def structure_from_cod(
 
     # COD CIF download URL
     url = f"https://www.crystallography.net/cod/{cod_id}.cif"
+    tmp_path = None
 
     try:
         # Download CIF content
@@ -470,12 +471,10 @@ def structure_from_cod(
         # Write to temporary file and parse
         with tempfile.NamedTemporaryFile(mode="w", suffix=".cif", delete=False) as tmp:
             tmp.write(cif_content)
-            tmp_path = tmp.name
+            tmp.flush()
+            tmp_path = Path(tmp.name)
 
-        structure = Structure.from_file(tmp_path)
-
-        # Clean up temp file
-        Path(tmp_path).unlink(missing_ok=True)
+        structure = Structure.from_file(str(tmp_path))
 
         logger.info(f"Loaded structure from COD: {cod_id}")
         return structure
@@ -488,6 +487,9 @@ def structure_from_cod(
         raise StructureLoadError(f"Network error retrieving COD {cod_id}: {e}") from e
     except Exception as e:
         raise StructureLoadError(f"Failed to load COD {cod_id}: {e}") from e
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 def structure_from_file(path: Union[str, Path]) -> "Structure":

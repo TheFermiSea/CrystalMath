@@ -161,6 +161,13 @@ def create_backend(
         logger.info("Using demo backend by explicit preference")
         return DemoBackend()
 
+    if preference == "sqlite" and not db_path:
+        logger.warning(
+            "SQLite backend requested via backend_preference='%s' but no db_path was "
+            "provided; falling back to demo mode",
+            backend_preference,
+        )
+
     if try_aiida:
         from crystalmath.backends.aiida import AiiDABackend
 

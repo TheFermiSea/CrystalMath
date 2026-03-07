@@ -14,6 +14,7 @@ from datetime import datetime
 import pytest
 
 from crystalmath.api import CrystalController, create_controller
+from crystalmath.backends import create_backend
 from crystalmath.models import DftCode, JobState, JobStatus, JobDetails
 
 
@@ -173,6 +174,17 @@ class TestCreateController:
         """Factory preserves the configured backend preference."""
         controller = create_controller(use_aiida=False, backend_preference="sqlite")
         assert controller.get_capabilities()["backend_preference"] == "sqlite"
+
+    def test_create_backend_warns_when_sqlite_requested_without_db_path(self, caplog):
+        """Explicit sqlite preference should explain why it fell back to demo."""
+        with caplog.at_level("WARNING"):
+            backend = create_backend(use_aiida=False, backend_preference="sqlite", db_path=None)
+
+        assert backend.__class__.__name__ == "DemoBackend"
+        assert any(
+            "SQLite backend requested" in record.message and "no db_path" in record.message
+            for record in caplog.records
+        )
 
 
 class TestCapabilities:

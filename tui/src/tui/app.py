@@ -606,6 +606,7 @@ class CrystalTUI(App):
         log = self.query_one("#log_view", Log)
         log.write_line(f"[cyan]Creating VASP job: {message.job_name}[/cyan]")
 
+        work_dir: Path | None = None
         try:
             # Generate next job ID
             existing_jobs = self.db.get_all_jobs()
@@ -662,6 +663,15 @@ class CrystalTUI(App):
             log.write_line(f"  Work dir: {work_dir_name}")
 
         except Exception as e:
+            if work_dir is not None and work_dir.exists():
+                try:
+                    import shutil
+
+                    shutil.rmtree(work_dir)
+                except Exception as cleanup_error:
+                    log.write_line(
+                        f"[red]Failed to clean up staged VASP directory: {cleanup_error}[/red]"
+                    )
             log.write_line(f"[red]Failed to create VASP job: {str(e)}[/red]")
             import traceback
 
