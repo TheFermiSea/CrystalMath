@@ -349,7 +349,7 @@ fn highlight_line(line: &str, file_type: OutputFileType) -> Vec<Span<'static>> {
 
     // Check for any keyword match
     for keyword in keywords {
-        if line_upper.contains(&(*keyword).to_uppercase().as_str()) {
+        if line_upper.contains((*keyword).to_uppercase().as_str()) {
             return vec![Span::styled(
                 line.to_string(),
                 Style::default().fg(Color::Cyan),
@@ -431,7 +431,7 @@ fn render_status_bar(frame: &mut Frame, state: &OutputViewerState, area: Rect) {
     let pct_str = format!(" {}% ", scroll_pct.min(100));
 
     // Keybindings
-    let hints = vec![
+    let hints = [
         ("j/k", "scroll"),
         ("PgUp/PgDn", "page"),
         ("g/G", "top/bottom"),

@@ -6,6 +6,8 @@
 
 mod app;
 mod lsp;
+mod monitor;
+mod prometheus;
 mod state;
 mod ui;
 
@@ -399,6 +401,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
         // Poll LSP events (non-blocking)
         app.poll_lsp_events();
 
+        // Poll Prometheus monitor events (non-blocking)
+        app.poll_monitor_updates();
+
         // Handle time-based updates (LSP debounce)
         app.tick();
 
@@ -406,7 +411,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
         app.maybe_clear_error();
 
         // Only redraw if state has changed (dirty-flag optimization)
-        if app.take_needs_redraw() {
+        if app.needs_redraw() {
+            app.take_needs_redraw();
             terminal.draw(|f| ui::render(f, app))?;
         }
 
@@ -468,10 +474,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             handle_batch_submission_input(app, key);
                         }
                     } else {
-                        if app.current_tab == app::AppTab::Jobs && app.workflow_list.active {
-                            if handle_workflow_dashboard_input(app, key) {
-                                continue;
-                            }
+                        if app.current_tab == app::AppTab::Jobs
+                            && app.workflow_list.active
+                            && handle_workflow_dashboard_input(app, key)
+                        {
+                            continue;
                         }
                         // Global key handlers
                         match (key.code, key.modifiers) {
@@ -499,6 +506,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             (KeyCode::Char('2'), _) => app.set_tab(app::AppTab::Editor),
                             (KeyCode::Char('3'), _) => app.set_tab(app::AppTab::Results),
                             (KeyCode::Char('4'), _) => app.set_tab(app::AppTab::Log),
+                            (KeyCode::Char('5'), _) => app.set_tab(app::AppTab::Monitor),
 
                             // Refresh jobs (non-fatal - errors shown in UI)
                             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
@@ -808,6 +816,52 @@ fn handle_tab_input(app: &mut App, key: event::KeyEvent) {
             }
             _ => {}
         },
+        app::AppTab::Monitor => {
+            match key.code {
+                // Sub-view cycling
+                KeyCode::Char('l') => {
+                    app.monitor.sub_view = app.monitor.sub_view.next();
+                    app.monitor.selected_index = 0;
+                    app.mark_dirty();
+                }
+                KeyCode::Char('h') => {
+                    app.monitor.sub_view = app.monitor.sub_view.prev();
+                    app.monitor.selected_index = 0;
+                    app.mark_dirty();
+                }
+                // Item selection
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.monitor.select_next();
+                    app.mark_dirty();
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.monitor.select_prev();
+                    app.mark_dirty();
+                }
+                // Force refresh
+                KeyCode::Char('r') => {
+                    app.monitor.force_refresh();
+                    app.mark_dirty();
+                }
+                // Direct sub-view jumps
+                KeyCode::Char('g') => {
+                    app.monitor.sub_view = monitor::MonitorSubView::GpuOverview;
+                    app.monitor.selected_index = 0;
+                    app.mark_dirty();
+                }
+                KeyCode::Char('n') => {
+                    app.monitor.sub_view = monitor::MonitorSubView::NodeHealth;
+                    app.monitor.selected_index = 0;
+                    app.mark_dirty();
+                }
+                KeyCode::Char('s') => {
+                    app.monitor.sub_view = monitor::MonitorSubView::SlurmStatus;
+                    app.monitor.selected_index = 0;
+                    app.mark_dirty();
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -1727,10 +1781,10 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
             app.mark_dirty();
         }
         _ => {
-            if focused == WorkflowConfigField::ConvergenceBaseInput {
-                if app.workflow_config.convergence.base_input.input(key) {
-                    app.mark_dirty();
-                }
+            if focused == WorkflowConfigField::ConvergenceBaseInput
+                && app.workflow_config.convergence.base_input.input(key)
+            {
+                app.mark_dirty();
             }
         }
     }

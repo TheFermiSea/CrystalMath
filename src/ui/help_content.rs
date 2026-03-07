@@ -37,6 +37,12 @@ pub fn get_content(topic: HelpTopic) -> &'static str {
         HelpTopic::LogNavigation => LOG_NAVIGATION,
         HelpTopic::LogFollowMode => LOG_FOLLOW_MODE,
 
+        // Monitor Tab
+        HelpTopic::Monitor => MONITOR,
+        HelpTopic::MonitorGpu => MONITOR_GPU,
+        HelpTopic::MonitorNodes => MONITOR_NODES,
+        HelpTopic::MonitorSlurm => MONITOR_SLURM,
+
         // Modals
         HelpTopic::RecipeBrowser => RECIPE_BROWSER,
         HelpTopic::RecipeNavigation => RECIPE_NAVIGATION,
@@ -81,7 +87,7 @@ management. Use this interface for:
 
 QUICK START:
 
-  1. Press Tab to switch between tabs (Jobs, Editor, Results, Log)
+  1. Press Tab to switch between tabs (Jobs, Editor, Results, Log, Monitor)
   2. Use j/k or arrow keys to navigate lists
   3. Press n to create a new job from the Jobs tab
   4. Press c to configure cluster connections
@@ -96,7 +102,7 @@ GLOBAL NAVIGATION
 Tab Switching:
   Tab         - Next tab
   Shift+Tab   - Previous tab
-  1/2/3/4     - Jump to Jobs/Editor/Results/Log directly
+  1/2/3/4/5   - Jump to Jobs/Editor/Results/Log/Monitor directly
 
 Modal Controls:
   Esc         - Close current modal
@@ -122,7 +128,7 @@ Global:
   ?           Open help
   Tab         Next tab
   Shift+Tab   Previous tab
-  1-4         Direct tab access
+  1-5         Direct tab access
   Ctrl+R      Refresh jobs
   Ctrl+Q      Quit
 
@@ -520,6 +526,95 @@ WHEN DISABLED:
   • Useful for reviewing specific output sections
 
 Follow mode is especially useful for monitoring long-running calculations.
+";
+
+// =============================================================================
+// Monitor Tab
+// =============================================================================
+
+const MONITOR: &str = "\
+MONITOR TAB
+
+The Monitor tab displays live cluster metrics from Prometheus, including GPU \
+utilization, node health, and SLURM scheduler status.
+
+Press 5 or Tab to the Monitor tab. Metrics update automatically:
+  • GPU metrics: every 10 seconds
+  • Node metrics: every 30 seconds
+  • SLURM metrics: every 30 seconds
+
+SUB-VIEWS:
+  h / l       Cycle between GPU / Nodes / SLURM views
+  g           Jump to GPU Overview
+  n           Jump to Node Health
+  s           Jump to SLURM Status
+
+NAVIGATION:
+  j / k       Select next/prev item
+  r           Force refresh all metrics
+
+CONFIGURATION:
+  Set PROMETHEUS_URL environment variable to point to your Prometheus server.
+  Default: http://localhost:9090
+  Set PROMETHEUS_INSECURE_TLS=1 only if your Prometheus endpoint uses a self-signed cert.
+";
+
+const MONITOR_GPU: &str = "\
+GPU OVERVIEW
+
+Shows all GPUs across the cluster with live metrics from the all-smi exporter.
+
+METRICS DISPLAYED:
+  • Utilization %  (with sparkline history)
+  • Temperature (°C)
+  • Power usage / limit (Watts)
+  • Memory used / total (GiB)
+  • Clock frequency (MHz)
+
+COLOR THRESHOLDS:
+  Green   - Normal (util <70%, temp <65°C)
+  Yellow  - Warning (util 70-90%, temp 65-80°C)
+  Red     - Critical (util >90%, temp >80°C)
+
+Sparklines show the last ~10 minutes of utilization history.
+";
+
+const MONITOR_NODES: &str = "\
+NODE HEALTH
+
+Shows a 2x2 grid of all cluster nodes with system metrics from node_exporter.
+
+METRICS DISPLAYED:
+  • CPU usage % (with sparkline history)
+  • Load average (1m / 5m / 15m)
+  • RAM used / total (GiB)
+  • Disk used / total (GiB)
+  • Uptime
+
+COLOR THRESHOLDS:
+  Green   - Normal (<70% usage)
+  Yellow  - Warning (70-90% usage)
+  Red     - Critical (>90% usage)
+";
+
+const MONITOR_SLURM: &str = "\
+SLURM STATUS
+
+Shows SLURM scheduler cluster status from slurm_exporter.
+
+CAPACITY GAUGES:
+  • CPU utilization (allocated / total)
+  • Memory utilization (allocated / total)
+
+NODE STATES:
+  ● Idle    - Available for jobs
+  ● Alloc   - Running jobs
+  ● Down    - Unavailable
+  ● Drain   - Draining (no new jobs)
+
+JOB COUNTS:
+  ● Running - Currently executing
+  ● Pending - Waiting in queue
 ";
 
 // =============================================================================

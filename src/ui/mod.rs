@@ -12,6 +12,7 @@ mod help_content;
 mod jobs;
 mod log;
 mod materials;
+mod monitor;
 mod new_job;
 mod output_viewer;
 pub mod recipes;
@@ -105,6 +106,7 @@ fn render_app_ui(frame: &mut Frame, app: &mut App) {
         crate::app::AppTab::Editor => editor::render(frame, app, chunks[1]),
         crate::app::AppTab::Results => results::render(frame, app, chunks[1]),
         crate::app::AppTab::Log => log::render(frame, app, chunks[1]),
+        crate::app::AppTab::Monitor => monitor::render(frame, app, chunks[1]),
     }
 
     // Render footer

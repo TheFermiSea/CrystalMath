@@ -93,6 +93,18 @@ pub enum Action {
     /// Select previous material in results.
     MaterialsSelectPrev,
 
+    // ===== Monitor Tab =====
+    /// Cycle to next monitor sub-view.
+    MonitorNextSubView,
+    /// Cycle to previous monitor sub-view.
+    MonitorPrevSubView,
+    /// Select next item in monitor list.
+    MonitorSelectNext,
+    /// Select previous item in monitor list.
+    MonitorSelectPrev,
+    /// Force refresh monitor data.
+    MonitorRefresh,
+
     // ===== General =====
     /// Clear the current error message.
     ErrorClear,
@@ -111,6 +123,7 @@ pub enum AppTab {
     Editor,
     Results,
     Log,
+    Monitor,
 }
 
 impl AppTab {
@@ -121,11 +134,18 @@ impl AppTab {
             AppTab::Editor => "Editor",
             AppTab::Results => "Results",
             AppTab::Log => "Log",
+            AppTab::Monitor => "Monitor",
         }
     }
 
     /// Get all tabs in order.
     pub fn all() -> &'static [AppTab] {
-        &[AppTab::Jobs, AppTab::Editor, AppTab::Results, AppTab::Log]
+        &[
+            AppTab::Jobs,
+            AppTab::Editor,
+            AppTab::Results,
+            AppTab::Log,
+            AppTab::Monitor,
+        ]
     }
 }

@@ -41,6 +41,7 @@ pub struct WorkflowState {
 
 impl WorkflowState {
     /// Create a new workflow state.
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
     }

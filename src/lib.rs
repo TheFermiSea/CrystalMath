@@ -23,3 +23,5 @@
 pub mod bridge;
 pub mod ipc;
 pub mod models;
+pub mod monitor;
+pub mod prometheus;
