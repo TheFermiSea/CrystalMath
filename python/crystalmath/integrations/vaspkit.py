@@ -122,7 +122,7 @@ def generate_band_path_from_structure(
     if line_density <= 0:
         raise BandPathGenerationError("line_density must be greater than zero")
 
-    dimensionality = get_dimensionality(structure)
+    dimensionality = Dimensionality(get_dimensionality(structure))
     poscar = structure_to_poscar(structure, comment="CrystalMath band-path generation")
     task_id = _task_for_dimensionality(dimensionality)
 

@@ -98,6 +98,8 @@ class CrystalCoreClient:
 
     def __init__(self, db_path: Path) -> None:
         backend_preference = os.environ.get("CRYSTAL_TUI_BACKEND", "sqlite").strip().lower()
+        if backend_preference not in {"auto", "sqlite", "aiida", "demo"}:
+            backend_preference = "auto"
         profile_name = os.environ.get("CRYSTAL_TUI_AIIDA_PROFILE", "default")
         self._controller = create_controller(
             profile_name=profile_name,

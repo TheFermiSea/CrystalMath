@@ -10,6 +10,7 @@ Tests cover:
 - Integration between components
 """
 
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
@@ -447,27 +448,21 @@ class TestRunnerIntegration:
 
             assert runner1 is runner2
 
-    @pytest.mark.skip(
-        reason="_ensure_runner uses setdefault - env vars from previous tests persist"
-    )
     @pytest.mark.asyncio
-    async def test_ensure_runner_sets_environment_vars(self, temp_project, mock_config):
+    async def test_ensure_runner_sets_environment_vars(
+        self, temp_project, mock_config, monkeypatch
+    ):
         """Test that runner setup sets environment variables."""
-        import os
-
         app = CrystalTUI(project_dir=temp_project, config=mock_config)
 
         async with app.run_test() as pilot:
-            # Save original values to verify they get updated
-            original_exedir = os.environ.get("CRY23_EXEDIR", "")
-            original_scrdir = os.environ.get("CRY23_SCRDIR", "")
+            monkeypatch.setenv("CRY23_EXEDIR", "/tmp/stale-exe")
+            monkeypatch.setenv("CRY23_SCRDIR", "/tmp/stale-scratch")
 
             app._ensure_runner()
 
-            # Environment variables should be set from config
-            # After _ensure_runner, the env vars should match the current config
-            assert os.environ.get("CRY23_EXEDIR") == str(app.config.executable_dir)
-            assert os.environ.get("CRY23_SCRDIR") == str(app.config.scratch_dir)
+            assert os.environ["CRY23_EXEDIR"] == str(app.config.executable_dir)
+            assert os.environ["CRY23_SCRDIR"] == str(app.config.scratch_dir)
 
 
 class TestJobExecution:

@@ -1,3 +1,5 @@
+import pytest
+
 from src.tui.screens.vasp_input_manager import (
     parse_band_line_density,
     validate_vasp_job_name,
@@ -9,12 +11,8 @@ def test_parse_band_line_density_requires_positive_integer() -> None:
     assert parse_band_line_density("12") == 12
 
     for invalid in ("0", "-4", "abc"):
-        try:
+        with pytest.raises(ValueError):
             parse_band_line_density(invalid)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"Expected ValueError for {invalid!r}")
 
 
 def test_validate_vasp_job_name_blocks_path_characters() -> None:

@@ -224,7 +224,7 @@ def _check_pymatgen() -> None:
         import pymatgen  # noqa: F401
     except ImportError:
         raise DependencyError(
-            "pymatgen is required for structure operations. " "Install with: pip install pymatgen"
+            "pymatgen is required for structure operations. Install with: pip install pymatgen"
         )
 
 
@@ -245,7 +245,7 @@ def _check_ase() -> None:
         import ase  # noqa: F401
     except ImportError:
         raise DependencyError(
-            "ASE is required for ASE Atoms conversion. " "Install with: pip install ase"
+            "ASE is required for ASE Atoms conversion. Install with: pip install ase"
         )
 
 
@@ -255,7 +255,7 @@ def _check_mp_api() -> None:
         from mp_api.client import MPRester  # noqa: F401
     except ImportError:
         raise DependencyError(
-            "mp-api is required for Materials Project access. " "Install with: pip install mp-api"
+            "mp-api is required for Materials Project access. Install with: pip install mp-api"
         )
 
 
@@ -920,7 +920,7 @@ def get_dimensionality(
     except ImportError:
         # Fallback: simple heuristic based on cell geometry
         warnings.warn(
-            "Full dimensionality analysis requires pymatgen >= 2022. " "Using simplified heuristic."
+            "Full dimensionality analysis requires pymatgen >= 2022. Using simplified heuristic."
         )
 
         # Check for vacuum regions along each axis
@@ -1074,7 +1074,7 @@ def validate_for_dft(
         )
     elif density > 25:
         issues.append(
-            f"WARNING: Very high density ({density:.3f} g/cm^3). " "May indicate overlapping atoms."
+            f"WARNING: Very high density ({density:.3f} g/cm^3). May indicate overlapping atoms."
         )
 
     # Log results
@@ -1243,9 +1243,7 @@ def convert_structure(
     elif target == "ase":
         return to_ase_atoms(pmg_struct)
     else:
-        raise ValueError(
-            f"Unknown target format: {target_format}. " f"Supported: pymatgen, aiida, ase"
-        )
+        raise ValueError(f"Unknown target format: {target_format}. Supported: pymatgen, aiida, ase")
 
 
 # =============================================================================

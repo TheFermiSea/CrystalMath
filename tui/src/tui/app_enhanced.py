@@ -235,18 +235,18 @@ class CrystalTUI(App):
 
     def _ensure_runner(self) -> LocalRunner:
         """Instantiate the LocalRunner once and propagate env configuration."""
+        if self.config is None:
+            # Try cached loader; will raise if env invalid
+            try:
+                self.config = get_crystal_config()
+            except Exception:
+                self.config = None
+
+        if self.config:
+            os.environ["CRY23_EXEDIR"] = str(self.config.executable_dir)
+            os.environ["CRY23_SCRDIR"] = str(self.config.scratch_dir)
+
         if self.runner is None:
-            if self.config is None:
-                # Try cached loader; will raise if env invalid
-                try:
-                    self.config = get_crystal_config()
-                except Exception:
-                    self.config = None
-
-            if self.config:
-                os.environ.setdefault("CRY23_EXEDIR", str(self.config.executable_dir))
-                os.environ.setdefault("CRY23_SCRDIR", str(self.config.scratch_dir))
-
             exe_path = self.config.executable_path if self.config else None
             self.runner = LocalRunner(executable_path=exe_path)
 
