@@ -13,6 +13,7 @@ use tui_textarea::TextArea;
 use crate::bridge::{BridgeHandle, BridgeRequestKind, BridgeResponse, BridgeService};
 use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
 use crate::models::{ApiResponse, JobDetails, JobStatus, SlurmQueueEntry};
+use crate::monitor::{MonitorMessage, MonitorState};
 use crate::ui::{ClusterManagerState, RecipeBrowserState, SlurmQueueState};
 
 use tachyonfx::Effect;
@@ -247,6 +248,9 @@ pub struct App<'a> {
 
     /// Startup animation effect.
     pub startup_effect: Option<Effect>,
+
+    /// Monitor tab state (Prometheus metrics display).
+    pub monitor: MonitorState,
 }
 
 impl<'a> App<'a> {
@@ -425,6 +429,7 @@ impl<'a> App<'a> {
             pending_status_requests: std::collections::HashMap::new(),
             status_request_counter: 0,
             startup_effect: None, // Disabled - no startup animation
+            monitor: MonitorState::new(),
         })
     }
 
@@ -541,6 +546,30 @@ impl<'a> App<'a> {
             Action::MaterialsSelectNext => self.materials.select_next(),
             Action::MaterialsSelectPrev => self.materials.select_prev(),
 
+            // Monitor Tab
+            Action::MonitorNextSubView => {
+                self.monitor.sub_view = self.monitor.sub_view.next();
+                self.monitor.selected_index = 0;
+                self.mark_dirty();
+            }
+            Action::MonitorPrevSubView => {
+                self.monitor.sub_view = self.monitor.sub_view.prev();
+                self.monitor.selected_index = 0;
+                self.mark_dirty();
+            }
+            Action::MonitorSelectNext => {
+                self.monitor.select_next();
+                self.mark_dirty();
+            }
+            Action::MonitorSelectPrev => {
+                self.monitor.select_prev();
+                self.mark_dirty();
+            }
+            Action::MonitorRefresh => {
+                self.monitor.force_refresh();
+                self.mark_dirty();
+            }
+
             // General
             Action::ErrorClear => self.clear_error(),
             Action::Quit => self.should_quit = true,
@@ -555,7 +584,8 @@ impl<'a> App<'a> {
             AppTab::Jobs => AppTab::Editor,
             AppTab::Editor => AppTab::Results,
             AppTab::Results => AppTab::Log,
-            AppTab::Log => AppTab::Jobs,
+            AppTab::Log => AppTab::Monitor,
+            AppTab::Monitor => AppTab::Jobs,
         };
         self.set_tab(new_tab);
     }
@@ -563,10 +593,11 @@ impl<'a> App<'a> {
     /// Move to the previous tab.
     pub fn prev_tab(&mut self) {
         let new_tab = match self.current_tab {
-            AppTab::Jobs => AppTab::Log,
+            AppTab::Jobs => AppTab::Monitor,
             AppTab::Editor => AppTab::Jobs,
             AppTab::Results => AppTab::Editor,
             AppTab::Log => AppTab::Results,
+            AppTab::Monitor => AppTab::Log,
         };
         self.set_tab(new_tab);
     }
@@ -577,12 +608,21 @@ impl<'a> App<'a> {
     /// currently selected job to avoid showing stale logs from a different job.
     pub fn set_tab(&mut self, tab: AppTab) {
         if self.current_tab != tab {
+            if self.current_tab == AppTab::Monitor && tab != AppTab::Monitor {
+                self.monitor.stop_polling();
+            }
+
             self.current_tab = tab;
             self.mark_dirty();
 
             // Auto-refresh logs when switching to Log tab
             if tab == AppTab::Log {
                 self.auto_refresh_log_for_selected_job();
+            }
+
+            // Start Prometheus polling when switching to Monitor tab
+            if tab == AppTab::Monitor {
+                self.monitor.start_polling();
             }
         }
     }
@@ -4335,6 +4375,90 @@ impl<'a> App<'a> {
         }
     }
 
+    // ===== Monitor Tab (Prometheus Polling) =====
+
+    /// Process pending Prometheus monitor events (non-blocking).
+    /// Called every frame from the main event loop.
+    pub fn poll_monitor_updates(&mut self) {
+        use crate::monitor::push_history;
+
+        // Take receiver out to avoid borrow conflict with self.mark_dirty()
+        let receiver = match self.monitor.receiver.take() {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        let mut dirty = false;
+        while let Ok(msg) = receiver.try_recv() {
+            match msg {
+                MonitorMessage::GpuUpdate(mut metrics) => {
+                    for new in &mut metrics {
+                        if let Some(existing) = self
+                            .monitor
+                            .gpu_metrics
+                            .iter()
+                            .find(|g| g.node == new.node && g.gpu_index == new.gpu_index)
+                        {
+                            new.utilization_history = existing.utilization_history.clone();
+                        }
+                        push_history(&mut new.utilization_history, new.utilization_pct as u64);
+                    }
+                    self.monitor.gpu_metrics = metrics;
+                    self.monitor.last_gpu_update = Some(std::time::Instant::now());
+                    self.monitor.connected = true;
+                    dirty = true;
+                }
+                MonitorMessage::NodeUpdate(mut metrics) => {
+                    for new in &mut metrics {
+                        if let Some(existing) = self
+                            .monitor
+                            .node_metrics
+                            .iter()
+                            .find(|n| n.hostname == new.hostname)
+                        {
+                            new.cpu_history = existing.cpu_history.clone();
+                            new.memory_history = existing.memory_history.clone();
+                        }
+                        push_history(&mut new.cpu_history, new.cpu_usage_pct as u64);
+                        push_history(
+                            &mut new.memory_history,
+                            if new.memory_total_gb > 0.0 {
+                                (new.memory_used_gb / new.memory_total_gb * 100.0) as u64
+                            } else {
+                                0
+                            },
+                        );
+                    }
+                    self.monitor.node_metrics = metrics;
+                    self.monitor.last_node_update = Some(std::time::Instant::now());
+                    self.monitor.connected = true;
+                    dirty = true;
+                }
+                MonitorMessage::SlurmUpdate(metrics) => {
+                    self.monitor.slurm_metrics = Some(metrics);
+                    self.monitor.last_slurm_update = Some(std::time::Instant::now());
+                    self.monitor.connected = true;
+                    dirty = true;
+                }
+                MonitorMessage::Error(e) => {
+                    self.monitor.error = Some(e);
+                    dirty = true;
+                }
+                MonitorMessage::Connected => {
+                    self.monitor.connected = true;
+                    self.monitor.error = None;
+                    dirty = true;
+                }
+            }
+        }
+
+        // Put receiver back
+        self.monitor.receiver = Some(receiver);
+        if dirty {
+            self.mark_dirty();
+        }
+    }
+
     // ===== Recipe Browser Modal =====
 
     /// Open the recipe browser modal and request recipes.
@@ -5614,6 +5738,7 @@ mod tests {
             pending_status_requests: std::collections::HashMap::new(),
             status_request_counter: 0,
             startup_effect: None, // No effect in tests
+            monitor: MonitorState::new(),
         }
     }
 
@@ -5649,11 +5774,12 @@ mod tests {
     #[test]
     fn test_app_tab_all() {
         let tabs = AppTab::all();
-        assert_eq!(tabs.len(), 4);
+        assert_eq!(tabs.len(), 5);
         assert_eq!(tabs[0], AppTab::Jobs);
         assert_eq!(tabs[1], AppTab::Editor);
         assert_eq!(tabs[2], AppTab::Results);
         assert_eq!(tabs[3], AppTab::Log);
+        assert_eq!(tabs[4], AppTab::Monitor);
     }
 
     // =========================================================================
@@ -5948,6 +6074,9 @@ mod tests {
         assert_eq!(app.current_tab, AppTab::Log);
 
         app.next_tab();
+        assert_eq!(app.current_tab, AppTab::Monitor);
+
+        app.next_tab();
         assert_eq!(app.current_tab, AppTab::Jobs);
     }
 
@@ -5955,6 +6084,9 @@ mod tests {
     fn test_tab_navigation_wraps_backward() {
         let mut app = create_test_app();
         assert_eq!(app.current_tab, AppTab::Jobs);
+
+        app.prev_tab();
+        assert_eq!(app.current_tab, AppTab::Monitor);
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Log);

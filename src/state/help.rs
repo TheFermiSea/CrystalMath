@@ -41,6 +41,12 @@ pub enum HelpTopic {
     LogNavigation,
     LogFollowMode,
 
+    // Monitor Tab
+    Monitor,
+    MonitorGpu,
+    MonitorNodes,
+    MonitorSlurm,
+
     // Modals (context-aware)
     RecipeBrowser,
     RecipeNavigation,
@@ -96,6 +102,11 @@ impl HelpTopic {
             Self::LogNavigation => "Navigation",
             Self::LogFollowMode => "Follow Mode",
 
+            Self::Monitor => "Monitor Tab",
+            Self::MonitorGpu => "GPU Overview",
+            Self::MonitorNodes => "Node Health",
+            Self::MonitorSlurm => "SLURM Status",
+
             Self::RecipeBrowser => "Recipe Browser",
             Self::RecipeNavigation => "Navigation",
             Self::RecipeLaunching => "Launching Recipes",
@@ -142,6 +153,8 @@ impl HelpTopic {
 
             Self::Log => &[Self::LogNavigation, Self::LogFollowMode],
 
+            Self::Monitor => &[Self::MonitorGpu, Self::MonitorNodes, Self::MonitorSlurm],
+
             Self::RecipeBrowser => &[Self::RecipeNavigation, Self::RecipeLaunching],
 
             Self::MaterialsSearch => &[
@@ -182,6 +195,8 @@ impl HelpTopic {
 
             Self::LogNavigation | Self::LogFollowMode => Some(Self::Log),
 
+            Self::MonitorGpu | Self::MonitorNodes | Self::MonitorSlurm => Some(Self::Monitor),
+
             Self::RecipeNavigation | Self::RecipeLaunching => Some(Self::RecipeBrowser),
 
             Self::MaterialsFormula | Self::MaterialsImportD12 | Self::MaterialsImportVasp => {
@@ -207,6 +222,7 @@ impl HelpTopic {
             Self::Editor,
             Self::Results,
             Self::Log,
+            Self::Monitor,
             Self::RecipeBrowser,
             Self::MaterialsSearch,
             Self::ClusterManager,
@@ -343,6 +359,7 @@ impl HelpState {
                 AppTab::Editor => HelpTopic::Editor,
                 AppTab::Results => HelpTopic::Results,
                 AppTab::Log => HelpTopic::Log,
+                AppTab::Monitor => HelpTopic::Monitor,
             },
             HelpContext::Modal(modal) => modal.help_topic(),
         };

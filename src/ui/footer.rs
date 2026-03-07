@@ -58,6 +58,14 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 ("Ctrl+Q", "Quit"),
             ]
         }
+        AppTab::Monitor => {
+            vec![
+                ("h/l", "Sub-View"),
+                ("g/n/s", "GPU/Node/SLURM"),
+                ("j/k", "Select"),
+                ("r", "Refresh"),
+            ]
+        }
     };
 
     let spans: Vec<Span> = keybindings
