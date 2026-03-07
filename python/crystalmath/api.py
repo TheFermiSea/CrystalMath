@@ -813,13 +813,13 @@ class CrystalController:
         from crystalmath.integrations.pymatgen_bridge import (
             get_dimensionality,
             get_symmetry_info,
-            standardize_structure,
+            standardize_structure as standardize_structure_impl,
             structure_to_poscar,
             validate_for_dft,
         )
 
         structure = self._load_structure_from_source(source_type, source_data)
-        standardized = standardize_structure(
+        standardized, backend_used = standardize_structure_impl(
             structure,
             conventional=conventional,
             backend=backend,
@@ -832,7 +832,7 @@ class CrystalController:
             symmetry = None
 
         return {
-            "backend_used": backend,
+            "backend_used": backend_used,
             "conventional": conventional,
             "valid": is_valid,
             "issues": issues,

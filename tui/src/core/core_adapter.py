@@ -159,7 +159,14 @@ class CrystalCoreClient:
     @staticmethod
     def _parse_structured_json(payload: str) -> Dict[str, object]:
         data = json.loads(payload)
+        if not isinstance(data, dict):
+            raise RuntimeError(f"CrystalMath core returned invalid structured payload: {payload!r}")
         if not data.get("ok", False):
             error = data.get("error", {})
             raise RuntimeError(error.get("message", "Unknown CrystalMath core error"))
-        return data["data"]
+        structured = data.get("data")
+        if not isinstance(structured, dict):
+            raise RuntimeError(
+                "CrystalMath core returned a success response without structured data"
+            )
+        return structured

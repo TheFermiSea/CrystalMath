@@ -304,19 +304,28 @@ class CrystalTUI(App):
 
         return None
 
+    @staticmethod
+    def _runner_type_for_job(job: Job) -> str:
+        """Return the executor queue used for a job."""
+        runner_type = (job.runner_type or "").strip().lower() or "local"
+        dft_code = (job.dft_code or "").strip().lower()
+        if dft_code == "vasp" and runner_type == "local":
+            return "ssh"
+        return runner_type
+
     def action_new_job(self) -> None:
         """Create a new job via modal screen."""
         if not self.db:
             return
 
-            # Push the new job modal screen
-            self.push_screen(
-                NewJobScreen(
-                    database=self.db,
-                    calculations_dir=self.calculations_dir,
-                    core_client=self._core_client,
-                )
+        # Push the new job modal screen
+        self.push_screen(
+            NewJobScreen(
+                database=self.db,
+                calculations_dir=self.calculations_dir,
+                core_client=self._core_client,
             )
+        )
 
     async def action_run_job(self) -> None:
         """Run the selected job via QueueManager."""
@@ -343,10 +352,21 @@ class CrystalTUI(App):
             log.write_line(f"[yellow]Job {job_id} is already {job.status}[/yellow]")
             return
 
+        runner_type = self._runner_type_for_job(job)
+        if runner_type != "local":
+            log = self.query_one("#log_view", Log)
+            log.write_line(
+                f"[yellow]Job {job_id} requires the '{runner_type}' runner and cannot be "
+                "executed from the enhanced local queue.[/yellow]"
+            )
+            return
+
         # Enqueue the job via QueueManager (handles priority, dependencies, etc.)
         try:
             await self.queue_manager.enqueue(
-                job_id=job_id, priority=Priority.NORMAL, runner_type="local"
+                job_id=job_id,
+                priority=Priority.NORMAL,
+                runner_type=runner_type,
             )
             log = self.query_one("#log_view", Log)
             log.write_line(f"[cyan]Job {job_id} queued for execution[/cyan]")
@@ -646,6 +666,7 @@ class CrystalTUI(App):
                 name=message.job_name,
                 work_dir=str(work_dir),
                 input_content=input_content,
+                runner_type="ssh",
                 dft_code="vasp",
             )
 

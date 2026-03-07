@@ -98,15 +98,11 @@ class JobListWidget(DataTable):
                 table.add_row(*desired, key=row_key)
                 continue
 
-            for column_key, current_value, desired_value in zip(
-                ("id", "name", "status", "progress", "runtime", "resources", "energy (ha)", "created"),
-                current,
-                desired,
-            ):
+            column_keys = list(table.columns.keys())
+            for column_key, current_value, desired_value in zip(column_keys, current, desired):
                 if current_value != desired_value:
                     table.update_cell(row_key, column_key, desired_value)
 
-        table.sort("created", "id", reverse=True)
         self._jobs_cache = {int(key): job for key, job in zip(desired_order, sorted_jobs)}
 
     def _build_row(self, job: JobStatus) -> tuple[str, str, Text, str, str, str, str, str]:
@@ -115,11 +111,7 @@ class JobListWidget(DataTable):
         runtime = self._format_runtime(job)
         resources = self._format_resources(job)
         energy = "N/A"
-        created = (
-            job.created_at.strftime("%Y-%m-%d %H:%M")
-            if job.created_at
-            else "N/A"
-        )
+        created = job.created_at.strftime("%Y-%m-%d %H:%M") if job.created_at else "N/A"
 
         return (
             str(job.pk),

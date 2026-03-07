@@ -490,7 +490,7 @@ class CrystalTUI(App):
         # Start remote VASP worker
         self.run_worker(
             self._run_remote_vasp_job(job_id, cluster.id),
-            name=f"vasp_job_{job_id}",
+            name=f"job_{job_id}",
             group=f"job_{job_id}",
         )
 

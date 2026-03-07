@@ -1123,7 +1123,7 @@ def standardize_structure(
     conventional: bool = False,
     backend: str = "auto",
     symprec: float = 0.01,
-) -> "Structure":
+) -> Tuple["Structure", str]:
     """
     Standardize a structure for downstream workflow use.
 
@@ -1134,7 +1134,7 @@ def standardize_structure(
         symprec: Symmetry tolerance for pymatgen standardization.
 
     Returns:
-        Standardized pymatgen Structure object.
+        Tuple of (standardized pymatgen Structure object, backend identifier).
     """
     _check_pymatgen()
 
@@ -1146,6 +1146,7 @@ def standardize_structure(
 
     normalized = backend.lower().strip()
     working = structure.copy()
+    actual_backend = "pymatgen"
 
     if normalized not in {"auto", "pymatgen", "ase"}:
         raise ValueError(f"Unsupported standardization backend: {backend}")
@@ -1162,6 +1163,7 @@ def standardize_structure(
                 # Sorting is optional; wrapped coordinates are the main ASE benefit here.
                 pass
             working = from_ase_atoms(atoms)
+            actual_backend = "ase"
         except Exception:
             if normalized == "ase":
                 raise
@@ -1174,8 +1176,8 @@ def standardize_structure(
     )
 
     if standardized is None:
-        return working
-    return standardized
+        return working, actual_backend
+    return standardized, actual_backend
 
 
 # =============================================================================

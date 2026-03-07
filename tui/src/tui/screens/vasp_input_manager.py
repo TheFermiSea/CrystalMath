@@ -154,6 +154,27 @@ POTCAR_TYPES = [
     ("LDA.52", "potpaw_LDA.52"),
 ]
 
+SAFE_JOB_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def parse_band_line_density(raw_value: str) -> int:
+    """Parse a positive band-path line density from user input."""
+    value = int(raw_value.strip() or "20")
+    if value < 1:
+        raise ValueError("Band-path line density must be a positive integer")
+    return value
+
+
+def validate_vasp_job_name(job_name: str) -> Optional[str]:
+    """Validate a VASP job name before it is used in work-directory paths."""
+    if not job_name:
+        return "❌ Job name is required"
+    if "/" in job_name or "\\" in job_name or ".." in job_name:
+        return "❌ Job name cannot contain path separators or '..'"
+    if not SAFE_JOB_NAME_RE.fullmatch(job_name):
+        return "❌ Job name can only contain letters, numbers, hyphens, and underscores"
+    return None
+
 
 def parse_elements_from_poscar(poscar_content: str) -> Tuple[List[str], str]:
     """Parse element symbols and counts from POSCAR content.
@@ -675,9 +696,9 @@ Gamma
             return
 
         try:
-            line_density = int(density_input.value.strip() or "20")
+            line_density = parse_band_line_density(density_input.value)
         except ValueError:
-            status.update("❌ Band-path line density must be an integer")
+            status.update("❌ Band-path line density must be a positive integer")
             return
 
         status.update("⏳ Generating band KPOINTS...")
@@ -707,8 +728,9 @@ Gamma
         job_name_input = self.query_one("#job_name_input", Input)
         job_name = job_name_input.value.strip()
 
-        if not job_name:
-            status.update("❌ Job name is required")
+        job_name_error = validate_vasp_job_name(job_name)
+        if job_name_error:
+            status.update(job_name_error)
             return
 
         # Get file contents

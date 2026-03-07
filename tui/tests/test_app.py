@@ -17,7 +17,7 @@ import pytest
 import asyncio
 
 from src.tui.app_enhanced import CrystalTUI, JobLog, JobStatus, JobResults
-from src.core.database import Database
+from src.core.database import Database, Job
 from src.core.environment import CrystalConfig
 from src.runners.local import LocalRunner, JobResult
 
@@ -55,7 +55,7 @@ def mock_config(temp_project):
         utils_dir=utils_dir,
         architecture="MacOsx_ARM-gfortran_omp",
         version="v1.0.1",
-        executable_path=exe_path
+        executable_path=exe_path,
     )
 
 
@@ -294,13 +294,39 @@ class TestKeyboardActions:
         app = CrystalTUI(project_dir=temp_project, config=mock_config)
 
         async with app.run_test() as pilot:
-            with patch.object(app, 'push_screen') as mock_push:
+            with patch.object(app, "push_screen") as mock_push:
                 app.action_new_job()
 
                 mock_push.assert_called_once()
                 # Verify NewJobScreen was passed
                 from src.tui.screens.new_job import NewJobScreen
+
                 assert isinstance(mock_push.call_args[0][0], NewJobScreen)
+
+    def test_runner_type_for_job_preserves_non_local_and_redirects_vasp(self, temp_project):
+        """Enhanced app should not enqueue VASP jobs onto the local CRYSTAL runner."""
+        app = CrystalTUI(project_dir=temp_project)
+
+        crystal_job = Job(id=1, name="crystal", work_dir="/tmp/a", status="PENDING")
+        vasp_job = Job(
+            id=2,
+            name="vasp",
+            work_dir="/tmp/b",
+            status="PENDING",
+            runner_type="local",
+            dft_code="vasp",
+        )
+        slurm_job = Job(
+            id=3,
+            name="slurm",
+            work_dir="/tmp/c",
+            status="PENDING",
+            runner_type="slurm",
+        )
+
+        assert app._runner_type_for_job(crystal_job) == "local"
+        assert app._runner_type_for_job(vasp_job) == "ssh"
+        assert app._runner_type_for_job(slurm_job) == "slurm"
 
     @pytest.mark.asyncio
     async def test_action_run_job_requires_selection(self, temp_project, mock_config):
@@ -312,7 +338,9 @@ class TestKeyboardActions:
             app.action_run_job()
             # No assertion needed, just verify no error
 
-    @pytest.mark.skip(reason="DataTable cursor positioning requires complex Textual pilot interaction")
+    @pytest.mark.skip(
+        reason="DataTable cursor positioning requires complex Textual pilot interaction"
+    )
     @pytest.mark.asyncio
     async def test_action_run_job_with_pending_job(self, temp_project, mock_config):
         """Test running a pending job."""
@@ -331,7 +359,7 @@ class TestKeyboardActions:
 
         async with app.run_test() as pilot:
             # Mock run_worker
-            with patch.object(app, 'run_worker') as mock_run_worker:
+            with patch.object(app, "run_worker") as mock_run_worker:
                 # Select the job in table - move cursor to row 0 (first data row)
                 table = app.query_one("#job_list")
                 table.move_cursor(row=0)
@@ -388,7 +416,9 @@ class TestRunnerIntegration:
 
             assert runner1 is runner2
 
-    @pytest.mark.skip(reason="_ensure_runner uses setdefault - env vars from previous tests persist")
+    @pytest.mark.skip(
+        reason="_ensure_runner uses setdefault - env vars from previous tests persist"
+    )
     @pytest.mark.asyncio
     async def test_ensure_runner_sets_environment_vars(self, temp_project, mock_config):
         """Test that runner setup sets environment variables."""
@@ -445,7 +475,7 @@ class TestJobExecution:
             convergence_status="CONVERGED",
             errors=[],
             warnings=[],
-            metadata={"return_code": 0}
+            metadata={"return_code": 0},
         )
         mock_runner.get_process_pid.return_value = 12345
 
@@ -465,7 +495,9 @@ class TestJobExecution:
             # Verify runner was called
             mock_runner.run_job.assert_called_once()
 
-    @pytest.mark.skip(reason="Error handling in _run_crystal_job doesn't mark job as FAILED when exception propagates")
+    @pytest.mark.skip(
+        reason="Error handling in _run_crystal_job doesn't mark job as FAILED when exception propagates"
+    )
     @pytest.mark.asyncio
     async def test_job_execution_handles_errors(self, temp_project, mock_config):
         """Test that job execution handles errors gracefully."""
@@ -521,7 +553,7 @@ class TestJobCreatedHandler:
             job_id = app.db.create_job("new_job", str(calcs_dir / "0001_new_job"), "input")
 
             # Mock _refresh_job_list
-            with patch.object(app, '_refresh_job_list') as mock_refresh:
+            with patch.object(app, "_refresh_job_list") as mock_refresh:
                 # Post JobCreated message
                 message = JobCreated(job_id=job_id, job_name="new_job")
                 app.on_job_created(message)

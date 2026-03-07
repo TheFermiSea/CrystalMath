@@ -17,6 +17,19 @@ from crystalmath.api import CrystalController, create_controller
 from crystalmath.models import DftCode, JobState, JobStatus, JobDetails
 
 
+SAMPLE_POSCAR = """NaCl structure
+5.64
+1.0 0.0 0.0
+0.0 1.0 0.0
+0.0 0.0 1.0
+Na Cl
+1 1
+Direct
+0.0 0.0 0.0
+0.5 0.5 0.5
+"""
+
+
 class TestCrystalControllerDemoMode:
     """Tests for demo mode (no backend)."""
 
@@ -177,6 +190,84 @@ class TestCapabilities:
         assert "integrations" in data
         assert "pymatgen" in data["integrations"]
         assert "vaspkit" in data["integrations"]
+
+
+class TestStructureIntegrationEndpoints:
+    """Tests for structured structure and band-path endpoints."""
+
+    def test_standardize_structure_json_returns_expected_payload(self, monkeypatch):
+        """Standardization endpoint returns the fields the TUI depends on."""
+        controller = CrystalController(use_aiida=False)
+        expected = {
+            "backend_used": "pymatgen",
+            "conventional": False,
+            "valid": True,
+            "issues": [],
+            "formula": "Na1 Cl1",
+            "reduced_formula": "NaCl",
+            "num_sites": 2,
+            "dimensionality": 3,
+            "symmetry": None,
+            "poscar": SAMPLE_POSCAR,
+        }
+
+        monkeypatch.setattr(controller, "standardize_structure", lambda *args, **kwargs: expected)
+
+        response = json.loads(controller.standardize_structure_json("poscar", SAMPLE_POSCAR))
+
+        assert response["ok"] is True
+        data = response["data"]
+        assert data == expected
+
+    def test_standardize_structure_json_returns_structured_import_error(self, monkeypatch):
+        """Standardization endpoint wraps ImportError in the structured response envelope."""
+        controller = CrystalController(use_aiida=False)
+
+        def raise_import_error(*args, **kwargs):
+            raise ImportError("ASE not installed")
+
+        monkeypatch.setattr(controller, "standardize_structure", raise_import_error)
+
+        response = json.loads(controller.standardize_structure_json("poscar", SAMPLE_POSCAR))
+
+        assert response["ok"] is False
+        assert response["error"]["code"] == "IMPORT_ERROR"
+        assert "ASE not installed" in response["error"]["message"]
+
+    def test_generate_vasp_band_path_json_returns_expected_payload(self, monkeypatch):
+        """Band-path endpoint returns a structured KPOINTS payload."""
+        controller = CrystalController(use_aiida=False)
+        expected = {
+            "kpoints": "Generated KPOINTS\n12\nLine-mode\nReciprocal\n",
+            "source": "pymatgen",
+            "dimensionality": 3,
+        }
+
+        monkeypatch.setattr(controller, "generate_vasp_band_path", lambda *args, **kwargs: expected)
+
+        response = json.loads(
+            controller.generate_vasp_band_path_json(SAMPLE_POSCAR, line_density=12)
+        )
+
+        assert response["ok"] is True
+        assert response["data"] == expected
+
+    def test_generate_vasp_band_path_json_returns_structured_errors(self, monkeypatch):
+        """Band-path endpoint wraps generation errors in the structured response envelope."""
+        controller = CrystalController(use_aiida=False)
+
+        def raise_generation_error(*args, **kwargs):
+            raise RuntimeError("line_density must be greater than zero")
+
+        monkeypatch.setattr(controller, "generate_vasp_band_path", raise_generation_error)
+
+        response = json.loads(
+            controller.generate_vasp_band_path_json(SAMPLE_POSCAR, line_density=0)
+        )
+
+        assert response["ok"] is False
+        assert response["error"]["code"] == "KPATH_GENERATION_ERROR"
+        assert "greater than zero" in response["error"]["message"]
 
 
 class TestJobStatusParsing:

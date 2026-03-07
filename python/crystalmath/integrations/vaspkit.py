@@ -131,15 +131,21 @@ def generate_band_path_from_structure(
             result = _generate_with_vaspkit(poscar, task_id, line_density)
             result["dimensionality"] = int(dimensionality)
             return result
-        except Exception as exc:
+        except (BandPathGenerationError, subprocess.SubprocessError, OSError) as exc:
             logger.info("VASPKIT band-path generation failed, falling back: %s", exc)
+        except Exception as exc:
+            logger.warning("Unexpected VASPKIT error, falling back: %s", exc)
 
     try:
         result = _generate_with_seekpath(structure, line_density)
         result["dimensionality"] = int(dimensionality)
         return result
-    except Exception as exc:
+    except ImportError as exc:
         logger.info("SeeK-path band-path generation failed, falling back: %s", exc)
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.info("SeeK-path band-path generation failed, falling back: %s", exc)
+    except Exception as exc:
+        logger.warning("Unexpected SeeK-path error, falling back: %s", exc)
 
     result = _generate_with_pymatgen(structure, line_density)
     result["dimensionality"] = int(dimensionality)
