@@ -164,15 +164,13 @@ fn render_gpu_panel(
             Style::default().fg(temp_color),
         ),
         Span::raw("    Power: "),
-        Span::raw(format!(
-            "{:.0}/{:.0}W",
-            gpu.power_watts,
-            if gpu.power_limit_watts > 0.0 {
-                gpu.power_limit_watts
-            } else {
-                250.0
-            }
-        )),
+        Span::raw(if gpu.power_limit_watts > 0.0 {
+            format!("{:.0}/{:.0}W", gpu.power_watts, gpu.power_limit_watts)
+        } else if gpu.power_watts > 0.0 {
+            format!("{:.0}W", gpu.power_watts)
+        } else {
+            "n/a".to_string()
+        }),
     ]);
     frame.render_widget(Paragraph::new(row1), chunks[0]);
 

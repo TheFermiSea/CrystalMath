@@ -166,6 +166,23 @@ impl MonitorState {
         if self.polling_active {
             return None;
         }
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(runtime) => runtime,
+            Err(err) => {
+                self.connected = false;
+                self.error = Some(format!("Monitor runtime unavailable: {}", err));
+                return None;
+            }
+        };
+        let client = match PrometheusClient::try_new() {
+            Ok(client) => client,
+            Err(err) => {
+                self.connected = false;
+                self.error = Some(format!("Prometheus client unavailable: {}", err));
+                return None;
+            }
+        };
+
         let (tx, rx) = mpsc::channel();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         self.receiver = Some(rx);
@@ -173,8 +190,7 @@ impl MonitorState {
         self.polling_active = true;
 
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            rt.block_on(poll_loop(tx, shutdown_rx));
+            runtime.block_on(poll_loop(tx, shutdown_rx, client));
         });
 
         Some(())
@@ -205,6 +221,12 @@ impl MonitorState {
             MonitorSubView::SlurmStatus => self.last_slurm_update,
         };
         instant.map(|t| t.elapsed())
+    }
+}
+
+impl Default for MonitorState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -240,10 +262,14 @@ pub fn threshold_color_inverse(value: f64, warn: f64, crit: f64) -> Color {
 
 // ===== Background Polling =====
 
-async fn poll_loop(tx: Sender<MonitorMessage>, shutdown: watch::Receiver<bool>) {
+async fn poll_loop(
+    tx: Sender<MonitorMessage>,
+    shutdown: watch::Receiver<bool>,
+    client: PrometheusClient,
+) {
     use std::sync::Arc;
 
-    let client = Arc::new(PrometheusClient::new());
+    let client = Arc::new(client);
     let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // GPU poll task (every 10s)

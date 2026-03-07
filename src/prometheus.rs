@@ -58,7 +58,7 @@ pub struct PrometheusClient {
 }
 
 impl PrometheusClient {
-    pub fn new() -> Self {
+    pub fn try_new() -> Result<Self, PrometheusError> {
         let base_url =
             std::env::var("PROMETHEUS_URL").unwrap_or_else(|_| "http://localhost:9090".to_string());
         let allow_insecure_tls = std::env::var("PROMETHEUS_INSECURE_TLS")
@@ -70,8 +70,8 @@ impl PrometheusClient {
         } else {
             builder
         };
-        let client = builder.build().expect("Failed to build HTTP client");
-        Self { client, base_url }
+        let client = builder.build()?;
+        Ok(Self { client, base_url })
     }
 
     /// Execute a PromQL instant query.

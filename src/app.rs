@@ -4406,6 +4406,7 @@ impl<'a> App<'a> {
                     self.monitor.gpu_metrics = metrics;
                     self.monitor.last_gpu_update = Some(std::time::Instant::now());
                     self.monitor.connected = true;
+                    self.monitor.error = None;
                     dirty = true;
                 }
                 MonitorMessage::NodeUpdate(mut metrics) => {
@@ -4432,12 +4433,14 @@ impl<'a> App<'a> {
                     self.monitor.node_metrics = metrics;
                     self.monitor.last_node_update = Some(std::time::Instant::now());
                     self.monitor.connected = true;
+                    self.monitor.error = None;
                     dirty = true;
                 }
                 MonitorMessage::SlurmUpdate(metrics) => {
                     self.monitor.slurm_metrics = Some(metrics);
                     self.monitor.last_slurm_update = Some(std::time::Instant::now());
                     self.monitor.connected = true;
+                    self.monitor.error = None;
                     dirty = true;
                 }
                 MonitorMessage::Error(e) => {
@@ -6564,5 +6567,90 @@ mod tests {
         assert_eq!(id1, 0);
         assert_eq!(id2, 1);
         assert_eq!(id3, 2);
+    }
+
+    #[test]
+    fn test_poll_monitor_updates_preserves_gpu_history_and_clears_errors() {
+        let mut app = create_test_app();
+        let (tx, rx) = mpsc::channel();
+
+        let mut existing_history = VecDeque::new();
+        existing_history.push_back(15);
+        existing_history.push_back(35);
+        app.monitor.gpu_metrics = vec![crate::monitor::GpuMetrics {
+            node: "gpu-node".to_string(),
+            gpu_index: 0,
+            utilization_history: existing_history.clone(),
+            ..Default::default()
+        }];
+        app.monitor.receiver = Some(rx);
+
+        tx.send(MonitorMessage::Error(
+            "GPU exporter unavailable".to_string(),
+        ))
+        .unwrap();
+        tx.send(MonitorMessage::GpuUpdate(vec![
+            crate::monitor::GpuMetrics {
+                node: "gpu-node".to_string(),
+                gpu_index: 0,
+                utilization_pct: 72.0,
+                ..Default::default()
+            },
+        ]))
+        .unwrap();
+
+        app.poll_monitor_updates();
+
+        assert!(app.monitor.connected);
+        assert_eq!(app.monitor.error, None);
+        assert_eq!(app.monitor.gpu_metrics.len(), 1);
+        let history: Vec<u64> = app.monitor.gpu_metrics[0]
+            .utilization_history
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(history, vec![15, 35, 72]);
+    }
+
+    #[test]
+    fn test_poll_monitor_updates_clears_errors_for_node_and_slurm_updates() {
+        let mut app = create_test_app();
+
+        let (node_tx, node_rx) = mpsc::channel();
+        app.monitor.error = Some("stale node error".to_string());
+        app.monitor.receiver = Some(node_rx);
+        node_tx
+            .send(MonitorMessage::NodeUpdate(vec![
+                crate::monitor::NodeMetrics {
+                    hostname: "node-1".to_string(),
+                    cpu_usage_pct: 18.0,
+                    memory_used_gb: 8.0,
+                    memory_total_gb: 32.0,
+                    ..Default::default()
+                },
+            ]))
+            .unwrap();
+        app.poll_monitor_updates();
+
+        assert_eq!(app.monitor.error, None);
+        assert!(app.monitor.connected);
+        assert_eq!(app.monitor.node_metrics.len(), 1);
+
+        let (slurm_tx, slurm_rx) = mpsc::channel();
+        app.monitor.error = Some("stale slurm error".to_string());
+        app.monitor.receiver = Some(slurm_rx);
+        slurm_tx
+            .send(MonitorMessage::SlurmUpdate(
+                crate::monitor::SlurmClusterMetrics {
+                    jobs_running: 4,
+                    jobs_pending: 2,
+                    ..Default::default()
+                },
+            ))
+            .unwrap();
+        app.poll_monitor_updates();
+
+        assert_eq!(app.monitor.error, None);
+        assert_eq!(app.monitor.slurm_metrics.as_ref().unwrap().jobs_running, 4);
     }
 }
