@@ -18,7 +18,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install bats
-        run: sudo apt-get install -yq bats
+        run: |
+          sudo apt-get update -yq
+          sudo apt-get install -yq bats
 
       - name: Unit tests
         run: bats cli/tests/unit/*.bats

@@ -41,8 +41,11 @@ jobs:
 
       - name: Ruff regression check
         run: |
+          set -euo pipefail
           baseline=$(cat scripts/ruff-baseline.txt)
-          current=$(uv run ruff check python/ tui/ 2>&1 | grep -oP 'Found \K[0-9]+' || echo 0)
+          ruff_output=$(uv run ruff check --exit-zero python/ tui/ 2>&1)
+          current=$(printf '%s\n' "$ruff_output" | grep -oE 'Found [0-9]+' | awk '{print $2}' | tail -n1 || true)
+          current=${current:-0}
           echo "Baseline: $baseline | Current: $current"
           if [ "$current" -gt "$baseline" ]; then
             echo "::error::Ruff error count increased from $baseline to $current"

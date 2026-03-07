@@ -32,7 +32,12 @@ echo ""
 
 # 4. Ensure pre-push hook is installed
 echo "[4/8] Checking pre-push quality hook..."
-if [[ -f "$PROJECT_ROOT/.git/hooks/pre-push" ]] && grep -q "quality checks" "$PROJECT_ROOT/.git/hooks/pre-push"; then
+HOOK_TARGET="$(git -C "$PROJECT_ROOT" rev-parse --git-path hooks/pre-push 2>/dev/null || echo ".git/hooks/pre-push")"
+if [[ "$HOOK_TARGET" != /* ]]; then
+    HOOK_TARGET="$PROJECT_ROOT/$HOOK_TARGET"
+fi
+
+if [[ -f "$HOOK_TARGET" ]] && grep -q "quality checks" "$HOOK_TARGET"; then
     echo "  ✓ Composite pre-push hook installed"
 else
     echo "  Installing composite pre-push hook..."

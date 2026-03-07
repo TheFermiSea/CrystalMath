@@ -17,10 +17,52 @@ fi
 # Save stdin for bd delegation (git passes ref info via stdin)
 STDIN_DATA=$(cat)
 
-# Determine changed files vs remote tracking branch
-REMOTE=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null | sed 's|/| |' | awk '{print $1}') || REMOTE="origin"
-MERGE_BASE=$(git merge-base HEAD "${REMOTE}/$(git rev-parse --abbrev-ref HEAD)" 2>/dev/null || echo "HEAD~1")
-CHANGED_FILES=$(git diff --name-only "$MERGE_BASE" HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+NULL_SHA="0000000000000000000000000000000000000000"
+EMPTY_TREE="$(git hash-object -t tree /dev/null)"
+
+resolve_changed_files_from_stdin() {
+    local local_ref local_sha remote_ref remote_sha
+
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        [[ -z "${local_ref:-}" ]] && continue
+
+        if [[ "$local_sha" == "$NULL_SHA" ]]; then
+            continue
+        fi
+
+        if [[ "$remote_sha" == "$NULL_SHA" ]]; then
+            git diff --name-only "$EMPTY_TREE" "$local_sha" 2>/dev/null || true
+        else
+            git diff --name-only "$remote_sha" "$local_sha" 2>/dev/null || true
+        fi
+    done <<< "$STDIN_DATA"
+}
+
+resolve_changed_files_from_history() {
+    local upstream_ref merge_base
+
+    upstream_ref="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)"
+    if [[ -n "$upstream_ref" ]]; then
+        merge_base="$(git merge-base HEAD "$upstream_ref" 2>/dev/null || true)"
+        if [[ -n "$merge_base" ]]; then
+            git diff --name-only "$merge_base" HEAD 2>/dev/null || true
+            return
+        fi
+    fi
+
+    if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+        git diff --name-only HEAD^ HEAD 2>/dev/null || true
+    else
+        git diff --name-only "$EMPTY_TREE" HEAD 2>/dev/null || true
+    fi
+}
+
+# Determine changed files using pre-push refs when available, then fall back to history.
+CHANGED_FILES="$(resolve_changed_files_from_stdin)"
+if [[ -z "$CHANGED_FILES" ]]; then
+    CHANGED_FILES="$(resolve_changed_files_from_history)"
+fi
+CHANGED_FILES="$(printf '%s\n' "$CHANGED_FILES" | sed '/^$/d' | sort -u)"
 
 # Detect which components changed
 HAS_PYTHON=false
@@ -47,7 +89,8 @@ if $HAS_PYTHON; then
 
     # Format check (hard gate)
     echo "  Checking ruff format..."
-    if ! uv run ruff format --check python/ tui/ > /dev/null 2>&1; then
+    if ! format_output=$(uv run ruff format --check python/ tui/ 2>&1); then
+        printf '%s\n' "$format_output"
         echo "  ✗ Ruff format check failed. Run: uv run ruff format python/ tui/"
         FAILURES=$((FAILURES + 1))
     else
@@ -65,7 +108,7 @@ if $HAS_PYTHON; then
 
     # Tests (hard gate)
     echo "  Running Python tests..."
-    if ! uv run pytest python/tests/ -x -q --tb=line 2>/dev/null; then
+    if ! uv run pytest python/tests/ tui/tests/ -x -q --tb=line 2>/dev/null; then
         echo "  ✗ Python tests failed"
         FAILURES=$((FAILURES + 1))
     else
