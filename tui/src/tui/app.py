@@ -14,13 +14,21 @@ from textual.worker import Worker
 from textual.message import Message
 from textual.binding import Binding
 
+from ..core.core_adapter import CrystalCoreClient
 from ..core.database import Database
 from ..core.environment import CrystalConfig, get_crystal_config
 from ..core.connection_manager import ConnectionManager
 from ..runners import LocalRunner, LocalRunnerError, InputFileError
 from ..runners.ssh_runner import SSHRunner
 from ..core.codes import DFTCode
-from .screens import NewJobScreen, BatchSubmissionScreen, TemplateBrowserScreen, ClusterManagerScreen, VASPFilesReady, SLURMQueueScreen
+from .screens import (
+    NewJobScreen,
+    BatchSubmissionScreen,
+    TemplateBrowserScreen,
+    ClusterManagerScreen,
+    VASPFilesReady,
+    SLURMQueueScreen,
+)
 from .screens.new_job import JobCreated
 from .screens.batch_submission import BatchJobsCreated
 from .screens.template_browser import TemplateSelected
@@ -31,6 +39,7 @@ from .messages import JobProgressUpdate
 # --- Custom Messages ---
 class JobLog(Message):
     """A message containing a line of output from a job."""
+
     def __init__(self, job_id: int, line: str) -> None:
         self.job_id = job_id
         self.line = line
@@ -39,6 +48,7 @@ class JobLog(Message):
 
 class JobStatus(Message):
     """A message indicating a job's status has changed."""
+
     def __init__(self, job_id: int, status: str, pid: Optional[int] = None) -> None:
         self.job_id = job_id
         self.status = status
@@ -48,6 +58,7 @@ class JobStatus(Message):
 
 class JobResults(Message):
     """A message with job results after completion."""
+
     def __init__(self, job_id: int, final_energy: Optional[float] = None) -> None:
         self.job_id = job_id
         self.final_energy = final_energy
@@ -117,6 +128,7 @@ class CrystalTUI(App):
         self.config = config
         self.runner: Optional[LocalRunner] = None
         self.connection_manager: Optional[ConnectionManager] = None
+        self._core_client: CrystalCoreClient | None = None
         # Track active SSH runners for remote jobs (job_id -> (runner, job_handle))
         self._active_ssh_jobs: dict[int, tuple[SSHRunner, str]] = {}
         # Track progress monitoring tasks
@@ -151,6 +163,7 @@ class CrystalTUI(App):
 
         # Initialize database
         self.db = Database(self.db_path)
+        self._core_client = CrystalCoreClient(self.db_path)
 
         # Initialize connection manager for remote execution
         self.connection_manager = ConnectionManager()
@@ -199,18 +212,18 @@ class CrystalTUI(App):
 
     def _ensure_runner(self) -> LocalRunner:
         """Instantiate the LocalRunner once and propagate env configuration."""
+        if self.config is None:
+            # Try cached loader; will raise if env invalid
+            try:
+                self.config = get_crystal_config()
+            except Exception:
+                self.config = None
+
+        if self.config:
+            os.environ["CRY23_EXEDIR"] = str(self.config.executable_dir)
+            os.environ["CRY23_SCRDIR"] = str(self.config.scratch_dir)
+
         if self.runner is None:
-            if self.config is None:
-                # Try cached loader; will raise if env invalid
-                try:
-                    self.config = get_crystal_config()
-                except Exception:
-                    self.config = None
-
-            if self.config:
-                os.environ.setdefault("CRY23_EXEDIR", str(self.config.executable_dir))
-                os.environ.setdefault("CRY23_SCRDIR", str(self.config.scratch_dir))
-
             exe_path = self.config.executable_path if self.config else None
             self.runner = LocalRunner(executable_path=exe_path)
 
@@ -278,7 +291,8 @@ class CrystalTUI(App):
         self.push_screen(
             NewJobScreen(
                 database=self.db,
-                calculations_dir=self.calculations_dir
+                calculations_dir=self.calculations_dir,
+                core_client=self._core_client,
             )
         )
 
@@ -289,10 +303,7 @@ class CrystalTUI(App):
 
         # Push the batch submission modal screen
         self.push_screen(
-            BatchSubmissionScreen(
-                database=self.db,
-                calculations_dir=self.calculations_dir
-            )
+            BatchSubmissionScreen(database=self.db, calculations_dir=self.calculations_dir)
         )
 
     def action_template_browser(self) -> None:
@@ -308,11 +319,8 @@ class CrystalTUI(App):
                 self._create_job_from_template(template.name, rendered_input, params)
 
         self.push_screen(
-            TemplateBrowserScreen(
-                database=self.db,
-                calculations_dir=self.calculations_dir
-            ),
-            callback=handle_template_result
+            TemplateBrowserScreen(database=self.db, calculations_dir=self.calculations_dir),
+            callback=handle_template_result,
         )
 
     def action_cluster_manager(self) -> None:
@@ -322,10 +330,7 @@ class CrystalTUI(App):
 
         # Push the cluster manager screen
         self.push_screen(
-            ClusterManagerScreen(
-                db=self.db,
-                connection_manager=self.connection_manager
-            )
+            ClusterManagerScreen(db=self.db, connection_manager=self.connection_manager)
         )
 
     def action_slurm_queue(self) -> None:
@@ -340,7 +345,9 @@ class CrystalTUI(App):
         slurm_clusters = [c for c in clusters if c.type == "slurm"]
 
         if not slurm_clusters:
-            log.write_line("[yellow]No SLURM clusters configured. Press 'c' to add a cluster.[/yellow]")
+            log.write_line(
+                "[yellow]No SLURM clusters configured. Press 'c' to add a cluster.[/yellow]"
+            )
             return
 
         # For now, use the first SLURM cluster
@@ -355,19 +362,20 @@ class CrystalTUI(App):
         # Push the SLURM queue screen
         self.push_screen(
             SLURMQueueScreen(
-                db=self.db,
-                connection_manager=self.connection_manager,
-                cluster_id=cluster.id
+                db=self.db, connection_manager=self.connection_manager, cluster_id=cluster.id
             )
         )
 
-    def _create_job_from_template(self, template_name: str, input_content: str, params: dict) -> None:
+    def _create_job_from_template(
+        self, template_name: str, input_content: str, params: dict
+    ) -> None:
         """Create a job from a template."""
         if not self.db:
             return
 
         # Generate job name from template name and timestamp
         from datetime import datetime
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         job_name = f"{template_name.lower().replace(' ', '_')}_{timestamp}"
 
@@ -388,23 +396,23 @@ class CrystalTUI(App):
 
             # Write template metadata
             import json
+
             metadata_file = work_dir / "template_metadata.json"
-            metadata_file.write_text(json.dumps({
-                "template_name": template_name,
-                "parameters": params
-            }, indent=2))
+            metadata_file.write_text(
+                json.dumps({"template_name": template_name, "parameters": params}, indent=2)
+            )
 
             # Add job to database
             job_id = self.db.create_job(
-                name=job_name,
-                work_dir=str(work_dir),
-                input_content=input_content
+                name=job_name, work_dir=str(work_dir), input_content=input_content
             )
 
             # Refresh job list and log
             self._refresh_job_list()
             log = self.query_one("#log_view", Log)
-            log.write_line(f"[bold green]Created job {job_id} from template: {template_name}[/bold green]")
+            log.write_line(
+                f"[bold green]Created job {job_id} from template: {template_name}[/bold green]"
+            )
 
         except Exception as e:
             log = self.query_one("#log_view", Log)
@@ -435,7 +443,7 @@ class CrystalTUI(App):
 
         # Check if this is a VASP job (requires remote execution)
         is_vasp = False
-        if hasattr(job, 'dft_code') and job.dft_code == "vasp":
+        if hasattr(job, "dft_code") and job.dft_code == "vasp":
             is_vasp = True
         elif Path(job.work_dir).joinpath("POSCAR").exists():
             is_vasp = True
@@ -450,11 +458,7 @@ class CrystalTUI(App):
             self.db.update_status(job_id, "QUEUED")
 
         # Start worker for CRYSTAL (local execution)
-        self.run_worker(
-            self._run_crystal_job(job_id),
-            name=f"job_{job_id}",
-            group=f"job_{job_id}"
-        )
+        self.run_worker(self._run_crystal_job(job_id), name=f"job_{job_id}", group=f"job_{job_id}")
 
     def _run_vasp_job_with_cluster_selection(self, job_id: int) -> None:
         """Handle VASP job execution with cluster selection."""
@@ -466,7 +470,9 @@ class CrystalTUI(App):
         # Get available clusters
         clusters = self.db.get_active_clusters()
         if not clusters:
-            log.write_line("[bold red]No clusters configured. Press 'c' to add a cluster.[/bold red]")
+            log.write_line(
+                "[bold red]No clusters configured. Press 'c' to add a cluster.[/bold red]"
+            )
             return
 
         # For now, use the first available cluster
@@ -484,8 +490,8 @@ class CrystalTUI(App):
         # Start remote VASP worker
         self.run_worker(
             self._run_remote_vasp_job(job_id, cluster.id),
-            name=f"vasp_job_{job_id}",
-            group=f"job_{job_id}"
+            name=f"job_{job_id}",
+            group=f"job_{job_id}",
         )
 
     def action_stop_job(self) -> None:
@@ -573,13 +579,17 @@ class CrystalTUI(App):
         """Handle new job creation - refresh the job list and log."""
         self._refresh_job_list()
         log = self.query_one("#log_view", Log)
-        log.write_line(f"[bold green]Created new job {message.job_id}: {message.job_name}[/bold green]")
+        log.write_line(
+            f"[bold green]Created new job {message.job_id}: {message.job_name}[/bold green]"
+        )
 
     def on_batch_jobs_created(self, message: BatchJobsCreated) -> None:
         """Handle batch job creation - refresh the job list and log."""
         self._refresh_job_list()
         log = self.query_one("#log_view", Log)
-        log.write_line(f"[bold green]Batch submission complete: {len(message.job_ids)} jobs created[/bold green]")
+        log.write_line(
+            f"[bold green]Batch submission complete: {len(message.job_ids)} jobs created[/bold green]"
+        )
         for job_id, job_name in zip(message.job_ids, message.job_names):
             log.write_line(f"  - Job {job_id}: {job_name}")
 
@@ -596,6 +606,7 @@ class CrystalTUI(App):
         log = self.query_one("#log_view", Log)
         log.write_line(f"[cyan]Creating VASP job: {message.job_name}[/cyan]")
 
+        work_dir: Path | None = None
         try:
             # Generate next job ID
             existing_jobs = self.db.get_all_jobs()
@@ -614,11 +625,12 @@ class CrystalTUI(App):
             # Note: POTCAR will be retrieved from cluster during job submission
             # Store POTCAR elements and type in job metadata for multi-element support
             import json
+
             metadata = {
                 "potcar_elements": message.potcar_elements,  # List of elements in POSCAR order
                 "potcar_type": message.potcar_type,  # Library type (e.g., "potpaw_PBE")
                 "potcar_element": message.potcar_element,  # Backward compat: comma-separated
-                "dft_code": "vasp"
+                "dft_code": "vasp",
             }
             (work_dir / "vasp_metadata.json").write_text(json.dumps(metadata, indent=2))
 
@@ -636,12 +648,14 @@ class CrystalTUI(App):
                 name=message.job_name,
                 work_dir=str(work_dir),
                 input_content=input_content,
-                dft_code="vasp"
+                dft_code="vasp",
             )
 
             # Refresh job list and log
             self._refresh_job_list()
-            log.write_line(f"[bold green]Created VASP job {job_id}: {message.job_name}[/bold green]")
+            log.write_line(
+                f"[bold green]Created VASP job {job_id}: {message.job_name}[/bold green]"
+            )
             log.write_line(f"  POSCAR: {len(message.poscar.split(chr(10)))} lines")
             log.write_line(f"  INCAR: {len(message.incar.split(chr(10)))} lines")
             log.write_line(f"  KPOINTS: {len(message.kpoints.split(chr(10)))} lines")
@@ -649,8 +663,18 @@ class CrystalTUI(App):
             log.write_line(f"  Work dir: {work_dir_name}")
 
         except Exception as e:
+            if work_dir is not None and work_dir.exists():
+                try:
+                    import shutil
+
+                    shutil.rmtree(work_dir)
+                except Exception as cleanup_error:
+                    log.write_line(
+                        f"[red]Failed to clean up staged VASP directory: {cleanup_error}[/red]"
+                    )
             log.write_line(f"[red]Failed to create VASP job: {str(e)}[/red]")
             import traceback
+
             log.write_line(f"[red]{traceback.format_exc()}[/red]")
 
     def on_job_log(self, message: JobLog) -> None:
@@ -714,7 +738,9 @@ class CrystalTUI(App):
         pid_reported = False
 
         self.post_message(JobStatus(job_id, "RUNNING"))
-        self.post_message(JobLog(job_id, f"[bold green]Starting job {job_id}: {job.name}[/bold green]"))
+        self.post_message(
+            JobLog(job_id, f"[bold green]Starting job {job_id}: {job.name}[/bold green]")
+        )
 
         try:
             async for line in runner.run_job(job_id, work_dir):
@@ -744,10 +770,16 @@ class CrystalTUI(App):
                 )
 
             if result.success:
-                self.post_message(JobLog(job_id, "[bold green]Job completed successfully[/bold green]"))
+                self.post_message(
+                    JobLog(job_id, "[bold green]Job completed successfully[/bold green]")
+                )
                 if result.final_energy is not None:
-                    self.post_message(JobLog(job_id, f"[cyan]Final energy: {result.final_energy:.10f} Ha[/cyan]"))
-                self.post_message(JobLog(job_id, f"[cyan]Convergence: {result.convergence_status}[/cyan]"))
+                    self.post_message(
+                        JobLog(job_id, f"[cyan]Final energy: {result.final_energy:.10f} Ha[/cyan]")
+                    )
+                self.post_message(
+                    JobLog(job_id, f"[cyan]Convergence: {result.convergence_status}[/cyan]")
+                )
                 if result.warnings:
                     for warning in result.warnings:
                         self.post_message(JobLog(job_id, f"[yellow]Warning: {warning}[/yellow]"))
@@ -756,7 +788,9 @@ class CrystalTUI(App):
             else:
                 self.post_message(JobLog(job_id, "[bold red]Job failed[/bold red]"))
                 if result.metadata.get("return_code") is not None:
-                    self.post_message(JobLog(job_id, f"[red]Return code: {result.metadata['return_code']}[/red]"))
+                    self.post_message(
+                        JobLog(job_id, f"[red]Return code: {result.metadata['return_code']}[/red]")
+                    )
                 for error in result.errors:
                     self.post_message(JobLog(job_id, f"[red]Error: {error}[/red]"))
                 self.post_message(JobStatus(job_id, "FAILED"))
@@ -781,11 +815,7 @@ class CrystalTUI(App):
 
     # --- VASP Progress Monitoring ---
     async def _monitor_vasp_progress(
-        self,
-        job_id: int,
-        runner: SSHRunner,
-        job_handle: str,
-        poll_interval: float = 10.0
+        self, job_id: int, runner: SSHRunner, job_handle: str, poll_interval: float = 10.0
     ) -> None:
         """
         Background task that monitors VASP job progress.
@@ -820,12 +850,14 @@ class CrystalTUI(App):
                     progress = await runner.get_vasp_progress(job_handle)
                     if progress:
                         # Post progress message
-                        self.post_message(JobProgressUpdate(
-                            job_id=job_id,
-                            job_handle=job_handle,
-                            progress_data=progress.to_dict(),
-                            status_text=progress.status_summary()
-                        ))
+                        self.post_message(
+                            JobProgressUpdate(
+                                job_id=job_id,
+                                job_handle=job_handle,
+                                progress_data=progress.to_dict(),
+                                status_text=progress.status_summary(),
+                            )
+                        )
                 except Exception as e:
                     log.write_line(f"[yellow]Error getting VASP progress: {e}[/yellow]")
 
@@ -839,21 +871,14 @@ class CrystalTUI(App):
             # Cleanup
             self._progress_monitors.pop(job_id, None)
 
-    def _start_vasp_progress_monitor(
-        self,
-        job_id: int,
-        runner: SSHRunner,
-        job_handle: str
-    ) -> None:
+    def _start_vasp_progress_monitor(self, job_id: int, runner: SSHRunner, job_handle: str) -> None:
         """Start background progress monitoring for a VASP job."""
         # Cancel existing monitor if any
         if job_id in self._progress_monitors:
             self._progress_monitors[job_id].cancel()
 
         # Create and track new monitor task
-        task = asyncio.create_task(
-            self._monitor_vasp_progress(job_id, runner, job_handle)
-        )
+        task = asyncio.create_task(self._monitor_vasp_progress(job_id, runner, job_handle))
         self._progress_monitors[job_id] = task
 
     def _stop_vasp_progress_monitor(self, job_id: int) -> None:
@@ -920,7 +945,9 @@ class CrystalTUI(App):
         log = self.query_one("#log_view", Log)
 
         self.post_message(JobStatus(job_id, "RUNNING"))
-        self.post_message(JobLog(job_id, f"[bold green]Starting VASP job {job_id}: {job.name}[/bold green]"))
+        self.post_message(
+            JobLog(job_id, f"[bold green]Starting VASP job {job_id}: {job.name}[/bold green]")
+        )
         self.post_message(JobLog(job_id, f"[cyan]Cluster: {cluster_id}[/cyan]"))
 
         runner = None
@@ -949,7 +976,9 @@ class CrystalTUI(App):
                 threads=4,  # Default OpenMP threads
             )
 
-            self.post_message(JobLog(job_id, f"[cyan]Job submitted with handle: {job_handle}[/cyan]"))
+            self.post_message(
+                JobLog(job_id, f"[cyan]Job submitted with handle: {job_handle}[/cyan]")
+            )
 
             # Track active SSH job
             self._active_ssh_jobs[job_id] = (runner, job_handle)
@@ -963,7 +992,9 @@ class CrystalTUI(App):
 
                 status = await runner.get_status(job_handle)
                 if status not in ("running", "RUNNING"):
-                    self.post_message(JobLog(job_id, f"[cyan]Job finished with status: {status}[/cyan]"))
+                    self.post_message(
+                        JobLog(job_id, f"[cyan]Job finished with status: {status}[/cyan]")
+                    )
                     break
 
             # Stop progress monitor
@@ -988,10 +1019,16 @@ class CrystalTUI(App):
                 )
 
             if result.success:
-                self.post_message(JobLog(job_id, "[bold green]VASP job completed successfully[/bold green]"))
+                self.post_message(
+                    JobLog(job_id, "[bold green]VASP job completed successfully[/bold green]")
+                )
                 if result.final_energy is not None:
-                    self.post_message(JobLog(job_id, f"[cyan]Final energy: {result.final_energy:.10f} eV[/cyan]"))
-                self.post_message(JobLog(job_id, f"[cyan]Convergence: {result.convergence_status}[/cyan]"))
+                    self.post_message(
+                        JobLog(job_id, f"[cyan]Final energy: {result.final_energy:.10f} eV[/cyan]")
+                    )
+                self.post_message(
+                    JobLog(job_id, f"[cyan]Convergence: {result.convergence_status}[/cyan]")
+                )
 
                 # Display benchmark data if available
                 benchmark = result.metadata.get("benchmark", {})
@@ -1006,7 +1043,11 @@ class CrystalTUI(App):
                         mins, secs = divmod(cpu, 60)
                         self.post_message(JobLog(job_id, f"  CPU time: {int(mins)}m {secs:.1f}s"))
                     if "cpu_to_wall_ratio" in benchmark:
-                        self.post_message(JobLog(job_id, f"  Efficiency ratio: {benchmark['cpu_to_wall_ratio']:.2f}x"))
+                        self.post_message(
+                            JobLog(
+                                job_id, f"  Efficiency ratio: {benchmark['cpu_to_wall_ratio']:.2f}x"
+                            )
+                        )
                     if "loop_count" in benchmark:
                         self.post_message(JobLog(job_id, f"  SCF loops: {benchmark['loop_count']}"))
                     parallel_info = []
@@ -1033,22 +1074,33 @@ class CrystalTUI(App):
                 if outcar_path.exists():
                     try:
                         from ..runners.vasp_errors import analyze_vasp_errors
+
                         outcar_content = outcar_path.read_text()
                         vasp_errors, _ = analyze_vasp_errors(outcar_content)
 
                         if vasp_errors:
-                            self.post_message(JobLog(job_id, "[yellow]─── Error Analysis ───[/yellow]"))
+                            self.post_message(
+                                JobLog(job_id, "[yellow]─── Error Analysis ───[/yellow]")
+                            )
                             for verr in vasp_errors:
-                                severity_color = "red" if verr.severity.value == "fatal" else "yellow"
-                                self.post_message(JobLog(
-                                    job_id,
-                                    f"[{severity_color}][{verr.code}] {verr.message}[/{severity_color}]"
-                                ))
+                                severity_color = (
+                                    "red" if verr.severity.value == "fatal" else "yellow"
+                                )
+                                self.post_message(
+                                    JobLog(
+                                        job_id,
+                                        f"[{severity_color}][{verr.code}] {verr.message}[/{severity_color}]",
+                                    )
+                                )
                                 for suggestion in verr.suggestions[:3]:  # Limit to 3 suggestions
                                     self.post_message(JobLog(job_id, f"  → {suggestion}"))
                                 if verr.incar_changes:
-                                    changes = ", ".join(f"{k}={v}" for k, v in verr.incar_changes.items())
-                                    self.post_message(JobLog(job_id, f"  [cyan]Try: {changes}[/cyan]"))
+                                    changes = ", ".join(
+                                        f"{k}={v}" for k, v in verr.incar_changes.items()
+                                    )
+                                    self.post_message(
+                                        JobLog(job_id, f"  [cyan]Try: {changes}[/cyan]")
+                                    )
                     except Exception as e:
                         log.write_line(f"[dim]Error analysis failed: {e}[/dim]")
 

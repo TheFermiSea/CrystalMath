@@ -8,9 +8,10 @@ Job dataclasses for UI consumption.
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from crystalmath.api import create_controller
 from crystalmath.models import (
@@ -25,7 +26,6 @@ from crystalmath.models import (
 
 from .database import Job
 
-
 _STATE_TO_STATUS = {
     JobState.CREATED: "PENDING",
     JobState.SUBMITTED: "QUEUED",
@@ -37,13 +37,13 @@ _STATE_TO_STATUS = {
 }
 
 
-def _format_created_at(value: datetime | None) -> Optional[str]:
+def _format_created_at(value: datetime | None) -> str | None:
     if value is None:
         return None
     return value.isoformat(timespec="seconds")
 
 
-def _parse_created_at(value: Optional[str]) -> Optional[datetime]:
+def _parse_created_at(value: str | None) -> datetime | None:
     """Convert a stored timestamp string to datetime."""
     if not value:
         return None
@@ -95,20 +95,78 @@ class CrystalCoreClient:
     """Thin wrapper around crystalmath.api for the Textual UI."""
 
     def __init__(self, db_path: Path) -> None:
+        backend_preference = os.environ.get("CRYSTAL_TUI_BACKEND", "sqlite").strip().lower()
+        if backend_preference not in {"auto", "sqlite", "aiida", "demo"}:
+            backend_preference = "auto"
+        profile_name = os.environ.get("CRYSTAL_TUI_AIIDA_PROFILE", "default")
         self._controller = create_controller(
-            profile_name="default",
-            use_aiida=False,
+            profile_name=profile_name,
+            use_aiida=backend_preference in {"auto", "aiida"},
             db_path=str(db_path),
+            backend_preference=backend_preference,
         )
 
-    def list_jobs(self, limit: int = 200) -> List[JobStatus]:
+    def list_jobs(self, limit: int = 200) -> list[JobStatus]:
         return self._controller.get_jobs(limit)
 
-    def get_job_details(self, pk: int) -> Optional[JobDetails]:
+    def get_job_details(self, pk: int) -> JobDetails | None:
         return self._controller.get_job_details(pk)
 
-    def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
+    def get_job_log(self, pk: int, tail_lines: int = 100) -> dict[str, list[str]]:
         return self._controller.get_job_log(pk, tail_lines)
 
     def submit_job(self, submission: JobSubmission) -> int:
         return self._controller.submit_job(submission)
+
+    def get_capabilities(self) -> dict[str, object]:
+        return self._controller.get_capabilities()
+
+    def get_capabilities_json(self) -> dict[str, object]:
+        return self._parse_structured_json(self._controller.get_capabilities_json())
+
+    def standardize_structure(
+        self,
+        source_type: str,
+        source_data: str,
+        *,
+        conventional: bool = False,
+        backend: str = "auto",
+    ) -> dict[str, object]:
+        return self._parse_structured_json(
+            self._controller.standardize_structure_json(
+                source_type=source_type,
+                source_data=source_data,
+                conventional=conventional,
+                backend=backend,
+            )
+        )
+
+    def generate_vasp_band_path(
+        self,
+        poscar_content: str,
+        *,
+        line_density: int = 20,
+        prefer_vaspkit: bool = True,
+    ) -> dict[str, object]:
+        return self._parse_structured_json(
+            self._controller.generate_vasp_band_path_json(
+                poscar_content=poscar_content,
+                line_density=line_density,
+                prefer_vaspkit=prefer_vaspkit,
+            )
+        )
+
+    @staticmethod
+    def _parse_structured_json(payload: str) -> dict[str, object]:
+        data = json.loads(payload)
+        if not isinstance(data, dict):
+            raise RuntimeError(f"CrystalMath core returned invalid structured payload: {payload!r}")
+        if not data.get("ok", False):
+            error = data.get("error", {})
+            raise RuntimeError(error.get("message", "Unknown CrystalMath core error"))
+        structured = data.get("data")
+        if not isinstance(structured, dict):
+            raise RuntimeError(
+                "CrystalMath core returned a success response without structured data"
+            )
+        return structured

@@ -39,6 +39,7 @@ from textual.widgets import (
 from textual.message import Message
 from textual.validation import ValidationResult, Validator
 
+from ...core.core_adapter import CrystalCoreClient
 from ...core.database import Database
 from ...core.codes import DFTCode
 
@@ -47,17 +48,100 @@ logger = logging.getLogger(__name__)
 
 # Valid element symbols (subset commonly used in VASP)
 VALID_ELEMENTS = {
-    "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
-    "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar",
-    "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
-    "Ga", "Ge", "As", "Se", "Br", "Kr",
-    "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",
-    "In", "Sn", "Sb", "Te", "I", "Xe",
-    "Cs", "Ba", "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy",
-    "Ho", "Er", "Tm", "Yb", "Lu",
-    "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg",
-    "Tl", "Pb", "Bi", "Po", "At", "Rn",
-    "Fr", "Ra", "Ac", "Th", "Pa", "U", "Np", "Pu",
+    "H",
+    "He",
+    "Li",
+    "Be",
+    "B",
+    "C",
+    "N",
+    "O",
+    "F",
+    "Ne",
+    "Na",
+    "Mg",
+    "Al",
+    "Si",
+    "P",
+    "S",
+    "Cl",
+    "Ar",
+    "K",
+    "Ca",
+    "Sc",
+    "Ti",
+    "V",
+    "Cr",
+    "Mn",
+    "Fe",
+    "Co",
+    "Ni",
+    "Cu",
+    "Zn",
+    "Ga",
+    "Ge",
+    "As",
+    "Se",
+    "Br",
+    "Kr",
+    "Rb",
+    "Sr",
+    "Y",
+    "Zr",
+    "Nb",
+    "Mo",
+    "Tc",
+    "Ru",
+    "Rh",
+    "Pd",
+    "Ag",
+    "Cd",
+    "In",
+    "Sn",
+    "Sb",
+    "Te",
+    "I",
+    "Xe",
+    "Cs",
+    "Ba",
+    "La",
+    "Ce",
+    "Pr",
+    "Nd",
+    "Pm",
+    "Sm",
+    "Eu",
+    "Gd",
+    "Tb",
+    "Dy",
+    "Ho",
+    "Er",
+    "Tm",
+    "Yb",
+    "Lu",
+    "Hf",
+    "Ta",
+    "W",
+    "Re",
+    "Os",
+    "Ir",
+    "Pt",
+    "Au",
+    "Hg",
+    "Tl",
+    "Pb",
+    "Bi",
+    "Po",
+    "At",
+    "Rn",
+    "Fr",
+    "Ra",
+    "Ac",
+    "Th",
+    "Pa",
+    "U",
+    "Np",
+    "Pu",
 }
 
 # POTCAR library types available in common VASP distributions
@@ -69,6 +153,27 @@ POTCAR_TYPES = [
     ("LDA", "potpaw_LDA"),
     ("LDA.52", "potpaw_LDA.52"),
 ]
+
+SAFE_JOB_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def parse_band_line_density(raw_value: str) -> int:
+    """Parse a positive band-path line density from user input."""
+    value = int(raw_value.strip() or "20")
+    if value < 1:
+        raise ValueError("Band-path line density must be a positive integer")
+    return value
+
+
+def validate_vasp_job_name(job_name: str) -> Optional[str]:
+    """Validate a VASP job name before it is used in work-directory paths."""
+    if not job_name:
+        return "❌ Job name is required"
+    if "/" in job_name or "\\" in job_name or ".." in job_name:
+        return "❌ Job name cannot contain path separators or '..'"
+    if not SAFE_JOB_NAME_RE.fullmatch(job_name):
+        return "❌ Job name can only contain letters, numbers, hyphens, and underscores"
+    return None
 
 
 def parse_elements_from_poscar(poscar_content: str) -> Tuple[List[str], str]:
@@ -87,7 +192,7 @@ def parse_elements_from_poscar(poscar_content: str) -> Tuple[List[str], str]:
     Returns:
         Tuple of (list of element symbols, error message or empty string).
     """
-    lines = poscar_content.strip().split('\n')
+    lines = poscar_content.strip().split("\n")
 
     if len(lines) < 7:
         return [], "POSCAR too short - needs at least 7 lines"
@@ -99,7 +204,10 @@ def parse_elements_from_poscar(poscar_content: str) -> Tuple[List[str], str]:
     try:
         # If all tokens are numbers, this is VASP 4 format (no element line)
         [int(x) for x in line6]
-        return [], "POSCAR uses VASP 4 format - element symbols not found. Add element symbols on line 6."
+        return (
+            [],
+            "POSCAR uses VASP 4 format - element symbols not found. Add element symbols on line 6.",
+        )
     except ValueError:
         # Line 6 contains element symbols (VASP 5+ format)
         elements = []
@@ -126,7 +234,7 @@ class VASPFilesReady(Message):
         kpoints: str,
         potcar_elements: List[str],
         potcar_type: str,
-        job_name: str
+        job_name: str,
     ):
         self.poscar = poscar
         self.incar = incar
@@ -150,9 +258,11 @@ class POSCARValidator(Validator):
         if not value.strip():
             return self.failure("POSCAR cannot be empty")
 
-        lines = value.strip().split('\n')
+        lines = value.strip().split("\n")
         if len(lines) < 8:
-            return self.failure("POSCAR needs at least 8 lines (comment, scale, lattice, elements, counts, coord type, coords)")
+            return self.failure(
+                "POSCAR needs at least 8 lines (comment, scale, lattice, elements, counts, coord type, coords)"
+            )
 
         # Check if line 2 is a number (scaling factor)
         try:
@@ -171,14 +281,14 @@ class INCARValidator(Validator):
         if not value.strip():
             return self.failure("INCAR cannot be empty")
 
-        lines = value.strip().split('\n')
+        lines = value.strip().split("\n")
         valid_params = False
 
         for line in lines:
             line = line.strip()
-            if not line or line.startswith('#'):
+            if not line or line.startswith("#"):
                 continue
-            if '=' in line:
+            if "=" in line:
                 valid_params = True
                 break
 
@@ -196,9 +306,11 @@ class KPOINTSValidator(Validator):
         if not value.strip():
             return self.failure("KPOINTS cannot be empty")
 
-        lines = value.strip().split('\n')
+        lines = value.strip().split("\n")
         if len(lines) < 4:
-            return self.failure("KPOINTS needs at least 4 lines (comment, mesh points, mesh type, k-points)")
+            return self.failure(
+                "KPOINTS needs at least 4 lines (comment, mesh points, mesh type, k-points)"
+            )
 
         return self.success()
 
@@ -298,6 +410,7 @@ class VASPInputManagerScreen(ModalScreen):
         db: Database,
         calculations_dir: Path,
         initial_poscar: Optional[str] = None,
+        core_client: CrystalCoreClient | None = None,
     ):
         """
         Initialize VASP input manager screen.
@@ -306,11 +419,13 @@ class VASPInputManagerScreen(ModalScreen):
             db: Database instance
             calculations_dir: Directory for calculation files
             initial_poscar: Optional initial POSCAR content
+            core_client: Shared CrystalMath core client for optional integrations
         """
         super().__init__()
         self.db = db
         self.calculations_dir = calculations_dir
         self.initial_poscar = initial_poscar or ""
+        self.core_client = core_client
 
         # File contents
         self._poscar_content = ""
@@ -324,10 +439,7 @@ class VASPInputManagerScreen(ModalScreen):
         with Container(id="modal_container"):
             yield Static("VASP Input File Manager", id="modal_title")
 
-            yield Static(
-                "📝 Upload or paste all 4 required VASP input files",
-                classes="file_info"
-            )
+            yield Static("📝 Upload or paste all 4 required VASP input files", classes="file_info")
 
             with TabbedContent(id="file_tabs"):
                 # POSCAR tab
@@ -356,6 +468,8 @@ class VASPInputManagerScreen(ModalScreen):
                         id="kpoints_textarea",
                         language="text",
                     )
+                    yield Label("Band-path line density:", classes="field_label")
+                    yield Input(value="20", id="band_density_input")
 
                 # POTCAR tab
                 with TabPane("POTCAR", id="tab_potcar"):
@@ -363,10 +477,12 @@ class VASPInputManagerScreen(ModalScreen):
                     yield Static(
                         "⚠️ Enter POSCAR first to detect elements",
                         id="detected_elements",
-                        classes="file_info"
+                        classes="file_info",
                     )
                     with Horizontal(id="potcar_actions"):
-                        yield Button("Refresh Elements", id="refresh_elements_btn", variant="default")
+                        yield Button(
+                            "Refresh Elements", id="refresh_elements_btn", variant="default"
+                        )
 
                     yield Label("POTCAR Library Type:", classes="field_label")
                     yield Select(
@@ -377,13 +493,9 @@ class VASPInputManagerScreen(ModalScreen):
 
                     yield Static(
                         "POTCARs will be concatenated in element order from VASP_PP_PATH on cluster",
-                        classes="file_info"
+                        classes="file_info",
                     )
-                    yield Static(
-                        "",
-                        id="potcar_preview",
-                        classes="file_info"
-                    )
+                    yield Static("", id="potcar_preview", classes="file_info")
 
             # Job name input
             yield Label("Job Name:", classes="field_label")
@@ -392,6 +504,8 @@ class VASPInputManagerScreen(ModalScreen):
             # Actions
             with Horizontal(id="actions"):
                 yield Button("Validate", id="validate_btn", variant="default")
+                yield Button("Normalize POSCAR", id="standardize_poscar_btn", variant="default")
+                yield Button("Band KPOINTS", id="generate_band_kpoints_btn", variant="primary")
                 yield Button("Create Job", id="create_job_btn", variant="success")
                 yield Button("Cancel", id="cancel_btn")
 
@@ -507,25 +621,103 @@ Gamma
         poscar_validator = POSCARValidator()
         poscar_result = poscar_validator.validate(poscar)
         if not poscar_result.is_valid:
-            status.update(f"❌ POSCAR invalid: {poscar_result.failure_descriptions[0] if poscar_result.failure_descriptions else 'Unknown error'}")
+            status.update(
+                f"❌ POSCAR invalid: {poscar_result.failure_descriptions[0] if poscar_result.failure_descriptions else 'Unknown error'}"
+            )
             return
 
         # Validate INCAR
         incar_validator = INCARValidator()
         incar_result = incar_validator.validate(incar)
         if not incar_result.is_valid:
-            status.update(f"❌ INCAR invalid: {incar_result.failure_descriptions[0] if incar_result.failure_descriptions else 'Unknown error'}")
+            status.update(
+                f"❌ INCAR invalid: {incar_result.failure_descriptions[0] if incar_result.failure_descriptions else 'Unknown error'}"
+            )
             return
 
         # Validate KPOINTS
         kpoints_validator = KPOINTSValidator()
         kpoints_result = kpoints_validator.validate(kpoints)
         if not kpoints_result.is_valid:
-            status.update(f"❌ KPOINTS invalid: {kpoints_result.failure_descriptions[0] if kpoints_result.failure_descriptions else 'Unknown error'}")
+            status.update(
+                f"❌ KPOINTS invalid: {kpoints_result.failure_descriptions[0] if kpoints_result.failure_descriptions else 'Unknown error'}"
+            )
             return
 
         # All valid
         status.update("✅ All VASP input files validated successfully!")
+
+    @on(Button.Pressed, "#standardize_poscar_btn")
+    async def _standardize_poscar(self, event: Button.Pressed) -> None:
+        """Normalize the POSCAR using the shared core integration layer."""
+        status = self.query_one("#status_message", Static)
+        poscar_textarea = self.query_one("#poscar_textarea", TextArea)
+        poscar_content = poscar_textarea.text.strip()
+
+        if not poscar_content:
+            status.update("❌ POSCAR is required before normalization")
+            return
+
+        if self.core_client is None:
+            status.update("❌ CrystalMath core integration is not available in this screen")
+            return
+
+        status.update("⏳ Normalizing POSCAR...")
+        try:
+            result = await asyncio.to_thread(
+                self.core_client.standardize_structure,
+                "poscar",
+                poscar_content,
+                conventional=False,
+                backend="auto",
+            )
+            poscar_textarea.load_text(str(result["poscar"]))
+            self._update_detected_elements()
+            source = str(result.get("backend_used", "auto"))
+            formula = str(result.get("reduced_formula", result.get("formula", "structure")))
+            status.update(f"✅ POSCAR normalized ({formula}) via {source}")
+        except Exception as exc:
+            status.update(f"❌ POSCAR normalization failed: {exc}")
+
+    @on(Button.Pressed, "#generate_band_kpoints_btn")
+    async def _generate_band_kpoints(self, event: Button.Pressed) -> None:
+        """Generate line-mode KPOINTS for band-structure calculations."""
+        status = self.query_one("#status_message", Static)
+        poscar_content = self.query_one("#poscar_textarea", TextArea).text.strip()
+        kpoints_textarea = self.query_one("#kpoints_textarea", TextArea)
+        density_input = self.query_one("#band_density_input", Input)
+
+        if not poscar_content:
+            status.update("❌ POSCAR is required before generating band KPOINTS")
+            return
+
+        if self.core_client is None:
+            status.update("❌ CrystalMath core integration is not available in this screen")
+            return
+
+        try:
+            line_density = parse_band_line_density(density_input.value)
+        except ValueError:
+            status.update("❌ Band-path line density must be a positive integer")
+            return
+
+        status.update("⏳ Generating band KPOINTS...")
+        try:
+            result = await asyncio.to_thread(
+                self.core_client.generate_vasp_band_path,
+                poscar_content,
+                line_density=line_density,
+                prefer_vaspkit=True,
+            )
+            kpoints_textarea.load_text(str(result["kpoints"]))
+            source = str(result.get("source", "unknown"))
+            dimensionality = result.get("dimensionality")
+            status.update(
+                f"✅ Band KPOINTS generated via {source} "
+                f"(dimensionality={dimensionality}, density={line_density})"
+            )
+        except Exception as exc:
+            status.update(f"❌ Band KPOINTS generation failed: {exc}")
 
     @on(Button.Pressed, "#create_job_btn")
     async def _create_job(self, event: Button.Pressed) -> None:
@@ -536,8 +728,9 @@ Gamma
         job_name_input = self.query_one("#job_name_input", Input)
         job_name = job_name_input.value.strip()
 
-        if not job_name:
-            status.update("❌ Job name is required")
+        job_name_error = validate_vasp_job_name(job_name)
+        if job_name_error:
+            status.update(job_name_error)
             return
 
         # Get file contents
@@ -555,7 +748,11 @@ Gamma
         for validator, content, name in validators:
             result = validator.validate(content)
             if not result.is_valid:
-                error_msg = result.failure_descriptions[0] if result.failure_descriptions else "Unknown error"
+                error_msg = (
+                    result.failure_descriptions[0]
+                    if result.failure_descriptions
+                    else "Unknown error"
+                )
                 status.update(f"❌ {name} invalid: {error_msg}")
                 return
 
@@ -565,18 +762,22 @@ Gamma
 
         # Validate elements were detected
         if not self._potcar_elements:
-            status.update("❌ Could not detect elements from POSCAR. Check format (VASP 5+ required).")
+            status.update(
+                "❌ Could not detect elements from POSCAR. Check format (VASP 5+ required)."
+            )
             return
 
         # Post message with files (POTCAR will be retrieved from cluster)
-        self.post_message(VASPFilesReady(
-            poscar=poscar,
-            incar=incar,
-            kpoints=kpoints,
-            potcar_elements=self._potcar_elements,
-            potcar_type=self._potcar_type,
-            job_name=job_name
-        ))
+        self.post_message(
+            VASPFilesReady(
+                poscar=poscar,
+                incar=incar,
+                kpoints=kpoints,
+                potcar_elements=self._potcar_elements,
+                potcar_type=self._potcar_type,
+                job_name=job_name,
+            )
+        )
 
         elem_list = ", ".join(self._potcar_elements)
         status.update(f"✅ VASP job '{job_name}' created! POTCARs: {elem_list}")

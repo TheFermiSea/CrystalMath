@@ -10,7 +10,17 @@ from typing import Optional
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.containers import Container, Vertical, Horizontal, ScrollableContainer
-from textual.widgets import Input, TextArea, Button, Static, Label, Select, RadioSet, RadioButton, Checkbox
+from textual.widgets import (
+    Input,
+    TextArea,
+    Button,
+    Static,
+    Label,
+    Select,
+    RadioSet,
+    RadioButton,
+    Checkbox,
+)
 from textual.message import Message
 from textual.binding import Binding
 
@@ -221,7 +231,7 @@ class NewJobScreen(ModalScreen):
         calculations_dir: Path,
         core_client: CrystalCoreClient | None = None,
         name: Optional[str] = None,
-        id: Optional[str] = None
+        id: Optional[str] = None,
     ):
         super().__init__(name=name, id=id)
         self.database = database
@@ -249,14 +259,17 @@ class NewJobScreen(ModalScreen):
                         ],
                         value="crystal",
                         id="dft_code_select",
-                        classes="field_input"
+                        classes="field_input",
                     )
 
-                    yield Label("Job Name (letters, numbers, hyphens, underscores only):", classes="field_label")
+                    yield Label(
+                        "Job Name (letters, numbers, hyphens, underscores only):",
+                        classes="field_label",
+                    )
                     yield Input(
                         placeholder="e.g., mgo_bulk_optimization",
                         id="job_name_input",
-                        classes="field_input"
+                        classes="field_input",
                     )
 
                 # Section 2: Input File
@@ -264,13 +277,13 @@ class NewJobScreen(ModalScreen):
                     yield Label("Input File", classes="section_title", id="input_section_title")
                     yield Static(
                         "Paste your input content below or use 'Browse Files' to load from disk",
-                        id="info_message"
+                        id="info_message",
                     )
                     yield TextArea(
                         id="input_textarea",
                         language="text",
                         theme="monokai",
-                        show_line_numbers=True
+                        show_line_numbers=True,
                     )
                     with Horizontal(id="input_buttons"):
                         yield Button("Browse Files...", variant="default", id="browse_button")
@@ -282,12 +295,14 @@ class NewJobScreen(ModalScreen):
                     with Vertical(id="aux_files_container"):
                         # .gui file
                         with Horizontal(classes="aux_file_row"):
-                            yield Checkbox("Use .gui file", id="gui_checkbox", classes="aux_checkbox")
+                            yield Checkbox(
+                                "Use .gui file", id="gui_checkbox", classes="aux_checkbox"
+                            )
                             yield Input(
                                 placeholder="Path to .gui file (EXTERNAL geometry)",
                                 id="gui_file_input",
                                 classes="aux_file_input",
-                                disabled=True
+                                disabled=True,
                             )
                         # .f9 file
                         with Horizontal(classes="aux_file_row"):
@@ -296,16 +311,18 @@ class NewJobScreen(ModalScreen):
                                 placeholder="Path to .f9 file (wave function guess)",
                                 id="f9_file_input",
                                 classes="aux_file_input",
-                                disabled=True
+                                disabled=True,
                             )
                         # .hessopt file
                         with Horizontal(classes="aux_file_row"):
-                            yield Checkbox("Use .hessopt file", id="hessopt_checkbox", classes="aux_checkbox")
+                            yield Checkbox(
+                                "Use .hessopt file", id="hessopt_checkbox", classes="aux_checkbox"
+                            )
                             yield Input(
                                 placeholder="Path to .hessopt file (Hessian restart)",
                                 id="hessopt_file_input",
                                 classes="aux_file_input",
-                                disabled=True
+                                disabled=True,
                             )
 
                 # Section 4: Runner & Parallelism Settings
@@ -322,12 +339,16 @@ class NewJobScreen(ModalScreen):
                         ],
                         value="local",
                         id="runner_type_select",
-                        classes="field_input"
+                        classes="field_input",
                     )
 
                     with Vertical(id="parallelism_container"):
                         with RadioSet(id="parallel_mode"):
-                            yield RadioButton("Serial (single process, OpenMP only)", id="serial_radio", value=True)
+                            yield RadioButton(
+                                "Serial (single process, OpenMP only)",
+                                id="serial_radio",
+                                value=True,
+                            )
                             yield RadioButton("Parallel (MPI + OpenMP hybrid)", id="parallel_radio")
 
                         yield Label("MPI Ranks (if parallel):", classes="field_label")
@@ -335,15 +356,14 @@ class NewJobScreen(ModalScreen):
                             placeholder="e.g., 4, 8, 16",
                             id="mpi_ranks_input",
                             disabled=True,
-                            value="1"
+                            value="1",
                         )
 
                 # Section 5: Scheduler Resources (for SLURM/HPC)
                 with Vertical(classes="form_section", id="scheduler_section"):
                     yield Label("Scheduler Resources (SLURM)", classes="section_title")
                     yield Static(
-                        "Configure resources for HPC cluster submission",
-                        classes="field_label"
+                        "Configure resources for HPC cluster submission", classes="field_label"
                     )
 
                     # Row 1: Walltime and Memory
@@ -351,41 +371,25 @@ class NewJobScreen(ModalScreen):
                         with Vertical(classes="scheduler_field"):
                             yield Label("Walltime (HH:MM:SS):", classes="field_label")
                             yield Input(
-                                placeholder="24:00:00",
-                                id="walltime_input",
-                                value="24:00:00"
+                                placeholder="24:00:00", id="walltime_input", value="24:00:00"
                             )
                         with Vertical(classes="scheduler_field"):
                             yield Label("Memory per Node (GB):", classes="field_label")
-                            yield Input(
-                                placeholder="e.g., 32",
-                                id="memory_input",
-                                value="32"
-                            )
+                            yield Input(placeholder="e.g., 32", id="memory_input", value="32")
 
                     # Row 2: CPUs and Nodes
                     with Horizontal(classes="scheduler_row"):
                         with Vertical(classes="scheduler_field"):
                             yield Label("CPUs per Task:", classes="field_label")
-                            yield Input(
-                                placeholder="e.g., 4",
-                                id="cpus_per_task_input",
-                                value="4"
-                            )
+                            yield Input(placeholder="e.g., 4", id="cpus_per_task_input", value="4")
                         with Vertical(classes="scheduler_field"):
                             yield Label("Number of Nodes:", classes="field_label")
-                            yield Input(
-                                placeholder="e.g., 1",
-                                id="num_nodes_input",
-                                value="1"
-                            )
+                            yield Input(placeholder="e.g., 1", id="num_nodes_input", value="1")
 
                     # Row 3: Partition
                     yield Label("Partition/Queue:", classes="field_label")
                     yield Input(
-                        placeholder="e.g., standard, compute, gpu",
-                        id="partition_input",
-                        value=""
+                        placeholder="e.g., standard, compute, gpu", id="partition_input", value=""
                     )
 
                 # Section 6: Working Directory
@@ -393,13 +397,9 @@ class NewJobScreen(ModalScreen):
                     yield Label("Working Directory", classes="section_title")
                     yield Static(
                         "Will be auto-generated as: calculations/XXXX_jobname",
-                        classes="field_label"
+                        classes="field_label",
                     )
-                    yield Input(
-                        id="work_dir_input",
-                        classes="field_input",
-                        disabled=True
-                    )
+                    yield Input(id="work_dir_input", classes="field_input", disabled=True)
 
             # Error message (hidden by default)
             yield Static("", id="error_message")
@@ -479,8 +479,14 @@ class NewJobScreen(ModalScreen):
         # DFT code display names and file extensions
         code_info = {
             "crystal": ("CRYSTAL23 Input File (.d12)", "Paste your .d12 input content below"),
-            "quantum_espresso": ("Quantum Espresso Input File (.in)", "Paste your .in input content below"),
-            "vasp": ("VASP Input Files", "VASP uses POSCAR/INCAR/KPOINTS/POTCAR - click Create to open multi-file manager"),
+            "quantum_espresso": (
+                "Quantum Espresso Input File (.in)",
+                "Paste your .in input content below",
+            ),
+            "vasp": (
+                "VASP Input Files",
+                "VASP uses POSCAR/INCAR/KPOINTS/POTCAR - click Create to open multi-file manager",
+            ),
         }
 
         display_name, hint = code_info.get(dft_code, ("Input File", "Paste input content below"))
@@ -489,10 +495,10 @@ class NewJobScreen(ModalScreen):
 
         # Show auxiliary files section only for CRYSTAL23
         # (VASP has its own multi-file manager, QE uses single file)
-        aux_files_section.display = (dft_code == "crystal")
+        aux_files_section.display = dft_code == "crystal"
 
         # Import from MP only makes sense for CRYSTAL23 (generates .d12)
-        import_mp_button.display = (dft_code == "crystal")
+        import_mp_button.display = dft_code == "crystal"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press events."""
@@ -598,7 +604,7 @@ class NewJobScreen(ModalScreen):
                 gui_file_input.focus()
                 return
             if gui_path:
-                aux_files['gui'] = gui_path
+                aux_files["gui"] = gui_path
 
         if f9_checkbox.value:
             f9_path = f9_file_input.value.strip()
@@ -607,7 +613,7 @@ class NewJobScreen(ModalScreen):
                 f9_file_input.focus()
                 return
             if f9_path:
-                aux_files['f9'] = f9_path
+                aux_files["f9"] = f9_path
 
         if hessopt_checkbox.value:
             hessopt_path = hessopt_file_input.value.strip()
@@ -616,7 +622,7 @@ class NewJobScreen(ModalScreen):
                 hessopt_file_input.focus()
                 return
             if hessopt_path:
-                aux_files['hessopt'] = hessopt_path
+                aux_files["hessopt"] = hessopt_path
 
         mpi_ranks = 1
         if parallel_mode.pressed_index == 1:
@@ -827,7 +833,7 @@ class NewJobScreen(ModalScreen):
         Perform basic validation on CRYSTAL input content.
         Returns error message if invalid, None if valid.
         """
-        lines = content.strip().split('\n')
+        lines = content.strip().split("\n")
 
         if len(lines) < 5:
             return "Input file too short - must contain at least title, geometry, and basis set"
@@ -836,15 +842,18 @@ class NewJobScreen(ModalScreen):
         content_upper = content.upper()
 
         # Must have either CRYSTAL, SLAB, POLYMER, or MOLECULE keyword
-        if not any(keyword in content_upper for keyword in ['CRYSTAL', 'SLAB', 'POLYMER', 'MOLECULE', 'EXTERNAL']):
+        if not any(
+            keyword in content_upper
+            for keyword in ["CRYSTAL", "SLAB", "POLYMER", "MOLECULE", "EXTERNAL"]
+        ):
             return "Input must contain geometry type keyword (CRYSTAL, SLAB, POLYMER, or MOLECULE)"
 
         # Must have END keyword
-        if 'END' not in content_upper:
+        if "END" not in content_upper:
             return "Input must contain END keyword"
 
         # Count END keywords - should have at least 2 (geometry + basis set)
-        end_count = content_upper.count('END')
+        end_count = content_upper.count("END")
         if end_count < 2:
             return "Input must contain at least 2 END keywords (geometry and basis set sections)"
 
@@ -872,7 +881,7 @@ class NewJobScreen(ModalScreen):
         Returns error message if invalid, None if valid.
         """
         # Stub validation - minimal checks
-        lines = content.strip().split('\n')
+        lines = content.strip().split("\n")
         if len(lines) < 5:
             return "POSCAR file too short - needs at least comment, scale, lattice vectors"
 
@@ -891,7 +900,8 @@ class NewJobScreen(ModalScreen):
             VASPInputManagerScreen(
                 db=self.database,
                 calculations_dir=self.calculations_dir,
-                initial_poscar=initial_poscar
+                initial_poscar=initial_poscar,
+                core_client=self.core_client,
             )
         )
 

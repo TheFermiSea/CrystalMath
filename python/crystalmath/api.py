@@ -14,15 +14,12 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from crystalmath.models import (
-    DftCode,
     JobDetails,
-    JobState,
     JobStatus,
     JobSubmission,
-    RunnerType,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,23 +58,27 @@ JSONRPC_INTERNAL_ERROR = -32603
 
 def _jsonrpc_error(code: int, message: str, data: Any = None, request_id: Any = None) -> str:
     """Create a JSON-RPC 2.0 error response."""
-    error_obj: Dict[str, Any] = {"code": code, "message": message}
+    error_obj: dict[str, Any] = {"code": code, "message": message}
     if data is not None:
         error_obj["data"] = data
-    return json.dumps({
-        "jsonrpc": "2.0",
-        "error": error_obj,
-        "id": request_id,
-    })
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "error": error_obj,
+            "id": request_id,
+        }
+    )
 
 
 def _jsonrpc_result(result: Any, request_id: Any) -> str:
     """Create a JSON-RPC 2.0 success response."""
-    return json.dumps({
-        "jsonrpc": "2.0",
-        "result": result,
-        "id": request_id,
-    })
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "result": result,
+            "id": request_id,
+        }
+    )
 
 
 class CrystalController:
@@ -98,7 +99,8 @@ class CrystalController:
         self,
         profile_name: str = "default",
         use_aiida: bool = True,
-        db_path: Optional[str] = None,
+        db_path: str | None = None,
+        backend_preference: str = "auto",
     ) -> None:
         """
         Initialize the controller.
@@ -107,18 +109,21 @@ class CrystalController:
             profile_name: AiiDA profile to load (ignored if use_aiida=False)
             use_aiida: If False, use SQLite fallback instead of AiiDA
             db_path: Path to SQLite database (for fallback mode)
+            backend_preference: Backend selection strategy ("auto", "sqlite", "aiida", "demo")
         """
         from crystalmath.backends import create_backend
 
         self._use_aiida = use_aiida
         self._profile_name = profile_name
         self._db_path = db_path
+        self._backend_preference = backend_preference
 
         # Create backend using factory function
         self._backend = create_backend(
             use_aiida=use_aiida,
             db_path=db_path,
             profile_name=profile_name,
+            backend_preference=backend_preference,
         )
 
         # Backward compatibility flags
@@ -133,7 +138,7 @@ class CrystalController:
         # JSON-RPC method registry: method_name -> (handler_callable, param_names)
         # This enables the thin IPC pattern where Rust sends generic JSON-RPC
         # requests rather than specific enum variants
-        self._rpc_registry: Dict[str, tuple] = self._build_rpc_registry()
+        self._rpc_registry: dict[str, tuple] = self._build_rpc_registry()
 
     def _init_aiida(self, profile_name: str) -> bool:
         """
@@ -170,7 +175,7 @@ class CrystalController:
             logger.warning(f"Failed to load SQLite database: {e}")
             self._db = None
 
-    def _build_rpc_registry(self) -> Dict[str, tuple]:
+    def _build_rpc_registry(self) -> dict[str, tuple]:
         """Build the JSON-RPC method registry.
 
         Maps method names to (handler, param_names) tuples. Only methods
@@ -188,7 +193,7 @@ class CrystalController:
             "submit_job": (self.submit_job_json, ["json_payload"]),
             "cancel_job": (self.cancel_job, ["pk"]),
             "fetch_job_log": (self.get_job_log_json, ["pk", "tail_lines"]),
-
+            "capabilities.get": (self.get_capabilities_json, []),
             # Cluster operations
             "fetch_clusters": (self.get_clusters_json, []),
             "fetch_cluster": (self.get_cluster_json, ["cluster_id"]),
@@ -196,22 +201,18 @@ class CrystalController:
             "update_cluster": (self.update_cluster_json, ["cluster_id", "json_payload"]),
             "delete_cluster": (self.delete_cluster, ["cluster_id"]),
             "test_cluster_connection": (self.test_cluster_connection_json, ["cluster_id"]),
-
             # SLURM operations
             "fetch_slurm_queue": (self.get_slurm_queue_json, ["cluster_id"]),
             "sync_remote_jobs": (self.sync_remote_jobs_json, []),
             "adopt_slurm_job": (self.adopt_slurm_job_json, ["cluster_id", "slurm_job_id"]),
             "cancel_slurm_job": (self.cancel_slurm_job_json, ["cluster_id", "slurm_job_id"]),
-
             # Materials operations
             "search_materials": (self.search_materials_json, ["formula", "limit"]),
             "fetch_material_details": (self.get_material_details_json, ["mp_id"]),
             "generate_d12": (self.generate_d12_json, ["mp_id", "config_json"]),
-
             # Template operations
             "list_templates": (self.list_templates_json, []),
             "render_template": (self.render_template_json, ["template_name", "params_json"]),
-
             # Workflow operations
             "check_workflows_available": (self.check_workflows_available_json, []),
             "create_convergence_study": (self.create_convergence_study_json, ["config_json"]),
@@ -234,7 +235,6 @@ class CrystalController:
                 ["workflow_json", "cell_json", "positions_json", "symbols_json"],
             ),
             "fit_eos": (self.fit_eos_json, ["workflow_json"]),
-
             # AiiDA operations
             "fetch_aiida_workflows": (self.get_aiida_workflows_json, []),
             "launch_aiida_geopt": (self.launch_aiida_geopt_json, ["config_json"]),
@@ -244,7 +244,6 @@ class CrystalController:
                 ["workflow_pk"],
             ),
             "extract_restart_geometry": (self.extract_restart_geometry_json, ["job_pk"]),
-
             # AI assistant operations
             "check_ai_available": (self.check_ai_available_json, []),
             "ask_assistant": (self.ask_assistant_json, ["message", "context_json"]),
@@ -261,8 +260,16 @@ class CrystalController:
             "vasp.generate_inputs": (self.generate_vasp_inputs_json, ["config_json"]),
             "vasp.generate_from_mp": (self.generate_vasp_from_mp_json, ["mp_id", "config_json"]),
             "vasp.validate_inputs": (self.validate_vasp_inputs_json, ["inputs_json"]),
+            "vasp.generate_band_path": (
+                self.generate_vasp_band_path_json,
+                ["poscar_content", "line_density", "prefer_vaspkit"],
+            ),
             "structures.import_poscar": (self.import_poscar_json, ["poscar_content"]),
             "structures.preview": (self.preview_structure_json, ["source_type", "source_data"]),
+            "structures.standardize": (
+                self.standardize_structure_json,
+                ["source_type", "source_data", "conventional", "backend"],
+            ),
         }
 
     def dispatch(self, request_json: str) -> str:
@@ -370,6 +377,7 @@ class CrystalController:
         except Exception as e:
             # Log the full traceback for debugging
             import traceback
+
             tb = traceback.format_exc()
             logger.error(f"JSON-RPC dispatch error: {e}\n{tb}")
 
@@ -382,11 +390,11 @@ class CrystalController:
 
     # ========== Public API Methods (primary Python interface) ==========
 
-    def get_jobs(self, limit: int = 100) -> List[JobStatus]:
+    def get_jobs(self, limit: int = 100) -> list[JobStatus]:
         """Get list of jobs as native JobStatus objects."""
         return self._backend.get_jobs(limit)
 
-    def get_job_details(self, pk: int) -> Optional[JobDetails]:
+    def get_job_details(self, pk: int) -> JobDetails | None:
         """Get detailed job info as a JobDetails object (or None if not found)."""
         return self._backend.get_job_details(pk)
 
@@ -394,7 +402,7 @@ class CrystalController:
         """Submit a new job from a JobSubmission object."""
         return self._backend.submit_job(submission)
 
-    def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
+    def get_job_log(self, pk: int, tail_lines: int = 100) -> dict[str, list[str]]:
         """Get job stdout/stderr log as a dict with stdout/stderr arrays."""
         return self._backend.get_job_log(pk, tail_lines)
 
@@ -446,9 +454,24 @@ class CrystalController:
         logs = self.get_job_log(pk, tail_lines)
         return json.dumps(logs)
 
+    def get_capabilities(self) -> dict[str, Any]:
+        """Report optional integration and backend capabilities."""
+        from crystalmath.integrations.capabilities import get_runtime_capabilities
+
+        return get_runtime_capabilities(
+            profile_name=self._profile_name,
+            db_path=self._db_path,
+            selected_backend=self._backend.name,
+            backend_preference=self._backend_preference,
+        )
+
+    def get_capabilities_json(self) -> str:
+        """Report optional integration and backend capabilities as structured JSON."""
+        return _ok_response(self.get_capabilities())
+
     # ========== quacc Integration Methods ==========
 
-    def get_recipes_list(self) -> Dict[str, Any]:
+    def get_recipes_list(self) -> dict[str, Any]:
         """Get list of available quacc VASP recipes.
 
         Returns:
@@ -462,6 +485,7 @@ class CrystalController:
             # Get quacc version if available
             try:
                 import quacc
+
                 quacc_version = getattr(quacc, "__version__", "unknown")
             except ImportError:
                 quacc_version = None
@@ -484,7 +508,7 @@ class CrystalController:
                 "error": f"Error discovering recipes: {e}",
             }
 
-    def get_quacc_clusters_list(self) -> Dict[str, Any]:
+    def get_quacc_clusters_list(self) -> dict[str, Any]:
         """Get list of configured quacc clusters and workflow engine status.
 
         Returns:
@@ -500,7 +524,7 @@ class CrystalController:
                 "clusters": store.list_clusters(),
                 "workflow_engine": get_engine_status(),
             }
-        except ImportError as e:
+        except ImportError:
             return {
                 "clusters": [],
                 "workflow_engine": {
@@ -521,8 +545,8 @@ class CrystalController:
             }
 
     def get_quacc_jobs_list(
-        self, status: Optional[str] = None, limit: Optional[int] = None
-    ) -> Dict[str, Any]:
+        self, status: str | None = None, limit: int | None = None
+    ) -> dict[str, Any]:
         """Get list of quacc jobs with optional filtering.
 
         Args:
@@ -542,7 +566,7 @@ class CrystalController:
                 "jobs": [job.model_dump() for job in jobs],
                 "total": len(jobs),
             }
-        except ImportError as e:
+        except ImportError:
             return {
                 "jobs": [],
                 "total": 0,
@@ -701,11 +725,13 @@ class CrystalController:
                 except Exception as e:
                     errors.append({"file": "KPOINTS", "message": str(e)})
 
-            return _ok_response({
-                "valid": len(errors) == 0,
-                "errors": errors,
-                "warnings": warnings,
-            })
+            return _ok_response(
+                {
+                    "valid": len(errors) == 0,
+                    "errors": errors,
+                    "warnings": warnings,
+                }
+            )
 
         except json.JSONDecodeError as e:
             return _error_response("INVALID_JSON", f"Invalid inputs JSON: {e}")
@@ -714,6 +740,23 @@ class CrystalController:
         except Exception as e:
             logger.error(f"Validation failed: {e}")
             return _error_response("VALIDATION_ERROR", str(e))
+
+    def _load_structure_from_source(self, source_type: str, source_data: str) -> Any:
+        """Load a structure from supported source types."""
+        from pymatgen.core import Structure
+
+        if source_type == "poscar":
+            from pymatgen.io.vasp import Poscar
+
+            poscar = Poscar.from_str(source_data)
+            return poscar.structure
+        if source_type == "cif":
+            return Structure.from_str(source_data, fmt="cif")
+        if source_type == "mp_id":
+            from crystalmath.integrations.pymatgen_bridge import structure_from_mp
+
+            return structure_from_mp(source_data)
+        raise ValueError(f"Unknown source_type: {source_type}")
 
     def import_poscar_json(self, poscar_content: str) -> str:
         """Import POSCAR and return structure info.
@@ -725,10 +768,9 @@ class CrystalController:
             JSON with structure metadata (formula, natoms, lattice, species)
         """
         try:
-            from pymatgen.io.vasp import Poscar
+            from crystalmath.integrations.pymatgen_bridge import get_dimensionality
 
-            poscar = Poscar.from_str(poscar_content)
-            structure = poscar.structure
+            structure = self._load_structure_from_source("poscar", poscar_content)
 
             # Extract metadata
             lattice = structure.lattice
@@ -736,6 +778,7 @@ class CrystalController:
                 "formula": structure.formula,
                 "reduced_formula": structure.composition.reduced_formula,
                 "num_sites": structure.num_sites,
+                "dimensionality": int(get_dimensionality(structure)),
                 "volume": lattice.volume,
                 "lattice": {
                     "a": lattice.a,
@@ -756,6 +799,113 @@ class CrystalController:
             logger.error(f"POSCAR import failed: {e}")
             return _error_response("PARSE_ERROR", f"Invalid POSCAR: {e}")
 
+    def standardize_structure(
+        self,
+        source_type: str,
+        source_data: str,
+        conventional: bool = False,
+        backend: str = "auto",
+    ) -> dict[str, Any]:
+        """Standardize a structure and return both metadata and POSCAR output."""
+        from crystalmath.integrations.pymatgen_bridge import (
+            get_dimensionality,
+            get_symmetry_info,
+            structure_to_poscar,
+            validate_for_dft,
+        )
+        from crystalmath.integrations.pymatgen_bridge import (
+            standardize_structure as standardize_structure_impl,
+        )
+
+        structure = self._load_structure_from_source(source_type, source_data)
+        standardized, backend_used = standardize_structure_impl(
+            structure,
+            conventional=conventional,
+            backend=backend,
+        )
+        is_valid, issues = validate_for_dft(standardized)
+
+        try:
+            symmetry = get_symmetry_info(standardized).to_dict()
+        except Exception:
+            symmetry = None
+
+        return {
+            "backend_used": backend_used,
+            "conventional": conventional,
+            "valid": is_valid,
+            "issues": issues,
+            "formula": standardized.formula,
+            "reduced_formula": standardized.composition.reduced_formula,
+            "num_sites": standardized.num_sites,
+            "dimensionality": int(get_dimensionality(standardized)),
+            "symmetry": symmetry,
+            "poscar": structure_to_poscar(
+                standardized,
+                comment=f"{standardized.composition.reduced_formula} - Standardized by CrystalMath",
+            ),
+        }
+
+    def standardize_structure_json(
+        self,
+        source_type: str,
+        source_data: str,
+        conventional: bool = False,
+        backend: str = "auto",
+    ) -> str:
+        """Standardize a structure from supported sources and return a POSCAR payload."""
+        try:
+            data = self.standardize_structure(
+                source_type,
+                source_data,
+                conventional=conventional,
+                backend=backend,
+            )
+            return _ok_response(data)
+        except ImportError as e:
+            return _error_response("IMPORT_ERROR", f"Dependencies not available: {e}")
+        except Exception as e:
+            logger.error("Structure standardization failed: %s", e)
+            return _error_response("STANDARDIZATION_ERROR", str(e))
+
+    def generate_vasp_band_path(
+        self,
+        poscar_content: str,
+        line_density: int = 20,
+        prefer_vaspkit: bool = True,
+    ) -> dict[str, Any]:
+        """Generate a line-mode VASP KPOINTS file for band-structure calculations."""
+        from crystalmath.integrations.vaspkit import generate_band_path_from_structure
+
+        structure = self._load_structure_from_source("poscar", poscar_content)
+        result = generate_band_path_from_structure(
+            structure,
+            line_density=line_density,
+            prefer_vaspkit=prefer_vaspkit,
+        )
+        return result
+
+    def generate_vasp_band_path_json(
+        self,
+        poscar_content: str,
+        line_density: int = 20,
+        prefer_vaspkit: bool = True,
+    ) -> str:
+        """Generate a line-mode VASP KPOINTS file for band-structure calculations."""
+        try:
+            return _ok_response(
+                self.generate_vasp_band_path(
+                    poscar_content=poscar_content,
+                    line_density=line_density,
+                    prefer_vaspkit=prefer_vaspkit,
+                )
+            )
+        except ImportError as e:
+            return _error_response("IMPORT_ERROR", f"Dependencies not available: {e}")
+        except Exception as e:
+            logger.error("Band-path generation failed: %s", e)
+            return _error_response("KPATH_GENERATION_ERROR", str(e))
+
     def preview_structure_json(self, source_type: str, source_data: str) -> str:
         """Preview structure from various sources.
 
@@ -767,24 +917,10 @@ class CrystalController:
             JSON with structure preview (formula, lattice, atoms, symmetry)
         """
         try:
-            from pymatgen.core import Structure
+            from crystalmath.integrations.pymatgen_bridge import get_dimensionality
 
             # Load structure based on source type
-            if source_type == "poscar":
-                from pymatgen.io.vasp import Poscar
-
-                poscar = Poscar.from_str(source_data)
-                structure = poscar.structure
-            elif source_type == "cif":
-                structure = Structure.from_str(source_data, fmt="cif")
-            elif source_type == "mp_id":
-                from crystalmath.integrations.pymatgen_bridge import structure_from_mp
-
-                structure = structure_from_mp(source_data)
-            else:
-                return _error_response(
-                    "VALIDATION_ERROR", f"Unknown source_type: {source_type}"
-                )
+            structure = self._load_structure_from_source(source_type, source_data)
 
             # Build preview data
             lattice = structure.lattice
@@ -792,6 +928,7 @@ class CrystalController:
                 "formula": structure.formula,
                 "reduced_formula": structure.composition.reduced_formula,
                 "num_sites": structure.num_sites,
+                "dimensionality": int(get_dimensionality(structure)),
                 "volume": round(lattice.volume, 3),
                 "density": round(structure.density, 3),
                 "lattice": {
@@ -803,10 +940,7 @@ class CrystalController:
                     "gamma": round(lattice.gamma, 2),
                 },
                 "species": list(dict.fromkeys(str(s) for s in structure.species)),
-                "composition": {
-                    str(el): int(amt)
-                    for el, amt in structure.composition.items()
-                },
+                "composition": {str(el): int(amt) for el, amt in structure.composition.items()},
             }
 
             # Try to get symmetry info
@@ -852,7 +986,7 @@ class CrystalController:
         """
         import asyncio
 
-        async def _run() -> List[Dict[str, Any]]:
+        async def _run() -> list[dict[str, Any]]:
             # Lazy import to avoid loading heavy dependencies on startup
             from src.core.materials_api.service import MaterialsService
             from src.core.materials_api.settings import MaterialsSettings
@@ -937,7 +1071,7 @@ class CrystalController:
         """
         import asyncio
 
-        async def _run() -> Dict[str, Any]:
+        async def _run() -> dict[str, Any]:
             from src.core.materials_api.service import MaterialsService
             from src.core.materials_api.settings import MaterialsSettings
 
@@ -989,8 +1123,8 @@ class CrystalController:
         """
         import asyncio
 
-        async def _run() -> List[Dict[str, Any]]:
-            from src.core.connection_manager import ConnectionManager, ConnectionConfig
+        async def _run() -> list[dict[str, Any]]:
+            from src.core.connection_manager import ConnectionManager
             from src.runners.slurm_runner import SLURMRunner
 
             # Get cluster config from database
@@ -1079,7 +1213,7 @@ class CrystalController:
 
         async def _run() -> None:
             from src.core.connection_manager import ConnectionManager
-            from src.runners.slurm_runner import SLURMRunner, SLURMJobState
+            from src.runners.slurm_runner import SLURMRunner
 
             if not hasattr(self, "_db") or not self._db:
                 logger.warning("Database not available - cannot sync remote jobs")
@@ -1105,7 +1239,7 @@ class CrystalController:
                 return
 
             # Group by cluster
-            jobs_by_cluster: Dict[int, List[Dict[str, Any]]] = {}
+            jobs_by_cluster: dict[int, list[dict[str, Any]]] = {}
             for job in active_jobs:
                 cid = job["cluster_id"]
                 if cid not in jobs_by_cluster:
@@ -1352,7 +1486,7 @@ class CrystalController:
         """
         import asyncio
 
-        async def _run() -> Dict[str, Any]:
+        async def _run() -> dict[str, Any]:
             from src.core.connection_manager import ConnectionManager
             from src.runners.slurm_runner import SLURMRunner
 
@@ -1444,7 +1578,7 @@ class CrystalController:
                 return _error_response("NO_DATABASE", "Database not available")
 
             clusters = self._db.get_all_clusters()
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
 
             for cluster in clusters:
                 # Parse connection_config if it's a string
@@ -1639,7 +1773,7 @@ class CrystalController:
         """
         import asyncio
 
-        async def _test() -> Dict[str, Any]:
+        async def _test() -> dict[str, Any]:
             from src.core.connection_manager import ConnectionManager
 
             if not hasattr(self, "_db") or not self._db:
@@ -1793,7 +1927,7 @@ class CrystalController:
             logger.error(f"Job error analysis failed for pk={pk}: {e}")
             return _error_response("AI_ERROR", str(e))
 
-    def _get_job_error_context(self, pk: int) -> Optional[Dict[str, Any]]:
+    def _get_job_error_context(self, pk: int) -> dict[str, Any] | None:
         """
         Fetch error context for a job from the database.
 
@@ -1814,7 +1948,7 @@ class CrystalController:
         else:
             return self._get_demo_job_error_context(pk)
 
-    def _get_aiida_job_error_context(self, pk: int) -> Optional[Dict[str, Any]]:
+    def _get_aiida_job_error_context(self, pk: int) -> dict[str, Any] | None:
         """Get error context from AiiDA."""
         from aiida import orm
         from aiida.common import NotExistent
@@ -1823,8 +1957,8 @@ class CrystalController:
             node = orm.load_node(pk)
 
             # Get stdout/stderr
-            stdout_lines: List[str] = []
-            stderr_lines: List[str] = []
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
 
             if "retrieved" in node.outputs:
                 try:
@@ -1869,7 +2003,7 @@ class CrystalController:
             logger.error(f"Error fetching AiiDA job context for pk={pk}: {e}")
             return None
 
-    def _get_sqlite_job_error_context(self, pk: int) -> Optional[Dict[str, Any]]:
+    def _get_sqlite_job_error_context(self, pk: int) -> dict[str, Any] | None:
         """Get error context from SQLite database."""
         try:
             job = self._db.get_job(pk)
@@ -1926,7 +2060,7 @@ class CrystalController:
             logger.error(f"Error fetching SQLite job context for pk={pk}: {e}")
             return None
 
-    def _get_demo_job_error_context(self, pk: int) -> Optional[Dict[str, Any]]:
+    def _get_demo_job_error_context(self, pk: int) -> dict[str, Any] | None:
         """Get error context for demo jobs."""
         for job in self._backend.get_jobs():
             if job.pk == pk:
@@ -2132,13 +2266,15 @@ class CrystalController:
                         "aiida_available": bool, "quacc_available": bool}}
         """
         try:
+            capabilities = self.get_capabilities()
+            integrations = capabilities["integrations"]
             from crystalmath.workflows import (
-                WORKFLOWS_AVAILABLE,
                 AIIDA_LAUNCHER_AVAILABLE,
-                ConvergenceWorkflow,
+                WORKFLOWS_AVAILABLE,
                 BandStructureWorkflow,
-                PhononWorkflow,
+                ConvergenceWorkflow,
                 EOSWorkflow,
+                PhononWorkflow,
             )
 
             available_workflows = []
@@ -2153,13 +2289,7 @@ class CrystalController:
             # Geometry optimization requires AiiDA
             if AIIDA_LAUNCHER_AVAILABLE:
                 available_workflows.append("geometry_optimization")
-
-            # Check quacc availability
-            try:
-                from crystalmath.quacc.discovery import discover_vasp_recipes
-                quacc_available = len(discover_vasp_recipes()) > 0
-            except ImportError:
-                quacc_available = False
+            quacc_available = bool(integrations["quacc"]["available"])
 
             return _ok_response(
                 {
@@ -2167,15 +2297,21 @@ class CrystalController:
                     "workflows": available_workflows,
                     "aiida_available": AIIDA_LAUNCHER_AVAILABLE,
                     "quacc_available": quacc_available,
+                    "ase_available": bool(integrations["ase"]["available"]),
+                    "seekpath_available": bool(integrations["seekpath"]["available"]),
+                    "vaspkit_available": bool(integrations["vaspkit"]["available"]),
                 }
             )
         except ImportError as e:
-            # Check if at least quacc is available
             try:
-                from crystalmath.quacc.discovery import discover_vasp_recipes
-                quacc_available = len(discover_vasp_recipes()) > 0
-                quacc_workflows = ["convergence", "band_structure", "phonon", "eos", "geometry_optimization"] if quacc_available else []
-            except ImportError:
+                integrations = self.get_capabilities()["integrations"]
+                quacc_available = bool(integrations["quacc"]["available"])
+                quacc_workflows = (
+                    ["convergence", "band_structure", "phonon", "eos", "geometry_optimization"]
+                    if quacc_available
+                    else []
+                )
+            except Exception:
                 quacc_available = False
                 quacc_workflows = []
 
@@ -2208,9 +2344,9 @@ class CrystalController:
         """
         try:
             from crystalmath.workflows.convergence import (
+                ConvergenceParameter,
                 ConvergenceStudy,
                 ConvergenceStudyConfig,
-                ConvergenceParameter,
             )
 
             config_data = json.loads(config_json)
@@ -2323,9 +2459,9 @@ class CrystalController:
         """
         try:
             from crystalmath.workflows.bands import (
-                BandStructureWorkflow,
-                BandStructureConfig,
                 BandPathType,
+                BandStructureConfig,
+                BandStructureWorkflow,
             )
 
             config_data = json.loads(config_json)
@@ -2388,10 +2524,10 @@ class CrystalController:
         """
         try:
             from crystalmath.workflows.phonon import (
-                PhononWorkflow,
+                DFTCode,
                 PhononConfig,
                 PhononMethod,
-                DFTCode,
+                PhononWorkflow,
             )
 
             config_data = json.loads(config_json)
@@ -2504,7 +2640,7 @@ class CrystalController:
             JSON with workflow state
         """
         try:
-            from crystalmath.workflows.eos import EOSWorkflow, EOSConfig
+            from crystalmath.workflows.eos import EOSConfig, EOSWorkflow
 
             config_data = json.loads(config_json)
 
@@ -2816,7 +2952,8 @@ class CrystalController:
 def create_controller(
     profile_name: str = "default",
     use_aiida: bool = True,
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
+    backend_preference: str = "auto",
 ) -> CrystalController:
     """
     Factory function to create a CrystalController.
@@ -2827,6 +2964,7 @@ def create_controller(
         profile_name: AiiDA profile name
         use_aiida: Whether to use AiiDA backend
         db_path: SQLite database path for fallback
+        backend_preference: Backend selection strategy ("auto", "sqlite", "aiida", "demo")
 
     Returns:
         Configured CrystalController instance
@@ -2835,4 +2973,5 @@ def create_controller(
         profile_name=profile_name,
         use_aiida=use_aiida,
         db_path=db_path,
+        backend_preference=backend_preference,
     )

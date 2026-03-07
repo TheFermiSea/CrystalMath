@@ -14,7 +14,21 @@ from datetime import datetime
 import pytest
 
 from crystalmath.api import CrystalController, create_controller
+from crystalmath.backends import create_backend
 from crystalmath.models import DftCode, JobState, JobStatus, JobDetails
+
+
+SAMPLE_POSCAR = """NaCl structure
+5.64
+1.0 0.0 0.0
+0.0 1.0 0.0
+0.0 0.0 1.0
+Na Cl
+1 1
+Direct
+0.0 0.0 0.0
+0.5 0.5 0.5
+"""
 
 
 class TestCrystalControllerDemoMode:
@@ -83,11 +97,13 @@ class TestCrystalControllerDemoMode:
         """submit_job_json creates new job."""
         controller = CrystalController(use_aiida=False)
 
-        payload = json.dumps({
-            "name": "test-submission",
-            "dft_code": "crystal",
-            "parameters": {"SHRINK": [8, 8]},
-        })
+        payload = json.dumps(
+            {
+                "name": "test-submission",
+                "dft_code": "crystal",
+                "parameters": {"SHRINK": [8, 8]},
+            }
+        )
 
         pk = controller.submit_job_json(payload)
         assert pk > 0
@@ -102,9 +118,11 @@ class TestCrystalControllerDemoMode:
         controller = CrystalController(use_aiida=False)
 
         # Missing required fields
-        payload = json.dumps({
-            "name": "ab",  # Too short
-        })
+        payload = json.dumps(
+            {
+                "name": "ab",  # Too short
+            }
+        )
 
         with pytest.raises(RuntimeError) as exc_info:
             controller.submit_job_json(payload)
@@ -151,6 +169,117 @@ class TestCreateController:
             db_path="/nonexistent/path.db",
         )
         assert isinstance(controller, CrystalController)
+
+    def test_create_controller_tracks_backend_preference(self):
+        """Factory preserves the configured backend preference."""
+        controller = create_controller(use_aiida=False, backend_preference="sqlite")
+        assert controller.get_capabilities()["backend_preference"] == "sqlite"
+
+    def test_create_backend_warns_when_sqlite_requested_without_db_path(self, caplog):
+        """Explicit sqlite preference should explain why it fell back to demo."""
+        with caplog.at_level("WARNING"):
+            backend = create_backend(use_aiida=False, backend_preference="sqlite", db_path=None)
+
+        assert backend.__class__.__name__ == "DemoBackend"
+        assert any(
+            "SQLite backend requested" in record.message and "no db_path" in record.message
+            for record in caplog.records
+        )
+
+
+class TestCapabilities:
+    """Tests for runtime capability reporting."""
+
+    def test_get_capabilities_json_returns_structure(self):
+        """Capability reporting returns a structured payload."""
+        controller = CrystalController(use_aiida=False)
+        response = json.loads(controller.get_capabilities_json())
+
+        assert response["ok"] is True
+        data = response["data"]
+        assert "selected_backend" in data
+        assert "backends" in data
+        assert "integrations" in data
+        assert "pymatgen" in data["integrations"]
+        assert "vaspkit" in data["integrations"]
+
+
+class TestStructureIntegrationEndpoints:
+    """Tests for structured structure and band-path endpoints."""
+
+    def test_standardize_structure_json_returns_expected_payload(self, monkeypatch):
+        """Standardization endpoint returns the fields the TUI depends on."""
+        controller = CrystalController(use_aiida=False)
+        expected = {
+            "backend_used": "pymatgen",
+            "conventional": False,
+            "valid": True,
+            "issues": [],
+            "formula": "Na1 Cl1",
+            "reduced_formula": "NaCl",
+            "num_sites": 2,
+            "dimensionality": 3,
+            "symmetry": None,
+            "poscar": SAMPLE_POSCAR,
+        }
+
+        monkeypatch.setattr(controller, "standardize_structure", lambda *args, **kwargs: expected)
+
+        response = json.loads(controller.standardize_structure_json("poscar", SAMPLE_POSCAR))
+
+        assert response["ok"] is True
+        data = response["data"]
+        assert data == expected
+
+    def test_standardize_structure_json_returns_structured_import_error(self, monkeypatch):
+        """Standardization endpoint wraps ImportError in the structured response envelope."""
+        controller = CrystalController(use_aiida=False)
+
+        def raise_import_error(*args, **kwargs):
+            raise ImportError("ASE not installed")
+
+        monkeypatch.setattr(controller, "standardize_structure", raise_import_error)
+
+        response = json.loads(controller.standardize_structure_json("poscar", SAMPLE_POSCAR))
+
+        assert response["ok"] is False
+        assert response["error"]["code"] == "IMPORT_ERROR"
+        assert "ASE not installed" in response["error"]["message"]
+
+    def test_generate_vasp_band_path_json_returns_expected_payload(self, monkeypatch):
+        """Band-path endpoint returns a structured KPOINTS payload."""
+        controller = CrystalController(use_aiida=False)
+        expected = {
+            "kpoints": "Generated KPOINTS\n12\nLine-mode\nReciprocal\n",
+            "source": "pymatgen",
+            "dimensionality": 3,
+        }
+
+        monkeypatch.setattr(controller, "generate_vasp_band_path", lambda *args, **kwargs: expected)
+
+        response = json.loads(
+            controller.generate_vasp_band_path_json(SAMPLE_POSCAR, line_density=12)
+        )
+
+        assert response["ok"] is True
+        assert response["data"] == expected
+
+    def test_generate_vasp_band_path_json_returns_structured_errors(self, monkeypatch):
+        """Band-path endpoint wraps generation errors in the structured response envelope."""
+        controller = CrystalController(use_aiida=False)
+
+        def raise_generation_error(*args, **kwargs):
+            raise RuntimeError("line_density must be greater than zero")
+
+        monkeypatch.setattr(controller, "generate_vasp_band_path", raise_generation_error)
+
+        response = json.loads(
+            controller.generate_vasp_band_path_json(SAMPLE_POSCAR, line_density=0)
+        )
+
+        assert response["ok"] is False
+        assert response["error"]["code"] == "KPATH_GENERATION_ERROR"
+        assert "greater than zero" in response["error"]["message"]
 
 
 class TestJobStatusParsing:
@@ -225,10 +354,12 @@ class TestRustInteroperability:
         """submit_job_json returns int for PyO3."""
         controller = CrystalController(use_aiida=False)
 
-        payload = json.dumps({
-            "name": "rust-test",
-            "input_content": "CRYSTAL\n0 0 0\n225\n5.43",
-        })
+        payload = json.dumps(
+            {
+                "name": "rust-test",
+                "input_content": "CRYSTAL\n0 0 0\n225\n5.43",
+            }
+        )
 
         pk = controller.submit_job_json(payload)
         assert isinstance(pk, int)

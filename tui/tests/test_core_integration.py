@@ -26,7 +26,13 @@ def test_core_client_submit_and_list(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert job_id > 0
 
     jobs = client.list_jobs()
-    assert any(job.id == job_id for job in jobs)
+    assert any(job.pk == job_id for job in jobs)
 
     calculations_dir = tmp_path / "calculations"
     assert calculations_dir.exists()
+
+
+def test_parse_structured_json_requires_data_object() -> None:
+    """Structured JSON parser raises a helpful error when data is missing."""
+    with pytest.raises(RuntimeError, match="without structured data"):
+        CrystalCoreClient._parse_structured_json('{"ok": true}')

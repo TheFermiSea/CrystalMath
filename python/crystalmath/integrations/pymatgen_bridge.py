@@ -60,11 +60,6 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Union,
 )
 
 if TYPE_CHECKING:
@@ -168,11 +163,11 @@ class SymmetryInfo:
     crystal_system: CrystalSystem
     hall_symbol: str = ""
     is_centrosymmetric: bool = False
-    wyckoff_symbols: List[str] = field(default_factory=list)
+    wyckoff_symbols: list[str] = field(default_factory=list)
     symmetry_operations: int = 0
     tolerance: float = 0.01
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "space_group_number": self.space_group_number,
@@ -204,7 +199,7 @@ class StructureMetadata:
     """
 
     source: str
-    source_id: Optional[str] = None
+    source_id: str | None = None
     formula: str = ""
     reduced_formula: str = ""
     num_sites: int = 0
@@ -224,8 +219,7 @@ def _check_pymatgen() -> None:
         import pymatgen  # noqa: F401
     except ImportError:
         raise DependencyError(
-            "pymatgen is required for structure operations. "
-            "Install with: pip install pymatgen"
+            "pymatgen is required for structure operations. Install with: pip install pymatgen"
         )
 
 
@@ -246,8 +240,7 @@ def _check_ase() -> None:
         import ase  # noqa: F401
     except ImportError:
         raise DependencyError(
-            "ASE is required for ASE Atoms conversion. "
-            "Install with: pip install ase"
+            "ASE is required for ASE Atoms conversion. Install with: pip install ase"
         )
 
 
@@ -257,8 +250,7 @@ def _check_mp_api() -> None:
         from mp_api.client import MPRester  # noqa: F401
     except ImportError:
         raise DependencyError(
-            "mp-api is required for Materials Project access. "
-            "Install with: pip install mp-api"
+            "mp-api is required for Materials Project access. Install with: pip install mp-api"
         )
 
 
@@ -267,7 +259,7 @@ def _check_mp_api() -> None:
 # =============================================================================
 
 
-def structure_from_cif(path: Union[str, Path]) -> "Structure":
+def structure_from_cif(path: str | Path) -> Structure:
     """
     Load a structure from a CIF file.
 
@@ -301,7 +293,7 @@ def structure_from_cif(path: Union[str, Path]) -> "Structure":
         raise StructureLoadError(f"Failed to parse CIF file {path}: {e}") from e
 
 
-def structure_from_poscar(path: Union[str, Path]) -> "Structure":
+def structure_from_poscar(path: str | Path) -> Structure:
     """
     Load a structure from a VASP POSCAR/CONTCAR file.
 
@@ -321,7 +313,6 @@ def structure_from_poscar(path: Union[str, Path]) -> "Structure":
         8
     """
     _check_pymatgen()
-    from pymatgen.core import Structure
     from pymatgen.io.vasp import Poscar
 
     path = Path(path)
@@ -337,7 +328,7 @@ def structure_from_poscar(path: Union[str, Path]) -> "Structure":
         raise StructureLoadError(f"Failed to parse POSCAR file {path}: {e}") from e
 
 
-def structure_to_poscar(structure: "Structure", comment: Optional[str] = None) -> str:
+def structure_to_poscar(structure: Structure, comment: str | None = None) -> str:
     """
     Convert a pymatgen Structure to VASP POSCAR format.
 
@@ -369,9 +360,9 @@ def structure_to_poscar(structure: "Structure", comment: Optional[str] = None) -
 
 def structure_from_mp(
     mp_id: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     conventional: bool = False,
-) -> "Structure":
+) -> Structure:
     """
     Load a structure from the Materials Project database.
 
@@ -432,7 +423,7 @@ def structure_from_mp(
 def structure_from_cod(
     cod_id: int,
     timeout: float = 60.0,
-) -> "Structure":
+) -> Structure:
     """
     Load a structure from the Crystallography Open Database (COD).
 
@@ -457,13 +448,14 @@ def structure_from_cod(
         See: https://www.crystallography.net/cod/
     """
     _check_pymatgen()
-    from pymatgen.core import Structure
-
-    import urllib.request
     import tempfile
+    import urllib.request
+
+    from pymatgen.core import Structure
 
     # COD CIF download URL
     url = f"https://www.crystallography.net/cod/{cod_id}.cif"
+    tmp_path = None
 
     try:
         # Download CIF content
@@ -471,16 +463,12 @@ def structure_from_cod(
             cif_content = response.read().decode("utf-8")
 
         # Write to temporary file and parse
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".cif", delete=False
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".cif", delete=False) as tmp:
             tmp.write(cif_content)
-            tmp_path = tmp.name
+            tmp.flush()
+            tmp_path = Path(tmp.name)
 
-        structure = Structure.from_file(tmp_path)
-
-        # Clean up temp file
-        Path(tmp_path).unlink(missing_ok=True)
+        structure = Structure.from_file(str(tmp_path))
 
         logger.info(f"Loaded structure from COD: {cod_id}")
         return structure
@@ -493,9 +481,12 @@ def structure_from_cod(
         raise StructureLoadError(f"Network error retrieving COD {cod_id}: {e}") from e
     except Exception as e:
         raise StructureLoadError(f"Failed to load COD {cod_id}: {e}") from e
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
-def structure_from_file(path: Union[str, Path]) -> "Structure":
+def structure_from_file(path: str | Path) -> Structure:
     """
     Load a structure from any supported file format.
 
@@ -541,7 +532,7 @@ def structure_from_file(path: Union[str, Path]) -> "Structure":
 # =============================================================================
 
 
-def to_aiida_structure(structure: "Structure") -> "StructureData":
+def to_aiida_structure(structure: Structure) -> StructureData:
     """
     Convert pymatgen Structure to AiiDA StructureData.
 
@@ -568,9 +559,7 @@ def to_aiida_structure(structure: "Structure") -> "StructureData":
     from pymatgen.core import Structure as PymatgenStructure
 
     if not isinstance(structure, PymatgenStructure):
-        raise StructureConversionError(
-            f"Expected pymatgen Structure, got {type(structure)}"
-        )
+        raise StructureConversionError(f"Expected pymatgen Structure, got {type(structure)}")
 
     try:
         # Extract cell matrix (3x3 array)
@@ -591,18 +580,14 @@ def to_aiida_structure(structure: "Structure") -> "StructureData":
             if label:
                 aiida_structure.label = label
 
-        logger.debug(
-            f"Converted to AiiDA StructureData: {structure.composition.reduced_formula}"
-        )
+        logger.debug(f"Converted to AiiDA StructureData: {structure.composition.reduced_formula}")
         return aiida_structure
 
     except Exception as e:
-        raise StructureConversionError(
-            f"Failed to convert to AiiDA StructureData: {e}"
-        ) from e
+        raise StructureConversionError(f"Failed to convert to AiiDA StructureData: {e}") from e
 
 
-def from_aiida_structure(node: "StructureData") -> "Structure":
+def from_aiida_structure(node: StructureData) -> Structure:
     """
     Convert AiiDA StructureData to pymatgen Structure.
 
@@ -628,9 +613,7 @@ def from_aiida_structure(node: "StructureData") -> "Structure":
     from pymatgen.core import Lattice, Structure
 
     if not isinstance(node, StructureData):
-        raise StructureConversionError(
-            f"Expected AiiDA StructureData, got {type(node)}"
-        )
+        raise StructureConversionError(f"Expected AiiDA StructureData, got {type(node)}")
 
     try:
         # Extract cell matrix
@@ -661,12 +644,10 @@ def from_aiida_structure(node: "StructureData") -> "Structure":
         return pmg_structure
 
     except Exception as e:
-        raise StructureConversionError(
-            f"Failed to convert from AiiDA StructureData: {e}"
-        ) from e
+        raise StructureConversionError(f"Failed to convert from AiiDA StructureData: {e}") from e
 
 
-def to_ase_atoms(structure: "Structure") -> "Atoms":
+def to_ase_atoms(structure: Structure) -> Atoms:
     """
     Convert pymatgen Structure to ASE Atoms object.
 
@@ -693,9 +674,7 @@ def to_ase_atoms(structure: "Structure") -> "Atoms":
     from pymatgen.core import Structure as PymatgenStructure
 
     if not isinstance(structure, PymatgenStructure):
-        raise StructureConversionError(
-            f"Expected pymatgen Structure, got {type(structure)}"
-        )
+        raise StructureConversionError(f"Expected pymatgen Structure, got {type(structure)}")
 
     try:
         # Use pymatgen's built-in ASE adapter if available
@@ -704,9 +683,7 @@ def to_ase_atoms(structure: "Structure") -> "Atoms":
 
             adaptor = AseAtomsAdaptor()
             atoms = adaptor.get_atoms(structure)
-            logger.debug(
-                f"Converted to ASE Atoms: {structure.composition.reduced_formula}"
-            )
+            logger.debug(f"Converted to ASE Atoms: {structure.composition.reduced_formula}")
             return atoms
         except ImportError:
             pass
@@ -723,16 +700,14 @@ def to_ase_atoms(structure: "Structure") -> "Atoms":
             pbc=True,
         )
 
-        logger.debug(
-            f"Converted to ASE Atoms (manual): {structure.composition.reduced_formula}"
-        )
+        logger.debug(f"Converted to ASE Atoms (manual): {structure.composition.reduced_formula}")
         return atoms
 
     except Exception as e:
         raise StructureConversionError(f"Failed to convert to ASE Atoms: {e}") from e
 
 
-def from_ase_atoms(atoms: "Atoms") -> "Structure":
+def from_ase_atoms(atoms: Atoms) -> Structure:
     """
     Convert ASE Atoms object to pymatgen Structure.
 
@@ -767,9 +742,7 @@ def from_ase_atoms(atoms: "Atoms") -> "Structure":
 
             adaptor = AseAtomsAdaptor()
             structure = adaptor.get_structure(atoms)
-            logger.debug(
-                f"Converted from ASE Atoms: {structure.composition.reduced_formula}"
-            )
+            logger.debug(f"Converted from ASE Atoms: {structure.composition.reduced_formula}")
             return structure
         except ImportError:
             pass
@@ -792,15 +765,11 @@ def from_ase_atoms(atoms: "Atoms") -> "Structure":
             coords_are_cartesian=True,
         )
 
-        logger.debug(
-            f"Converted from ASE Atoms (manual): {structure.composition.reduced_formula}"
-        )
+        logger.debug(f"Converted from ASE Atoms (manual): {structure.composition.reduced_formula}")
         return structure
 
     except Exception as e:
-        raise StructureConversionError(
-            f"Failed to convert from ASE Atoms: {e}"
-        ) from e
+        raise StructureConversionError(f"Failed to convert from ASE Atoms: {e}") from e
 
 
 # =============================================================================
@@ -809,7 +778,7 @@ def from_ase_atoms(atoms: "Atoms") -> "Structure":
 
 
 def get_symmetry_info(
-    structure: "Structure",
+    structure: Structure,
     symprec: float = 0.01,
     angle_tolerance: float = 5.0,
 ) -> SymmetryInfo:
@@ -901,7 +870,7 @@ def get_symmetry_info(
 
 
 def get_dimensionality(
-    structure: "Structure",
+    structure: Structure,
     tolerance: float = 0.45,
 ) -> int:
     """
@@ -945,8 +914,7 @@ def get_dimensionality(
     except ImportError:
         # Fallback: simple heuristic based on cell geometry
         warnings.warn(
-            "Full dimensionality analysis requires pymatgen >= 2022. "
-            "Using simplified heuristic."
+            "Full dimensionality analysis requires pymatgen >= 2022. Using simplified heuristic."
         )
 
         # Check for vacuum regions along each axis
@@ -972,12 +940,12 @@ def get_dimensionality(
 
 
 def validate_for_dft(
-    structure: "Structure",
+    structure: Structure,
     check_overlapping: bool = True,
     check_oxidation: bool = True,
     min_distance: float = 0.5,
     max_atoms: int = 500,
-) -> Tuple[bool, List[str]]:
+) -> tuple[bool, list[str]]:
     """
     Validate a structure for DFT calculations.
 
@@ -1019,7 +987,7 @@ def validate_for_dft(
     if not isinstance(structure, PymatgenStructure):
         return False, [f"Expected pymatgen Structure, got {type(structure)}"]
 
-    issues: List[str] = []
+    issues: list[str] = []
     is_valid = True
 
     # Check number of atoms
@@ -1060,8 +1028,6 @@ def validate_for_dft(
     # Check for overlapping atoms
     if check_overlapping:
         try:
-            from pymatgen.core.structure import Structure
-
             # Get all pairwise distances
             dist_matrix = structure.distance_matrix
 
@@ -1088,9 +1054,7 @@ def validate_for_dft(
 
     # Check cell volume
     if structure.volume < 1.0:
-        issues.append(
-            f"CRITICAL: Cell volume ({structure.volume:.3f} A^3) is unreasonably small"
-        )
+        issues.append(f"CRITICAL: Cell volume ({structure.volume:.3f} A^3) is unreasonably small")
         is_valid = False
 
     # Check for reasonable density
@@ -1102,24 +1066,19 @@ def validate_for_dft(
         )
     elif density > 25:
         issues.append(
-            f"WARNING: Very high density ({density:.3f} g/cm^3). "
-            "May indicate overlapping atoms."
+            f"WARNING: Very high density ({density:.3f} g/cm^3). May indicate overlapping atoms."
         )
 
     # Log results
     if is_valid:
-        logger.info(
-            f"Structure validation passed: {structure.composition.reduced_formula}"
-        )
+        logger.info(f"Structure validation passed: {structure.composition.reduced_formula}")
     else:
-        logger.warning(
-            f"Structure validation failed: {structure.composition.reduced_formula}"
-        )
+        logger.warning(f"Structure validation failed: {structure.composition.reduced_formula}")
 
     return is_valid, issues
 
 
-def get_structure_metadata(structure: "Structure") -> StructureMetadata:
+def get_structure_metadata(structure: Structure) -> StructureMetadata:
     """
     Extract metadata from a structure.
 
@@ -1150,6 +1109,69 @@ def get_structure_metadata(structure: "Structure") -> StructureMetadata:
         density=structure.density,
         is_ordered=structure.is_ordered,
     )
+
+
+def standardize_structure(
+    structure: Structure,
+    *,
+    conventional: bool = False,
+    backend: str = "auto",
+    symprec: float = 0.01,
+) -> tuple[Structure, str]:
+    """
+    Standardize a structure for downstream workflow use.
+
+    Args:
+        structure: pymatgen Structure object.
+        conventional: Whether to return the conventional standard cell.
+        backend: "auto", "pymatgen", or "ase".
+        symprec: Symmetry tolerance for pymatgen standardization.
+
+    Returns:
+        Tuple of (standardized pymatgen Structure object, backend identifier).
+    """
+    _check_pymatgen()
+
+    from pymatgen.core import Structure as PymatgenStructure
+    from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+
+    if not isinstance(structure, PymatgenStructure):
+        raise ValidationError(f"Expected pymatgen Structure, got {type(structure)}")
+
+    normalized = backend.lower().strip()
+    working = structure.copy()
+    actual_backend = "pymatgen"
+
+    if normalized not in {"auto", "pymatgen", "ase"}:
+        raise ValueError(f"Unsupported standardization backend: {backend}")
+
+    if normalized in {"auto", "ase"}:
+        try:
+            atoms = to_ase_atoms(working)
+            atoms.wrap(eps=1e-12)
+            try:
+                from ase.build import sort as ase_sort
+
+                atoms = ase_sort(atoms)
+            except Exception:
+                # Sorting is optional; wrapped coordinates are the main ASE benefit here.
+                pass
+            working = from_ase_atoms(atoms)
+            actual_backend = "ase"
+        except Exception:
+            if normalized == "ase":
+                raise
+
+    analyzer = SpacegroupAnalyzer(working, symprec=symprec)
+    standardized = (
+        analyzer.get_conventional_standard_structure()
+        if conventional
+        else analyzer.get_primitive_standard_structure()
+    )
+
+    if standardized is None:
+        return working, actual_backend
+    return standardized, actual_backend
 
 
 # =============================================================================
@@ -1201,9 +1223,7 @@ def convert_structure(
         elif type_name == "Atoms":
             pmg_struct = from_ase_atoms(structure)
         else:
-            raise StructureConversionError(
-                f"Cannot convert from unknown type: {type_name}"
-            )
+            raise StructureConversionError(f"Cannot convert from unknown type: {type_name}")
 
     # Now convert to target format
     target = target_format.lower()
@@ -1215,10 +1235,7 @@ def convert_structure(
     elif target == "ase":
         return to_ase_atoms(pmg_struct)
     else:
-        raise ValueError(
-            f"Unknown target format: {target_format}. "
-            f"Supported: pymatgen, aiida, ase"
-        )
+        raise ValueError(f"Unknown target format: {target_format}. Supported: pymatgen, aiida, ase")
 
 
 # =============================================================================
@@ -1256,4 +1273,5 @@ __all__ = [
     "get_dimensionality",
     "validate_for_dft",
     "get_structure_metadata",
+    "standardize_structure",
 ]
