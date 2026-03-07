@@ -126,6 +126,7 @@ def create_backend(
     use_aiida: bool = False,
     db_path: Optional[str] = None,
     profile_name: str = "default",
+    backend_preference: str = "auto",
 ) -> Backend:
     """
     Factory function to create the appropriate backend.
@@ -139,11 +140,28 @@ def create_backend(
         use_aiida: Whether to try AiiDA backend
         db_path: Path to SQLite database
         profile_name: AiiDA profile name (if use_aiida=True)
+        backend_preference: Backend selection strategy.
+            Supported values: "auto", "sqlite", "aiida", "demo".
 
     Returns:
         Configured Backend instance
     """
-    if use_aiida:
+    preference = backend_preference.lower().strip()
+
+    if preference not in {"auto", "sqlite", "aiida", "demo"}:
+        logger.warning("Unknown backend preference '%s', falling back to auto", backend_preference)
+        preference = "auto"
+
+    try_aiida = preference in {"auto", "aiida"} and use_aiida
+    try_sqlite = preference in {"auto", "sqlite"}
+
+    if preference == "demo":
+        from crystalmath.backends.demo import DemoBackend
+
+        logger.info("Using demo backend by explicit preference")
+        return DemoBackend()
+
+    if try_aiida:
         from crystalmath.backends.aiida import AiiDABackend
 
         backend = AiiDABackend(profile_name=profile_name)
@@ -152,7 +170,7 @@ def create_backend(
             return backend
         logger.info("AiiDA not available, falling back")
 
-    if db_path:
+    if try_sqlite and db_path:
         from crystalmath.backends.sqlite import SQLiteBackend
 
         backend = SQLiteBackend(db_path=db_path)

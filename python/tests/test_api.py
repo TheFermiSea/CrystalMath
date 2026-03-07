@@ -83,11 +83,13 @@ class TestCrystalControllerDemoMode:
         """submit_job_json creates new job."""
         controller = CrystalController(use_aiida=False)
 
-        payload = json.dumps({
-            "name": "test-submission",
-            "dft_code": "crystal",
-            "parameters": {"SHRINK": [8, 8]},
-        })
+        payload = json.dumps(
+            {
+                "name": "test-submission",
+                "dft_code": "crystal",
+                "parameters": {"SHRINK": [8, 8]},
+            }
+        )
 
         pk = controller.submit_job_json(payload)
         assert pk > 0
@@ -102,9 +104,11 @@ class TestCrystalControllerDemoMode:
         controller = CrystalController(use_aiida=False)
 
         # Missing required fields
-        payload = json.dumps({
-            "name": "ab",  # Too short
-        })
+        payload = json.dumps(
+            {
+                "name": "ab",  # Too short
+            }
+        )
 
         with pytest.raises(RuntimeError) as exc_info:
             controller.submit_job_json(payload)
@@ -151,6 +155,28 @@ class TestCreateController:
             db_path="/nonexistent/path.db",
         )
         assert isinstance(controller, CrystalController)
+
+    def test_create_controller_tracks_backend_preference(self):
+        """Factory preserves the configured backend preference."""
+        controller = create_controller(use_aiida=False, backend_preference="sqlite")
+        assert controller.get_capabilities()["backend_preference"] == "sqlite"
+
+
+class TestCapabilities:
+    """Tests for runtime capability reporting."""
+
+    def test_get_capabilities_json_returns_structure(self):
+        """Capability reporting returns a structured payload."""
+        controller = CrystalController(use_aiida=False)
+        response = json.loads(controller.get_capabilities_json())
+
+        assert response["ok"] is True
+        data = response["data"]
+        assert "selected_backend" in data
+        assert "backends" in data
+        assert "integrations" in data
+        assert "pymatgen" in data["integrations"]
+        assert "vaspkit" in data["integrations"]
 
 
 class TestJobStatusParsing:
@@ -225,10 +251,12 @@ class TestRustInteroperability:
         """submit_job_json returns int for PyO3."""
         controller = CrystalController(use_aiida=False)
 
-        payload = json.dumps({
-            "name": "rust-test",
-            "input_content": "CRYSTAL\n0 0 0\n225\n5.43",
-        })
+        payload = json.dumps(
+            {
+                "name": "rust-test",
+                "input_content": "CRYSTAL\n0 0 0\n225\n5.43",
+            }
+        )
 
         pk = controller.submit_job_json(payload)
         assert isinstance(pk, int)

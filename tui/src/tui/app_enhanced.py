@@ -24,7 +24,7 @@ from ..core.environment import CrystalConfig, get_crystal_config
 from ..core.queue_manager import QueueManager, Priority
 from ..runners import LocalRunner, LocalRunnerError, InputFileError
 from ..runners.base import JobResult
-from .screens import NewJobScreen, SLURMQueueScreen
+from .screens import NewJobScreen, SLURMQueueScreen, VASPFilesReady
 from .screens.new_job import JobCreated
 from .widgets import InputPreview, ResultsSummary, JobListWidget, JobStatsWidget
 from ..core.database import Database as CoreDatabase, Cluster, Job
@@ -35,6 +35,7 @@ from ..core.connection_manager import ConnectionManager
 # --- Custom Messages ---
 class JobLog(Message):
     """A message containing a line of output from a job."""
+
     def __init__(self, job_id: int, line: str) -> None:
         self.job_id = job_id
         self.line = line
@@ -43,6 +44,7 @@ class JobLog(Message):
 
 class JobStatus(Message):
     """A message indicating a job's status has changed."""
+
     def __init__(self, job_id: int, status: str, pid: Optional[int] = None) -> None:
         self.job_id = job_id
         self.status = status
@@ -52,6 +54,7 @@ class JobStatus(Message):
 
 class JobResults(Message):
     """A message with job results after completion."""
+
     def __init__(self, job_id: int, final_energy: Optional[float] = None) -> None:
         self.job_id = job_id
         self.final_energy = final_energy
@@ -184,9 +187,7 @@ class CrystalTUI(App):
 
         # Initialize and start QueueManager
         self.queue_manager = QueueManager(
-            database=self.db,
-            default_max_concurrent=4,
-            scheduling_interval=1.0
+            database=self.db, default_max_concurrent=4, scheduling_interval=1.0
         )
         await self.queue_manager.start()
 
@@ -206,10 +207,30 @@ class CrystalTUI(App):
         log.write_line("[bold cyan]CRYSTAL-TUI Started (Enhanced)[/bold cyan]")
         log.write_line(f"Project: {self.project_dir}")
         log.write_line(f"Database: {self.db_path}")
+        if self._core_client is not None:
+            try:
+                capabilities = self._core_client.get_capabilities()
+                log.write_line(
+                    "[dim]Core backend: "
+                    f"{capabilities.get('selected_backend')} "
+                    f"(preference={capabilities.get('backend_preference')})[/dim]"
+                )
+                integrations = capabilities.get("integrations", {})
+                enabled = sorted(
+                    name
+                    for name, info in integrations.items()
+                    if isinstance(info, dict) and info.get("available")
+                )
+                if enabled:
+                    log.write_line(f"[dim]Optional integrations: {', '.join(enabled)}[/dim]")
+            except Exception as err:
+                log.write_line(f"[yellow]Capability probe failed: {err}[/yellow]")
         log.write_line("[dim]QueueManager active with priority scheduling[/dim]")
         log.write_line("")
         log.write_line("[dim]Keyboard shortcuts:[/dim]")
-        log.write_line("[dim]  n - New Job  |  r - Run  |  s - Stop  |  f - Filter  |  t - Sort[/dim]")
+        log.write_line(
+            "[dim]  n - New Job  |  r - Run  |  s - Stop  |  f - Filter  |  t - Sort[/dim]"
+        )
         log.write_line("")
 
     def _ensure_runner(self) -> LocalRunner:
@@ -288,12 +309,12 @@ class CrystalTUI(App):
         if not self.db:
             return
 
-        # Push the new job modal screen
+            # Push the new job modal screen
             self.push_screen(
                 NewJobScreen(
                     database=self.db,
                     calculations_dir=self.calculations_dir,
-                    core_client=self._core_client
+                    core_client=self._core_client,
                 )
             )
 
@@ -325,9 +346,7 @@ class CrystalTUI(App):
         # Enqueue the job via QueueManager (handles priority, dependencies, etc.)
         try:
             await self.queue_manager.enqueue(
-                job_id=job_id,
-                priority=Priority.NORMAL,
-                runner_type="local"
+                job_id=job_id, priority=Priority.NORMAL, runner_type="local"
             )
             log = self.query_one("#log_view", Log)
             log.write_line(f"[cyan]Job {job_id} queued for execution[/cyan]")
@@ -474,7 +493,11 @@ class CrystalTUI(App):
     # --- Event Handlers ---
     def on_job_list_widget_row_highlighted(self, event) -> None:
         """Handle row selection in job table - update input and results views."""
-        if (not self.db and not self._core_client) or not hasattr(event, "row_key") or event.row_key is None:
+        if (
+            (not self.db and not self._core_client)
+            or not hasattr(event, "row_key")
+            or event.row_key is None
+        ):
             return
 
         try:
@@ -521,9 +544,11 @@ class CrystalTUI(App):
                         status=job_details.state.value,
                         final_energy=job_details.final_energy,
                         key_results=job_details.key_results,
-                        created_at=job_details.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                        if job_details.created_at
-                        else None,
+                        created_at=(
+                            job_details.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                            if job_details.created_at
+                            else None
+                        ),
                         completed_at=None,
                     )
                 else:
@@ -575,7 +600,63 @@ class CrystalTUI(App):
         """Handle new job creation - refresh the job list and log."""
         self._refresh_job_list()
         log = self.query_one("#log_view", Log)
-        log.write_line(f"[bold green]Created new job {message.job_id}: {message.job_name}[/bold green]")
+        log.write_line(
+            f"[bold green]Created new job {message.job_id}: {message.job_name}[/bold green]"
+        )
+
+    def on_vasp_files_ready(self, message: VASPFilesReady) -> None:
+        """Handle VASP multi-file input ready - create a legacy job entry and working directory."""
+        if not self.db:
+            return
+
+        log = self.query_one("#log_view", Log)
+        log.write_line(f"[cyan]Creating VASP job: {message.job_name}[/cyan]")
+
+        try:
+            existing_jobs = self.db.get_all_jobs()
+            next_id = max([job.id for job in existing_jobs], default=0) + 1
+
+            work_dir_name = f"{next_id:04d}_{message.job_name}"
+            work_dir = self.calculations_dir / work_dir_name
+            work_dir.mkdir(parents=True, exist_ok=False)
+
+            (work_dir / "POSCAR").write_text(message.poscar)
+            (work_dir / "INCAR").write_text(message.incar)
+            (work_dir / "KPOINTS").write_text(message.kpoints)
+
+            import json
+
+            metadata = {
+                "potcar_elements": message.potcar_elements,
+                "potcar_type": message.potcar_type,
+                "potcar_element": message.potcar_element,
+                "dft_code": "vasp",
+            }
+            (work_dir / "vasp_metadata.json").write_text(json.dumps(metadata, indent=2))
+
+            elem_list = ", ".join(message.potcar_elements)
+            input_content = f"# VASP Job: {message.job_name}\n"
+            input_content += f"# POTCAR Elements: {elem_list}\n"
+            input_content += f"# POTCAR Type: {message.potcar_type}\n\n"
+            input_content += "=== POSCAR ===\n" + message.poscar + "\n\n"
+            input_content += "=== INCAR ===\n" + message.incar + "\n\n"
+            input_content += "=== KPOINTS ===\n" + message.kpoints
+
+            job_id = self.db.create_job(
+                name=message.job_name,
+                work_dir=str(work_dir),
+                input_content=input_content,
+                dft_code="vasp",
+            )
+
+            self._refresh_job_list()
+            log.write_line(
+                f"[bold green]Created VASP job {job_id}: {message.job_name}[/bold green]"
+            )
+            log.write_line(f"  POTCAR: {elem_list} ({message.potcar_type})")
+            log.write_line(f"  Work dir: {work_dir_name}")
+        except Exception as err:
+            log.write_line(f"[red]Failed to create VASP job: {err}[/red]")
 
     def on_job_log(self, message: JobLog) -> None:
         """Write a line to the log viewer."""
@@ -639,9 +720,11 @@ class CrystalTUI(App):
                         status=job_details.state.value,
                         final_energy=job_details.final_energy,
                         key_results=job_details.key_results,
-                        created_at=job_details.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                        if job_details.created_at
-                        else None,
+                        created_at=(
+                            job_details.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                            if job_details.created_at
+                            else None
+                        ),
                         completed_at=None,
                     )
                 elif job and job.status in ("COMPLETED", "FAILED"):
@@ -677,7 +760,9 @@ class CrystalTUI(App):
         # This prevents race condition where cancel_job() runs after dequeue()
         # but before we start the runner
         if job.status == "CANCELLED":
-            self.post_message(JobLog(job_id, "[yellow]Job was cancelled before execution started[/yellow]"))
+            self.post_message(
+                JobLog(job_id, "[yellow]Job was cancelled before execution started[/yellow]")
+            )
             return
 
         work_dir = Path(job.work_dir)
@@ -686,7 +771,9 @@ class CrystalTUI(App):
         result: Optional[JobResult] = None  # Capture result directly
 
         self.post_message(JobStatus(job_id, "RUNNING"))
-        self.post_message(JobLog(job_id, f"[bold green]Starting job {job_id}: {job.name}[/bold green]"))
+        self.post_message(
+            JobLog(job_id, f"[bold green]Starting job {job_id}: {job.name}[/bold green]")
+        )
 
         try:
             async for item in runner.run_job(job_id, work_dir):
@@ -721,10 +808,16 @@ class CrystalTUI(App):
                 )
 
             if result.success:
-                self.post_message(JobLog(job_id, "[bold green]Job completed successfully[/bold green]"))
+                self.post_message(
+                    JobLog(job_id, "[bold green]Job completed successfully[/bold green]")
+                )
                 if result.final_energy is not None:
-                    self.post_message(JobLog(job_id, f"[cyan]Final energy: {result.final_energy:.10f} Ha[/cyan]"))
-                self.post_message(JobLog(job_id, f"[cyan]Convergence: {result.convergence_status}[/cyan]"))
+                    self.post_message(
+                        JobLog(job_id, f"[cyan]Final energy: {result.final_energy:.10f} Ha[/cyan]")
+                    )
+                self.post_message(
+                    JobLog(job_id, f"[cyan]Convergence: {result.convergence_status}[/cyan]")
+                )
                 if result.warnings:
                     for warning in result.warnings:
                         self.post_message(JobLog(job_id, f"[yellow]Warning: {warning}[/yellow]"))
@@ -736,7 +829,9 @@ class CrystalTUI(App):
             else:
                 self.post_message(JobLog(job_id, "[bold red]Job failed[/bold red]"))
                 if result.metadata.get("return_code") is not None:
-                    self.post_message(JobLog(job_id, f"[red]Return code: {result.metadata['return_code']}[/red]"))
+                    self.post_message(
+                        JobLog(job_id, f"[red]Return code: {result.metadata['return_code']}[/red]")
+                    )
                 for error in result.errors:
                     self.post_message(JobLog(job_id, f"[red]Error: {error}[/red]"))
                 self.post_message(JobStatus(job_id, "FAILED"))
