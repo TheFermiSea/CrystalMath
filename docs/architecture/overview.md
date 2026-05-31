@@ -1,34 +1,55 @@
 # Architecture Overview
 
-This document provides a high-level overview of the CRYSTAL-TOOLS monorepo architecture, covering both the CLI and TUI components.
+This document provides a high-level overview of the CrystalMath monorepo architecture, covering both the CLI and TUI components.
+
+> **Direction (ADR-006, 2026-05-31):** The project is unifying on a single
+> Rust/Ratatui TUI (`src/`) as the **primary** UI. It handles job creation,
+> configuration, and workflows, and communicates with the Python core over an
+> IPC boundary — client in `src/ipc/` (`client.rs` + `framing.rs`), server in
+> `python/crystalmath/server/`. The legacy Python/Textual TUI (`tui/`) is
+> **deprecated** and being phased out. See
+> [ADR-003](adr-003-ipc-boundary-design.md) (IPC boundary) and
+> [ADR-006](adr-006-unify-on-rust-tui.md) (unification). The "TUI Architecture"
+> section below describes the legacy Python TUI and is retained for historical
+> reference.
 
 ## Repository Structure
 
 ```
 crystalmath/
 ├── cli/                         # Bash CLI Tool
-│   ├── bin/runcrystal          # Main executable (130 lines)
+│   ├── bin/runcrystal          # Main executable
 │   ├── lib/                    # 9 modular libraries
-│   ├── tests/                  # 76 unit tests + integration
+│   ├── tests/                  # 173 bats tests (unit + integration)
 │   ├── share/tutorials/        # CRYSTAL documentation mirror
 │   └── docs/                   # Detailed CLI architecture
 │
-├── tui/                        # Python TUI
-│   ├── src/crystal_tui/        # Application source
-│   │   ├── tui/               # Textual UI components
-│   │   ├── core/              # Business logic
-│   │   └── runners/           # Job execution backends
-│   ├── tests/                  # Test suite (planned)
-│   └── docs/                   # TUI design docs
+├── src/                        # Rust/Ratatui TUI (PRIMARY UI)
+│   ├── app.rs                  # Application state, tabs, dirty-flag render
+│   ├── bridge.rs               # PyO3 FFI to Python core (legacy transport)
+│   ├── ipc.rs + ipc/           # IPC client: client.rs, framing.rs
+│   ├── lsp.rs                  # LSP client (vendored vasp-language-server)
+│   ├── models.rs               # Data models (serde, match Python)
+│   ├── monitor.rs              # Monitoring state
+│   ├── prometheus.rs           # Prometheus metrics scraping
+│   ├── state/                  # mod.rs, actions.rs, help.rs
+│   └── ui/                     # One file per screen (jobs, editor, results,
+│                               #   log, materials, cluster_manager,
+│                               #   slurm_queue, vasp_input, monitor,
+│                               #   workflows, recipes, batch_submission, ...)
+│
+├── python/                     # crystalmath core package
+│   ├── crystalmath/            # models, api, templates, backends
+│   │   ├── server/             # IPC server (crystalmath-server entry point)
+│   │   └── backends/           # CRYSTAL23, VASP, Quantum ESPRESSO, Yambo, phonopy
+│   └── tests/
+│
+├── tui/                        # Python/Textual TUI (DEPRECATED, being phased out)
 │
 ├── docs/                       # Shared documentation
-│   ├── architecture.md         # This file
-│   ├── installation.md         # Installation guide
-│   ├── integration.md          # CLI+TUI integration
-│   └── CONTRIBUTING.md         # Contribution guidelines
+│   └── architecture/           # overview.md (this file), integration.md, adr-*.md
 │
-├── .beads/                     # Unified issue tracker
-│   └── beads.db               # 34 issues (24 closed)
+├── .beads/                     # Unified issue tracker (Dolt-backed)
 │
 └── examples/                   # Example calculations
 ```
@@ -182,7 +203,11 @@ Command: mpirun -n 14 PcrystalOMP < INPUT > OUTPUT
 
 **Detailed CLI Architecture:** See `cli/docs/ARCHITECTURE.md`
 
-## TUI Architecture
+## TUI Architecture (Legacy Python/Textual — Deprecated)
+
+> This section documents the deprecated Python/Textual TUI (`tui/`), retained for
+> historical reference. The primary UI is now the Rust/Ratatui TUI (`src/`) — see
+> [ADR-006](adr-006-unify-on-rust-tui.md).
 
 ### Design Philosophy
 
@@ -364,22 +389,17 @@ async def _execute_job(self, job_id: int):
 
 ### Communication Patterns
 
-**Current: Independent Tools**
-- No direct communication
-- Share filesystem (scratch, results)
-- Share environment variables
+**Current: Shared Database + IPC Boundary**
+- All tools share the `.crystal_tui.db` SQLite database
+- The Rust TUI talks to the Python core over an IPC boundary
+  (see [ADR-003](adr-003-ipc-boundary-design.md)): client in `src/ipc/`
+  (`client.rs` + `framing.rs`), server in `python/crystalmath/server/`
+  (the `crystalmath-server` entry point)
+- IPC transport is built; the running TUI still uses the PyO3 bridge
+  (`src/bridge.rs`) — cutover to `IpcClient` is the pending keystone follow-up
+- Tools also share filesystem (scratch, results) and environment variables
 
-**Planned: Subprocess Integration**
-- TUI spawns CLI for execution
-- Parse CLI stdout for progress
-- CLI provides `--json` mode for machine reading
-
-**Future: Shared Library**
-- Extract common logic to Python module
-- Both tools import shared code
-- Unified execution behavior
-
-See `docs/integration.md` for detailed integration patterns.
+See `docs/architecture/integration.md` for detailed integration patterns.
 
 ## Testing Strategy
 
@@ -388,7 +408,7 @@ See `docs/integration.md` for detailed integration patterns.
 **Unit Tests** (bats-core):
 - Mock external commands (gum, mpirun, crystalOMP)
 - Test each module in isolation
-- Coverage: 76 tests, 74% pass rate (professional TDD standard)
+- Coverage: 173 bats tests (unit + integration)
 
 **Integration Tests:**
 - Full workflow with mock CRYSTAL binaries
@@ -486,31 +506,26 @@ tests/
 - SSH forwarding for terminal
 - CLI executes on remote host
 
-## Future Architecture Evolution
+## Architecture Evolution
 
-### Phase 1 (Current): Independent Tools ✅
-- Separate CLI and TUI
-- Shared environment only
-- No direct integration
+### Shared Database ✅
+- CLI, Rust TUI, and Python core all share the `.crystal_tui.db` SQLite database
 
-### Phase 2: TUI Backend Integration ⏳
-- TUI spawns CLI subprocess
-- Machine-readable output mode
-- Unified error handling
+### IPC Boundary ✅ (built; cutover pending)
+- Rust TUI ↔ Python core over IPC (see [ADR-003](adr-003-ipc-boundary-design.md))
+- Client in `src/ipc/` (`client.rs` + `framing.rs`); server in
+  `python/crystalmath/server/` (`crystalmath-server` entry point)
+- The running TUI still uses the PyO3 bridge (`src/bridge.rs`); cutover to
+  `IpcClient` is the pending keystone follow-up
 
-### Phase 3: Shared Core Library 📋
-- Python-based common code
-- CLI becomes thin wrapper
-- Code reuse and testing
-
-### Phase 4: Distributed System 📋
-- REST API for remote access
-- Multi-user support
-- Cloud execution backends
+### Unify on Rust TUI 🔨 (see [ADR-006](adr-006-unify-on-rust-tui.md))
+- Rust/Ratatui TUI becomes the single primary UI for job creation, config, and workflows
+- Legacy Python/Textual TUI deprecated and phased out
 
 ---
 
 **For detailed architecture documentation:**
 - CLI: `cli/docs/ARCHITECTURE.md`
-- TUI: `tui/docs/PROJECT_STATUS.md`
-- Integration: `docs/integration.md`
+- IPC boundary: [ADR-003](adr-003-ipc-boundary-design.md)
+- Unification direction: [ADR-006](adr-006-unify-on-rust-tui.md)
+- Integration: `docs/architecture/integration.md`

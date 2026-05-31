@@ -1,118 +1,149 @@
-# CrystalMath Agent Guidelines
+# CrystalMath — Canonical Agent Guide
 
-This file outlines the operational procedures, build commands, and coding standards for agents working in the CrystalMath repository.
+> **This is the single source of truth for agent instructions in this repo.** `CLAUDE.md` and
+> `GEMINI.md` are thin pointers to this file; keep guidance here, not there. (`cli/CLAUDE.md`
+> holds CLI-module detail only and links up to this file.)
 
-## 1. Project Architecture & Scope
+CrystalMath is a monorepo of tools for managing **multi-code DFT calculations** — CRYSTAL23,
+VASP, Quantum ESPRESSO, Yambo, and phonopy (see `python/crystalmath/backends/`). It is **not**
+CRYSTAL23-only.
 
-This is a monorepo containing a unified tool for CRYSTAL23 DFT calculations:
+## 1. Architecture & Direction (read this first)
 
-*   **CLI** (`cli/`): Production Bash tools. Thin orchestrator (`bin/runcrystal`) loading modules (`lib/`).
-*   **Python TUI (Primary)** (`tui/`): Textual-based interface for *creating*, *configuring*, and *monitoring* jobs. Preferred UI for new features and workflows.
-*   **Rust TUI (Secondary)** (`src/` + `python/`): High-performance Ratatui interface for monitoring; treated as secondary/experimental until a stable IPC boundary replaces PyO3 coupling. **Under feature freeze** per [ADR-002](docs/architecture/adr-002-rust-tui-secondary-policy.md).
+**Canonical direction — [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md) (2026-05-31):**
+the project is unifying on a **single Rust/Ratatui TUI** that talks to the Python core over an
+**IPC boundary** ([ADR-003](docs/architecture/adr-003-ipc-boundary-design.md)). ADR-006
+**supersedes ADR-001 and ADR-002** — the old "Python TUI primary, Rust TUI secondary under a
+feature freeze" policy no longer applies.
 
-**Crucial Philosophy**:
-*   **Primary UI (Python/Textual)**: The source of truth for user interaction and workflows.
-*   **Secondary UI (Rust/Ratatui)**: Optional monitoring cockpit; no new feature work without a stable IPC boundary.
-*   **Python Backend**: Provides business logic, database access, and scientific computing capabilities.
-*   **Shared State**: All tools use the same `.crystal_tui.db` SQLite database.
+| Component | Path | Status |
+|-----------|------|--------|
+| **CLI** (Bash) | `cli/` | ✅ Production. Thin `bin/runcrystal` orchestrator + `lib/` modules. |
+| **Rust TUI** (Ratatui) — *primary UI* | `src/` | 🔨 Becoming the single UI; freeze rescinded. May add screens/deps/features. |
+| **Python core** (`crystalmath`) — business logic SSOT | `python/` | ✅ Models, API, templates, backends, `crystalmath-server` IPC service. |
+| **Python TUI** (Textual) — *deprecated* | `tui/` | ⚠️ Maintenance-only; being phased out per ADR-006. No new features. |
 
-## 2. Build, Test, & Lint Commands
+**Rust↔Python boundary:** the IPC service ([ADR-003](docs/architecture/adr-003-ipc-boundary-design.md))
+is the target. It is **built but not yet the live transport** — the running TUI still uses PyO3
+via `src/bridge.rs`. Cutting over to `src/ipc/client.rs` and deleting PyO3 is the keystone
+follow-up. **Do not delete `bridge.rs` or expand it; do not add new PyO3 bindings** — new
+boundary work goes through the IPC client/server.
 
-### A. CLI (Bash)
-Work directory: `cli/`
-*   **Run All Tests**: `bats tests/unit/*.bats`
-*   **Run Single Test File**: `bats tests/unit/cry-parallel_test.bats`
-*   **Integration Tests**: `bats tests/integration/*.bats`
-*   **Manual Run**: `bin/runcrystal --explain my_job` (Dry run)
+**Workflow backends:** `quacc` (`python/crystalmath/quacc/`) and **AiiDA**
+(`python/crystalmath/aiida_plugin/`, `tui/src/aiida/`) are **both supported, co-equal** engines.
+Neither is being removed.
 
-### B. Rust TUI (Secondary) + Python Backend
-Work directory: Root for Rust, `python/` for backend.
+**Shared database:** all tools read/write the same `.crystal_tui.db` SQLite file, located via
+`find_database_path()` in `src/bridge.rs` (env `CRYSTAL_TUI_DB` wins).
 
-**Rust Frontend**:
-*   **Build (CRITICAL)**: Use `./scripts/build-tui.sh` to ensure PyO3 links to the correct Python version.
-    *   *Never* just run `cargo build` if the python env is uncertain.
-*   **Run Tests**: `cargo test`
-*   **Run Single Test**: `cargo test test_name`
-*   **Lint**: `cargo clippy` (must be clean)
-*   **Format**: `cargo fmt --check`
+## 2. Build, Test & Lint
 
-**Python Backend (`python/`)**:
-*   **Setup**: `cd python && uv pip install -e .`
-*   **Test**: `pytest`
-*   **Lint**: `black . && ruff check .`
+### Python workspace (uv)
+This is a **uv workspace**; members are `python/` (`crystalmath`) and `tui/` (`crystal-tui`).
+Run from the repo root:
+```bash
+uv sync                       # install core + TUI
+uv sync --all-extras          # + dev, aiida, materials extras
+uv run pytest                 # all Python tests
+uv run --package crystalmath pytest    # core only
+uv run --package crystal-tui pytest    # TUI only
+uv run black python/ tui/ && uv run ruff check python/ tui/
+```
+Prefer the workspace commands above over per-package `pip install -e .`.
 
-### C. Python TUI (Primary)
-Work directory: `tui/`
-*   **Setup**: `uv venv && source .venv/bin/activate && uv pip install -e ".[dev]"`
-*   **Run All Tests**: `pytest`
+### Rust TUI
+Run from the **repo root** (not `tui/`):
+```bash
+./scripts/build-tui.sh            # builds with the correct PYO3_PYTHON (REQUIRED while PyO3 is live)
+./scripts/build-tui.sh --clean    # after a Python version change ("SRE module mismatch")
+cargo test                        # ~242 tests
+cargo test lsp                    # one module
+cargo clippy && cargo fmt --check
+./target/release/crystalmath      # run the TUI
+```
+`build-tui.sh` exists because PyO3 must be compiled against the exact runtime Python (the venv
+is 3.12; system Python may be 3.14+). Once the IPC cutover lands (ADR-006), this requirement and
+the script go away.
 
-## 3. Code Style & Standards
+### CLI (Bash, ≥4.0)
+```bash
+cd cli/
+bats tests/unit/*.bats                  # ~173 tests total across unit+integration
+bats tests/integration/*.bats
+bats tests/unit/cry-parallel_test.bats  # single file
+bin/runcrystal --explain my_job         # dry-run / educational mode
+```
 
-### General
-*   **Commits**: Use Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`). Keep scope small and description present tense.
-*   **Secrets**: NEVER commit credentials or machine-specific paths. Use environment variables.
+### LSP server (editor diagnostics, optional)
+The Rust TUI editor spawns the vendored language server at
+`third_party/vasp-language-server/` over JSON-RPC/stdio (it is referred to in code as the
+"dft-language-server"). Node is resolved from `CRYSTAL_NODE_PATH` (default `node`). Diagnostics
+degrade gracefully if the server is missing. See
+[ADR-004](docs/architecture/adr-004-editor-lsp-strategy.md).
 
-### Bash (`cli/`)
-*   **Indent**: 4 spaces.
-*   **Variables**: Always use `local` inside functions. Snake_case (`my_var`).
-*   **Safety**: Use `[[ ... ]]` for tests. Quote variables `"${VAR}"`.
-*   **Structure**: Modular design. `bin/runcrystal` is just a loader. Logic goes in `lib/`.
-*   **Error Handling**: Functions return exit codes (0 success, non-0 failure). Main script handles traps/cleanup.
+## 3. Code Style
 
-### Python (`tui/`, `python/`)
-*   **Formatter**: Black (100 columns for TUI, 88 standard).
-*   **Linter**: Ruff (Strict: E, F, W, I, N, UP, B, A, C4, SIM).
-*   **Typing**: `mypy` strict. Type hints are mandatory for new code.
-*   **Async**: Heavy use of `asyncio` in TUI. Avoid blocking calls in the main event loop.
-*   **Security**:
-    *   Jinja2: Must use `SandboxedEnvironment`.
-    *   SSH: Never disable host key verification (`known_hosts=None` is forbidden).
-    *   Eval: Never use raw `eval()`. Use AST-based whitelisting for conditions.
+- **Commits:** Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`), present tense, small scope.
+- **Bash (`cli/`):** 4-space indent; `local` vars, snake_case; `[[ ... ]]`, quote `"${VAR}"`;
+  functions return exit codes, the main script owns traps/cleanup; logic lives in `lib/`, not `bin/`.
+- **Python (`python/`, `tui/`):** Black **100 columns** (both packages), Ruff (E, F, W, I, N, UP,
+  B, A, C4, SIM), MyPy type hints on new code, async-safe (no blocking calls in the event loop).
+- **Rust (`src/`):** `cargo fmt` + `cargo clippy` clean; `src/models.rs` must match the Python
+  Pydantic models via `serde`; dirty-flag rendering (`app.needs_redraw()`); non-fatal errors via
+  `app.set_error()`; LSP/monitor use non-blocking `mpsc` channels.
 
-### Rust (`src/`)
-*   **Style**: Standard Rust idioms. `cargo fmt` mandatory.
-*   **Models**: `src/models.rs` must match Python Pydantic models via `serde`.
-*   **Architecture**:
-    *   **Dirty-Flag Rendering**: Only draw when `app.needs_redraw()` is true.
-    *   **FFI**: `bridge.rs` handles PyO3. Don't put business logic here; delegate to Python backend or Rust internal state.
-    *   **LSP**: Non-blocking `mpsc` channels for communication.
+### Security (non-negotiable)
+- Jinja2: `SandboxedEnvironment` only.
+- SSH: never disable host-key verification (`known_hosts=None` is forbidden).
+- No raw `eval()` — use AST-whitelisted `_safe_eval_condition()` for workflow conditions.
+- Escape shell when building SLURM/remote command strings.
+- Stub execution requires explicit `metadata["allow_stub_execution"] = True`.
 
-## 4. Workflow & Issue Tracking (Beads)
+## 4. Issue Tracking (beads / `bd`)
 
-**Mandatory**: This repo uses `bd` (Beads) for all issue tracking.
-*   **Start Work**:
-    1.  `bd ready` to see available tasks.
-    2.  `bd update <id> --status in_progress` to claim.
-*   **During Work**:
-    *   Create sub-tasks if needed: `bd create "Subtask" --deps parent:<id>`.
-    *   Link discoveries: `bd create "Found bug" --deps discovered-from:<id>`.
-*   **Finish Work**:
-    1.  Verify tests pass.
-    2.  `bd close <id> --reason "Implemented via PR #..."`
-    3.  Commit the `.beads/issues.jsonl` file updates along with your code.
+This repo uses **`bd` (beads) backed by a Dolt database** under `.beads/` — **not** the old
+`.beads/issues.jsonl` (that file was removed during the Dolt migration; do not recreate or commit
+it). `bd` auto-commits to Dolt; you just `git push` your code at session end.
 
-## 5. Directory Structure Reference
+```bash
+bd ready                     # available work (start here)
+bd list --status=open
+bd show <id>
+bd create --title="..." --description="..." --type=task --priority=2   # priority 0-4, not high/med/low
+bd update <id> --status=in_progress     # claim
+bd close <id1> <id2> ...
+bd dolt push / bd dolt pull             # sync the Dolt-backed issue DB
+```
+Use `bd` for task tracking (not TodoWrite or markdown files). **Never run `bd edit`** — it opens
+`$EDITOR` and blocks. If `bd` reports "database not initialized," run `bd bootstrap` (or
+`bd init --prefix <prefix>`) before relying on it.
+
+## 5. Directory Reference
 
 ```text
 .
-├── cli/                # Bash CLI
-│   ├── bin/            # Entry points
-│   ├── lib/            # Modules
-│   └── tests/          # .bats tests
-├── tui/                # Python Workshop TUI
-│   ├── src/            # Source (textual app)
-│   └── tests/          # pytest
-├── src/                # Rust Cockpit TUI source
-├── python/             # Python backend for Rust TUI
-├── Cargo.toml          # Rust config
-├── .beads/             # Issue database
-└── scripts/            # Build helpers (build-tui.sh)
+├── cli/        # Bash CLI (bin/ entry, lib/ modules, tests/ .bats)
+├── src/        # Rust TUI (primary): app.rs, bridge.rs (PyO3, being retired),
+│               #   ipc/ (IPC client — target transport), lsp.rs, monitor.rs,
+│               #   prometheus.rs, state/, ui/ (one file per screen)
+├── python/     # crystalmath core: api.py, models.py, server/ (IPC service),
+│               #   backends/ (crystal, vasp, qe, yambo, phonopy), quacc/,
+│               #   aiida_plugin/, integrations/, vasp/, templates/, workflows/
+├── tui/        # Python Textual TUI (DEPRECATED): src/core, src/runners, src/tui
+├── docs/architecture/   # ADRs (see adr-006 for current direction)
+├── .beads/     # Dolt-backed issue DB
+└── scripts/    # build-tui.sh
 ```
 
 ## 6. Agent "Do Not" List
 
-1.  **Do not** edit `.cursor/rules` or `AGENTS.md` unless explicitly asked to improve instructions.
-2.  **Do not** bypass `scripts/build-tui.sh` when building the Rust binary if you are changing Python dependencies.
-3.  **Do not** leave broken tests. If you change behavior, update the test.
-4.  **Do not** introduce new Python dependencies without adding them to `pyproject.toml` (in `tui/` or `python/`).
-5.  **Do not** hardcode paths like `/Users/brian...`. Use env vars: `CRY23_ROOT`, `CRY_SCRATCH_BASE`.
+1. **Do not** restate policy in `CLAUDE.md`/`GEMINI.md` — edit *this* file; they are stubs.
+2. **Do not** add new PyO3 bindings or expand `src/bridge.rs`; route new boundary work through
+   the IPC client/server (ADR-003/006).
+3. **Do not** add features to the deprecated Python TUI (`tui/`); target the Rust TUI + core.
+4. **Do not** bypass `scripts/build-tui.sh` while PyO3 is still the live transport.
+5. **Do not** recreate or commit `.beads/issues.jsonl` (beads is Dolt-backed now).
+6. **Do not** hardcode machine paths (`/Users/...`); use env vars (`CRY23_ROOT`,
+   `CRY_SCRATCH_BASE`, `CRYSTAL_TUI_DB`).
+7. **Do not** leave tests broken; update tests when you change behavior, and add deps to the
+   correct `pyproject.toml` / `Cargo.toml`.

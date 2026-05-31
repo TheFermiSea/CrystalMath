@@ -1,5 +1,16 @@
 # Architecture & Migration Strategy: Python Core + Optional Rust Cockpit
 
+> **Status (2026-05-31): RATIFIED, with direction updated by ADR-006.**
+> The unification strategy described here — a single Python core as source of truth,
+> with UIs as thin clients over a stable IPC boundary — is now the canonical direction,
+> ratified by [ADR-006: Unify on Rust TUI](../docs/architecture/adr-006-unify-on-rust-tui.md) (2026-05-31).
+> Note that ADR-006 supersedes the earlier "Python TUI primary, Rust TUI secondary"
+> framing: the project is unifying on a **single Rust/Ratatui TUI** (`src/`) as the
+> **primary** UI (handling job creation, configuration, and workflows, not read-only
+> monitoring), talking to the Python core over IPC; the Python/Textual TUI (`tui/`) is
+> deprecated and being phased out. Read the "primary/secondary UI" labels below as
+> historical context — the IPC-boundary architecture itself stands.
+
 ## 1. High-Level Architecture
 
 **Primary UI:** Python/Textual (`tui/`)  

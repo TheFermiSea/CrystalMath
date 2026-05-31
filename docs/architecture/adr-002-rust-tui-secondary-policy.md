@@ -1,6 +1,12 @@
 # ADR-002: Rust TUI Secondary/Experimental Policy
 
-**Status:** Accepted
+> **⚠️ SUPERSEDED by [ADR-006](adr-006-unify-on-rust-tui.md) (2026-05-31).** The feature freeze
+> defined below has been **rescinded** — its precondition (a defined IPC boundary) was met
+> (see `src/ipc/`, `python/crystalmath/server/`). The Rust TUI is now the **primary** UI and may
+> add screens, dependencies, and features. The Monitor tab + `reqwest` dependency added on the
+> integrations branch are permitted under ADR-006, not violations. Retained for history only.
+
+**Status:** Superseded by ADR-006
 **Date:** 2026-01-06
 **Deciders:** Project maintainers
 **Supersedes:** None

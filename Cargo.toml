@@ -47,6 +47,12 @@ micromath = "2.1.0"
 tachyonfx = "0.10.1"
 unicode-truncate = "2.0"
 
+# HTTP client for Prometheus API
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Process uid for the uid-scoped /tmp socket fallback (must match the Python server)
+libc = "0.2"
+
 
 [dev-dependencies]
 pretty_assertions = "1.4"

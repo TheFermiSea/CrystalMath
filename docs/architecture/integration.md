@@ -1,6 +1,14 @@
 # Integration Guide: CLI + TUI
 
-This guide explains how the CRYSTAL CLI and TUI tools work together, their complementary roles, and integration patterns.
+This guide explains how the CrystalMath CLI and TUI tools work together, their complementary roles, and integration patterns.
+
+> **Direction (ADR-006, 2026-05-31):** The project is unifying on a single
+> Rust/Ratatui TUI (`src/`) that talks to the Python core over an IPC boundary
+> (see [ADR-003](adr-003-ipc-boundary-design.md) and [ADR-006](adr-006-unify-on-rust-tui.md)).
+> The Rust TUI is now the **primary** UI and handles job creation, configuration,
+> and workflows. The legacy Python/Textual TUI (`tui/`) is **deprecated** and
+> being phased out. Mentions of "TUI" below now refer to the Rust TUI unless
+> noted otherwise.
 
 ## Design Philosophy
 
@@ -329,13 +337,17 @@ exec_crystal_run ...
 
 ## Recommended Integration Strategy
 
-### Current (Phase 1): Independent Tools
+### Current: Shared Database + IPC Boundary
 
-- ✅ CLI and TUI work independently
+- ✅ All tools (CLI, Rust TUI, Python core) share the `.crystal_tui.db` SQLite database
+- ✅ Rust TUI communicates with the Python core over an IPC boundary (see
+  [ADR-003](adr-003-ipc-boundary-design.md)): client in `src/ipc/`
+  (`client.rs` + `framing.rs`), server in `python/crystalmath/server/`
+  (exposed as the `crystalmath-server` entry point)
+- ✅ The IPC transport is built; cutover from the legacy PyO3 bridge
+  (`src/bridge.rs`) to `IpcClient` is the pending keystone follow-up
 - ✅ Shared environment via cry23.bashrc
 - ✅ Common scratch directory structure
-- ✅ CRYSTALpytools for parsing in TUI
-- No direct integration code
 
 ### Phase 2: TUI Uses CLI Backend
 
@@ -444,6 +456,6 @@ runcrystal student_job 4
 
 ---
 
-**Current Status:** Independent tools with shared environment ✅
-**Next Phase:** TUI subprocess integration ⏳
-**Long-term Vision:** Unified core library with API 📋
+**Current Status:** Shared database + IPC boundary between Rust TUI and Python core ✅ (transport built; cutover from PyO3 pending)
+**Direction:** Unify on the Rust TUI as the primary UI; deprecate the Python/Textual TUI — see [ADR-006](adr-006-unify-on-rust-tui.md)
+**IPC Boundary:** client `src/ipc/`, server `python/crystalmath/server/` — see [ADR-003](adr-003-ipc-boundary-design.md)

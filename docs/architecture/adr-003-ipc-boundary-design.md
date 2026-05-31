@@ -1,9 +1,17 @@
 # ADR-003: IPC Boundary Design for Rust TUI
 
-**Status:** Proposed
+> **✅ IMPLEMENTED.** Both sides of this boundary exist: the Rust client (`src/ipc/client.rs`,
+> `src/ipc/framing.rs`) and the Python service (`python/crystalmath/server/`, the
+> `crystalmath-server` entry point), exercised by integration tests. The running TUI has **not
+> yet been cut over** from PyO3 (`src/bridge.rs`) to this client — that cutover is the keystone
+> follow-up in [ADR-006](adr-006-unify-on-rust-tui.md). This boundary is what made ADR-006's
+> unification possible.
+
+**Status:** Accepted (Implemented)
 **Date:** 2026-01-06
 **Deciders:** Project maintainers
 **Depends on:** ADR-001, ADR-002
+**Realized by:** [ADR-006](adr-006-unify-on-rust-tui.md)
 
 ## Context
 
@@ -28,7 +36,15 @@ This ADR defines an IPC boundary that decouples Rust from Python while preservin
 - Already using JSON serialization in current bridge (serde + Python json)
 - Matches the existing async request/response pattern in `BridgeRequest`/`BridgeResponse`
 
-**Socket path:** `$XDG_RUNTIME_DIR/crystalmath.sock` (Linux) or `~/Library/Caches/crystalmath.sock` (macOS)
+**Socket path** (resolution order, both sides): `$XDG_RUNTIME_DIR/crystalmath.sock` (Linux) →
+`~/Library/Caches/crystalmath.sock` (macOS) → `/tmp` fallback.
+
+> ⚠️ **Known mismatch in the fallback path:** the Rust client falls back to
+> `/tmp/crystalmath.sock` (`src/ipc/client.rs:117`) while the Python server falls back to
+> `/tmp/crystalmath-{uid}.sock` (`python/crystalmath/server/__init__.py:64`). When neither
+> `$XDG_RUNTIME_DIR` nor the macOS cache dir is available, the two will not meet. Unify these
+> (the uid-scoped form is preferable) — ideally via the [ADR-005](adr-005-unified-configuration.md)
+> config loader so both sides read one resolved value.
 
 ### 2. Python Service: `crystalmath-server`
 

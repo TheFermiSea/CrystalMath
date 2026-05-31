@@ -13,6 +13,7 @@ use tui_textarea::TextArea;
 use crate::bridge::{BridgeHandle, BridgeRequestKind, BridgeResponse, BridgeService};
 use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
 use crate::models::{ApiResponse, JobDetails, JobStatus, SlurmQueueEntry};
+use crate::monitor::{MonitorMessage, MonitorState};
 use crate::ui::{ClusterManagerState, RecipeBrowserState, SlurmQueueState};
 
 use tachyonfx::Effect;
@@ -247,6 +248,9 @@ pub struct App<'a> {
 
     /// Startup animation effect.
     pub startup_effect: Option<Effect>,
+
+    /// Monitor tab state (Prometheus metrics display).
+    pub monitor: MonitorState,
 }
 
 impl<'a> App<'a> {
@@ -425,6 +429,7 @@ impl<'a> App<'a> {
             pending_status_requests: std::collections::HashMap::new(),
             status_request_counter: 0,
             startup_effect: None, // Disabled - no startup animation
+            monitor: MonitorState::new(),
         })
     }
 
@@ -541,6 +546,30 @@ impl<'a> App<'a> {
             Action::MaterialsSelectNext => self.materials.select_next(),
             Action::MaterialsSelectPrev => self.materials.select_prev(),
 
+            // Monitor Tab
+            Action::MonitorNextSubView => {
+                self.monitor.sub_view = self.monitor.sub_view.next();
+                self.monitor.selected_index = 0;
+                self.mark_dirty();
+            }
+            Action::MonitorPrevSubView => {
+                self.monitor.sub_view = self.monitor.sub_view.prev();
+                self.monitor.selected_index = 0;
+                self.mark_dirty();
+            }
+            Action::MonitorSelectNext => {
+                self.monitor.select_next();
+                self.mark_dirty();
+            }
+            Action::MonitorSelectPrev => {
+                self.monitor.select_prev();
+                self.mark_dirty();
+            }
+            Action::MonitorRefresh => {
+                self.monitor.force_refresh();
+                self.mark_dirty();
+            }
+
             // General
             Action::ErrorClear => self.clear_error(),
             Action::Quit => self.should_quit = true,
@@ -555,7 +584,8 @@ impl<'a> App<'a> {
             AppTab::Jobs => AppTab::Editor,
             AppTab::Editor => AppTab::Results,
             AppTab::Results => AppTab::Log,
-            AppTab::Log => AppTab::Jobs,
+            AppTab::Log => AppTab::Monitor,
+            AppTab::Monitor => AppTab::Jobs,
         };
         self.set_tab(new_tab);
     }
@@ -563,10 +593,11 @@ impl<'a> App<'a> {
     /// Move to the previous tab.
     pub fn prev_tab(&mut self) {
         let new_tab = match self.current_tab {
-            AppTab::Jobs => AppTab::Log,
+            AppTab::Jobs => AppTab::Monitor,
             AppTab::Editor => AppTab::Jobs,
             AppTab::Results => AppTab::Editor,
             AppTab::Log => AppTab::Results,
+            AppTab::Monitor => AppTab::Log,
         };
         self.set_tab(new_tab);
     }
@@ -577,12 +608,21 @@ impl<'a> App<'a> {
     /// currently selected job to avoid showing stale logs from a different job.
     pub fn set_tab(&mut self, tab: AppTab) {
         if self.current_tab != tab {
+            if self.current_tab == AppTab::Monitor && tab != AppTab::Monitor {
+                self.monitor.stop_polling();
+            }
+
             self.current_tab = tab;
             self.mark_dirty();
 
             // Auto-refresh logs when switching to Log tab
             if tab == AppTab::Log {
                 self.auto_refresh_log_for_selected_job();
+            }
+
+            // Start Prometheus polling when switching to Monitor tab
+            if tab == AppTab::Monitor {
+                self.monitor.start_polling();
             }
         }
     }
@@ -612,6 +652,22 @@ impl<'a> App<'a> {
         let id = self.next_request_id;
         self.next_request_id = self.next_request_id.wrapping_add(1);
         id
+    }
+
+    /// Single funnel for all generic JSON-RPC sends.
+    ///
+    /// Centralizes `JsonRpcRequest` construction and dispatch so that the planned
+    /// transport swap (PyO3 `bridge.rs` -> IPC `ipc::client`, see ADR-006) touches
+    /// one function instead of every call site. Callers allocate the `request_id`
+    /// (via [`Self::next_request_id`] or a per-domain counter) and pass it here.
+    fn send_rpc(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        request_id: usize,
+    ) -> anyhow::Result<()> {
+        let rpc_request = crate::bridge::JsonRpcRequest::new(method, params, request_id as u64);
+        self.bridge.request_rpc(rpc_request, request_id)
     }
 
     /// Request a job list refresh (non-blocking).
@@ -2304,7 +2360,6 @@ impl<'a> App<'a> {
     /// Sends status requests for active (non-terminal) jobs every 30 seconds.
     /// This keeps the TUI synchronized with actual job states on the workflow engine.
     pub fn poll_job_statuses(&mut self) {
-        use crate::bridge::JsonRpcRequest;
         use crate::models::JobState;
 
         // Only poll if enough time has passed
@@ -2344,8 +2399,7 @@ impl<'a> App<'a> {
 
             // Send JSON-RPC request: jobs.status with {"job_id": job_id}
             let params = serde_json::json!({"job_id": job_id.clone()});
-            let rpc_request = JsonRpcRequest::new("jobs.status", params, request_id as u64);
-            if let Err(e) = self.bridge.request_rpc(rpc_request, request_id) {
+            if let Err(e) = self.send_rpc("jobs.status", params, request_id) {
                 warn!("Failed to send status request for job {}: {}", job_id, e);
                 continue;
             }
@@ -3635,8 +3689,6 @@ impl<'a> App<'a> {
     /// Generates VASP input files (POSCAR, INCAR, KPOINTS) from the selected
     /// Materials Project structure. The result is delivered via `poll_bridge_responses()`.
     pub fn request_generate_vasp_from_mp(&mut self) {
-        use crate::bridge::JsonRpcRequest;
-
         let Some(material) = self.materials.selected_material() else {
             self.materials
                 .set_status("Please select a structure first", true);
@@ -3677,10 +3729,7 @@ impl<'a> App<'a> {
             "config_json": config_json
         });
 
-        let rpc_request =
-            JsonRpcRequest::new("vasp.generate_from_mp", params, self.vasp_request_id as u64);
-
-        match self.bridge.request_rpc(rpc_request, self.vasp_request_id) {
+        match self.send_rpc("vasp.generate_from_mp", params, self.vasp_request_id) {
             Ok(()) => {
                 info!(
                     "VASP generation requested for {} (id={})",
@@ -3701,7 +3750,6 @@ impl<'a> App<'a> {
     /// Submits the generated POSCAR to quacc's jobs.submit endpoint.
     /// The result is delivered via `poll_bridge_responses()`.
     pub fn request_submit_quacc_job(&mut self) {
-        use crate::bridge::JsonRpcRequest;
         use crate::models::QuaccJobSubmitRequest;
 
         // Check we have generated POSCAR content
@@ -3750,9 +3798,7 @@ impl<'a> App<'a> {
             }
         };
 
-        let rpc_request = JsonRpcRequest::new("jobs.submit", params, self.submit_request_id as u64);
-
-        match self.bridge.request_rpc(rpc_request, self.submit_request_id) {
+        match self.send_rpc("jobs.submit", params, self.submit_request_id) {
             Ok(()) => {
                 info!("Job submission requested (id={})", self.submit_request_id);
             }
@@ -3768,8 +3814,6 @@ impl<'a> App<'a> {
     /// Fetches detailed structure information (formula, lattice, symmetry) for display
     /// in the materials modal preview panel.
     pub fn request_structure_preview(&mut self) {
-        use crate::bridge::JsonRpcRequest;
-
         let Some(material) = self.materials.selected_material() else {
             // No selection, clear any existing preview
             self.materials.clear_preview();
@@ -3790,16 +3834,11 @@ impl<'a> App<'a> {
             "source_data": mp_id
         });
 
-        let rpc_request = JsonRpcRequest::new(
+        if let Err(e) = self.send_rpc(
             "structures.preview",
             params,
-            self.materials.preview_request_id as u64,
-        );
-
-        if let Err(e) = self
-            .bridge
-            .request_rpc(rpc_request, self.materials.preview_request_id)
-        {
+            self.materials.preview_request_id,
+        ) {
             self.materials.preview_loading = false;
             debug!("Structure preview request failed: {}", e);
         } else {
@@ -4178,8 +4217,6 @@ impl<'a> App<'a> {
 
     /// Request VASP input validation (async).
     pub fn request_validate_vasp_inputs(&mut self) {
-        use crate::bridge::JsonRpcRequest;
-
         // Get content from editors
         let files = self.vasp_input_state.get_contents();
         let inputs_json = match serde_json::to_string(&files) {
@@ -4201,16 +4238,11 @@ impl<'a> App<'a> {
             "inputs_json": inputs_json
         });
 
-        let rpc_request = JsonRpcRequest::new(
+        if let Err(e) = self.send_rpc(
             "vasp.validate_inputs",
             params,
-            self.vasp_input_state.validation_request_id as u64,
-        );
-
-        if let Err(e) = self
-            .bridge
-            .request_rpc(rpc_request, self.vasp_input_state.validation_request_id)
-        {
+            self.vasp_input_state.validation_request_id,
+        ) {
             self.vasp_input_state
                 .set_error(format!("Validation request failed: {}", e));
         }
@@ -4335,6 +4367,90 @@ impl<'a> App<'a> {
         }
     }
 
+    // ===== Monitor Tab (Prometheus Polling) =====
+
+    /// Process pending Prometheus monitor events (non-blocking).
+    /// Called every frame from the main event loop.
+    pub fn poll_monitor_updates(&mut self) {
+        use crate::monitor::push_history;
+
+        // Take receiver out to avoid borrow conflict with self.mark_dirty()
+        let receiver = match self.monitor.receiver.take() {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        let mut dirty = false;
+        while let Ok(msg) = receiver.try_recv() {
+            match msg {
+                MonitorMessage::GpuUpdate(mut metrics) => {
+                    for new in &mut metrics {
+                        if let Some(existing) = self
+                            .monitor
+                            .gpu_metrics
+                            .iter()
+                            .find(|g| g.node == new.node && g.gpu_index == new.gpu_index)
+                        {
+                            new.utilization_history = existing.utilization_history.clone();
+                        }
+                        push_history(&mut new.utilization_history, new.utilization_pct as u64);
+                    }
+                    self.monitor.gpu_metrics = metrics;
+                    self.monitor.last_gpu_update = Some(std::time::Instant::now());
+                    self.monitor.connected = true;
+                    dirty = true;
+                }
+                MonitorMessage::NodeUpdate(mut metrics) => {
+                    for new in &mut metrics {
+                        if let Some(existing) = self
+                            .monitor
+                            .node_metrics
+                            .iter()
+                            .find(|n| n.hostname == new.hostname)
+                        {
+                            new.cpu_history = existing.cpu_history.clone();
+                            new.memory_history = existing.memory_history.clone();
+                        }
+                        push_history(&mut new.cpu_history, new.cpu_usage_pct as u64);
+                        push_history(
+                            &mut new.memory_history,
+                            if new.memory_total_gb > 0.0 {
+                                (new.memory_used_gb / new.memory_total_gb * 100.0) as u64
+                            } else {
+                                0
+                            },
+                        );
+                    }
+                    self.monitor.node_metrics = metrics;
+                    self.monitor.last_node_update = Some(std::time::Instant::now());
+                    self.monitor.connected = true;
+                    dirty = true;
+                }
+                MonitorMessage::SlurmUpdate(metrics) => {
+                    self.monitor.slurm_metrics = Some(metrics);
+                    self.monitor.last_slurm_update = Some(std::time::Instant::now());
+                    self.monitor.connected = true;
+                    dirty = true;
+                }
+                MonitorMessage::Error(e) => {
+                    self.monitor.error = Some(e);
+                    dirty = true;
+                }
+                MonitorMessage::Connected => {
+                    self.monitor.connected = true;
+                    self.monitor.error = None;
+                    dirty = true;
+                }
+            }
+        }
+
+        // Put receiver back
+        self.monitor.receiver = Some(receiver);
+        if dirty {
+            self.mark_dirty();
+        }
+    }
+
     // ===== Recipe Browser Modal =====
 
     /// Open the recipe browser modal and request recipes.
@@ -4369,18 +4485,15 @@ impl<'a> App<'a> {
         // Increment request ID for this recipe fetch
         self.recipe_request_id = self.next_request_id();
 
-        // Use the JSON-RPC bridge pattern
-        let rpc_request = crate::bridge::JsonRpcRequest::new(
-            "recipes.list",
-            serde_json::json!({}),
-            self.recipe_request_id as u64,
-        );
-
         info!(
             "Sending recipes.list RPC request (id={})",
             self.recipe_request_id
         );
-        if let Err(e) = self.bridge.request_rpc(rpc_request, self.recipe_request_id) {
+        if let Err(e) = self.send_rpc(
+            "recipes.list",
+            serde_json::json!({}),
+            self.recipe_request_id,
+        ) {
             self.recipe_browser.loading = false;
             self.recipe_browser.error = Some(format!("Failed to request recipes: {}", e));
             error!("Failed to send recipes.list request: {}", e);
@@ -4972,16 +5085,11 @@ impl<'a> App<'a> {
     fn request_check_workflows(&mut self) {
         self.workflow_request_id = self.next_request_id();
 
-        let rpc_request = crate::bridge::JsonRpcRequest::new(
+        if let Err(e) = self.send_rpc(
             "check_workflows_available",
             serde_json::json!({}),
-            self.workflow_request_id as u64,
-        );
-
-        if let Err(e) = self
-            .bridge
-            .request_rpc(rpc_request, self.workflow_request_id)
-        {
+            self.workflow_request_id,
+        ) {
             self.workflow_state.set_loading(false);
             self.workflow_state
                 .set_status(format!("Failed to check availability: {}", e), true);
@@ -5088,8 +5196,6 @@ impl<'a> App<'a> {
 
     /// Request output file content from the Python backend.
     pub fn request_fetch_output_file(&mut self, job_pk: i32, file_type: OutputFileType) {
-        use crate::bridge::JsonRpcRequest;
-
         self.output_viewer_request_id = self.next_request_id();
         self.output_viewer.loading = true;
         self.output_viewer.error = None;
@@ -5101,16 +5207,11 @@ impl<'a> App<'a> {
             "tail_lines": 5000  // Limit for performance
         });
 
-        let rpc_request = JsonRpcRequest::new(
+        if let Err(e) = self.send_rpc(
             "jobs.get_output_file",
             params,
-            self.output_viewer_request_id as u64,
-        );
-
-        if let Err(e) = self
-            .bridge
-            .request_rpc(rpc_request, self.output_viewer_request_id)
-        {
+            self.output_viewer_request_id,
+        ) {
             self.output_viewer.loading = false;
             self.output_viewer
                 .set_error(format!("Failed to request output file: {}", e));
@@ -5614,6 +5715,7 @@ mod tests {
             pending_status_requests: std::collections::HashMap::new(),
             status_request_counter: 0,
             startup_effect: None, // No effect in tests
+            monitor: MonitorState::new(),
         }
     }
 
@@ -5649,11 +5751,12 @@ mod tests {
     #[test]
     fn test_app_tab_all() {
         let tabs = AppTab::all();
-        assert_eq!(tabs.len(), 4);
+        assert_eq!(tabs.len(), 5);
         assert_eq!(tabs[0], AppTab::Jobs);
         assert_eq!(tabs[1], AppTab::Editor);
         assert_eq!(tabs[2], AppTab::Results);
         assert_eq!(tabs[3], AppTab::Log);
+        assert_eq!(tabs[4], AppTab::Monitor);
     }
 
     // =========================================================================
@@ -5948,6 +6051,9 @@ mod tests {
         assert_eq!(app.current_tab, AppTab::Log);
 
         app.next_tab();
+        assert_eq!(app.current_tab, AppTab::Monitor);
+
+        app.next_tab();
         assert_eq!(app.current_tab, AppTab::Jobs);
     }
 
@@ -5955,6 +6061,9 @@ mod tests {
     fn test_tab_navigation_wraps_backward() {
         let mut app = create_test_app();
         assert_eq!(app.current_tab, AppTab::Jobs);
+
+        app.prev_tab();
+        assert_eq!(app.current_tab, AppTab::Monitor);
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Log);

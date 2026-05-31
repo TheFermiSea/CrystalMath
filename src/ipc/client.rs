@@ -94,7 +94,11 @@ impl From<JsonRpcError> for IpcError {
 /// Resolution order:
 /// 1. `$XDG_RUNTIME_DIR/crystalmath.sock` (Linux standard)
 /// 2. `~/Library/Caches/crystalmath.sock` (macOS)
-/// 3. `/tmp/crystalmath.sock` (fallback)
+/// 3. `/tmp/crystalmath-{uid}.sock` (fallback, uid-scoped to match the Python server)
+///
+/// This MUST stay in sync with `get_default_socket_path()` in
+/// `python/crystalmath/server/__init__.py` — both sides resolve the same path or
+/// they cannot connect.
 ///
 /// # Example
 ///
@@ -113,8 +117,10 @@ pub fn default_socket_path() -> PathBuf {
         return cache_dir.join("crystalmath.sock");
     }
 
-    // Fallback to /tmp (less secure, but works everywhere)
-    PathBuf::from("/tmp/crystalmath.sock")
+    // Fallback to /tmp, uid-scoped so it matches the Python server and does not
+    // collide on the world-writable /tmp (see ADR-003). `getuid` is infallible.
+    let uid = unsafe { libc::getuid() };
+    PathBuf::from(format!("/tmp/crystalmath-{uid}.sock"))
 }
 
 /// Find the crystalmath-server binary, checking venv first then PATH.
