@@ -59,16 +59,20 @@ logic and documentation drift.
 
 | Piece | State |
 |-------|-------|
-| IPC server (`python/crystalmath/server/`, `crystalmath-server`) | Built |
+| IPC server (`python/crystalmath/server/`, `crystalmath-server`) | Built; now resolves `--db-path`/`CRYSTAL_TUI_DB` so it opens the same `.crystal_tui.db` |
 | Rust IPC client (`src/ipc/client.rs`, `framing.rs`) | Built, integration-tested |
-| Live runtime transport | **Still PyO3** via `src/bridge.rs` — cutover to `IpcClient` pending |
-| PyO3 removal | Pending the cutover (do not delete `bridge.rs` yet) |
+| IPC `BridgeService` impl (`src/bridge_ipc.rs`, `IpcBridgeHandle`) | **Implemented** — worker thread + tokio runtime, reuses `route_rpc_response`; end-to-end tested (`tests/ipc_bridge_integration.rs`) |
+| Transport selection | Behind the `pyo3-bridge` Cargo feature. **Default is still PyO3**; the IPC transport is opt-in via `cargo build --no-default-features` (needs no `PYO3_PYTHON`) |
+| Live default transport | **Still PyO3** via `src/bridge.rs`, pending a soak of the IPC path |
+| PyO3 removal | Pending the default-flip + soak (do not delete `bridge.rs` yet) |
 | Monitor tab (Prometheus) | Shipped |
 | Python TUI (`tui/`) | Present, deprecated, maintenance-only |
 
-The keystone remaining work is **cutting the running TUI over from PyO3 to `IpcClient`**, after
-which `bridge.rs` and the `PYO3_PYTHON` build dance (`scripts/build-tui.sh`) can be deleted.
-See the architectural roadmap for sequencing.
+The cutover is **implemented and feature-gated** (`BridgeService` is the seam; its typed
+`request_*` helpers are now default methods so `BridgeHandle` and `IpcBridgeHandle` differ only in
+`request_rpc`/`poll_response`). Remaining: **flip the default feature to IPC and soak**, then
+**delete `bridge.rs`'s PyO3 internals + the `pyo3-bridge` feature + the `PYO3_PYTHON` build dance**
+(`scripts/build-tui.sh`). See the architectural roadmap for sequencing.
 
 ## Consequences
 

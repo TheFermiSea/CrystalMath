@@ -5,12 +5,10 @@
 
 use std::sync::mpsc::{self, Receiver};
 
-use anyhow::Context;
-use pyo3::{Py, PyAny};
 use tracing::{debug, error, info, warn};
 use tui_textarea::TextArea;
 
-use crate::bridge::{BridgeHandle, BridgeRequestKind, BridgeResponse, BridgeService};
+use crate::bridge::{BridgeRequestKind, BridgeResponse, BridgeService};
 use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
 use crate::models::{ApiResponse, JobDetails, JobStatus, SlurmQueueEntry};
 use crate::monitor::{MonitorMessage, MonitorState};
@@ -322,23 +320,14 @@ impl<'a> App<'a> {
         Self::LSP_SERVER_PATH_DEFAULT.to_string()
     }
 
-    /// Create a new application with the Python controller.
+    /// Create a new application from an already-constructed bridge.
     ///
-    /// Spawns a worker thread that owns the Py<PyAny> and handles all
-    /// Python calls asynchronously via channels.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the Python bridge worker thread fails to spawn.
-    /// This allows the caller to handle the failure gracefully (e.g., show
-    /// an error message) instead of panicking.
-    pub fn new(py_controller: Py<PyAny>) -> anyhow::Result<Self> {
-        // Spawn the async bridge worker thread and box it for DI
-        let bridge: Box<dyn BridgeService> = Box::new(
-            BridgeHandle::spawn(py_controller)
-                .context("Failed to spawn Python bridge worker thread")?,
-        );
-
+    /// `App` is transport-agnostic: it holds the bridge behind the
+    /// `BridgeService` trait object. The caller (`main.rs`) picks the concrete
+    /// transport — the PyO3 `BridgeHandle` (legacy, `pyo3-bridge` feature) or the
+    /// IPC `IpcBridgeHandle` — so this constructor has no PyO3 dependency. See
+    /// ADR-006.
+    pub fn new(bridge: Box<dyn BridgeService>) -> anyhow::Result<Self> {
         let mut editor = TextArea::default();
         editor.set_line_number_style(
             ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),

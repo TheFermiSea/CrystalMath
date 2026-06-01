@@ -54,12 +54,17 @@ Prefer the workspace commands above over per-package `pip install -e .`.
 ### Rust TUI
 Run from the **repo root** (not `tui/`):
 ```bash
-./scripts/build-tui.sh            # builds with the correct PYO3_PYTHON (REQUIRED while PyO3 is live)
+./scripts/build-tui.sh            # default (PyO3) build with the correct PYO3_PYTHON
 ./scripts/build-tui.sh --clean    # after a Python version change ("SRE module mismatch")
 cargo test                        # ~242 tests
 cargo test lsp                    # one module
 cargo clippy && cargo fmt --check
 ./target/release/crystalmath      # run the TUI
+
+# IPC transport (ADR-006 cutover, opt-in until it becomes the default): talks to
+# crystalmath-server over a socket, needs NO PYO3_PYTHON. The server is auto-spawned.
+cargo build --no-default-features
+cargo test  --no-default-features
 ```
 `build-tui.sh` exists because PyO3 must be compiled against the exact runtime Python (the venv
 is 3.12; system Python may be 3.14+). Once the IPC cutover lands (ADR-006), this requirement and

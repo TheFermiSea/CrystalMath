@@ -17,7 +17,9 @@ use crystalmath_tui::{bridge, models};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::panic;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "pyo3-bridge")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -91,6 +93,7 @@ fn install_panic_hook() {
 ///
 /// Queries the Python executable directly to get sys.prefix and sys.path,
 /// avoiding fragile manual parsing of pyvenv.cfg and .pth files.
+#[cfg(feature = "pyo3-bridge")]
 fn configure_python_env() {
     if std::env::var_os("PYTHONHOME").is_some() {
         tracing::info!("PYTHONHOME already set; using existing value");
@@ -159,12 +162,14 @@ fn configure_python_env() {
 }
 
 /// Python environment info queried from the interpreter.
+#[cfg(feature = "pyo3-bridge")]
 struct PythonEnvInfo {
     prefix: String,
     base_prefix: String,
     path: Vec<String>,
 }
 
+#[cfg(feature = "pyo3-bridge")]
 impl PythonEnvInfo {
     /// Returns true if this is a virtual environment (prefix != base_prefix).
     fn is_venv(&self) -> bool {
@@ -195,6 +200,7 @@ impl PythonEnvInfo {
 }
 
 /// Query Python executable to get sys.prefix, sys.base_prefix, and sys.path.
+#[cfg(feature = "pyo3-bridge")]
 fn query_python_env(python_exe: &Path) -> Option<PythonEnvInfo> {
     use std::process::Command;
 
@@ -231,6 +237,7 @@ print(json.dumps({
 }
 
 /// Build a path to the Python executable inside a directory (venv or prefix).
+#[cfg(feature = "pyo3-bridge")]
 fn python_exe_in(base: &Path) -> PathBuf {
     let bin_dir = if cfg!(windows) { "Scripts" } else { "bin" };
     let exe_name = if cfg!(windows) {
@@ -242,6 +249,7 @@ fn python_exe_in(base: &Path) -> PathBuf {
 }
 
 /// Find Python executable candidates in order of preference.
+#[cfg(feature = "pyo3-bridge")]
 fn find_python_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -291,6 +299,7 @@ fn find_python_candidates() -> Vec<PathBuf> {
 }
 
 /// Find the project root by looking for Cargo.toml, walking up from the executable.
+#[cfg(feature = "pyo3-bridge")]
 fn find_project_root() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let mut dir = exe.parent()?;
@@ -345,12 +354,27 @@ fn main() -> Result<()> {
 
     tracing::info!("Starting CrystalMath TUI v{}", env!("CARGO_PKG_VERSION"));
 
-    // Initialize Python interpreter
-    tracing::info!("Initializing Python backend...");
-    configure_python_env();
-    pyo3::Python::initialize();
-    let py_controller = bridge::init_python_backend()?;
-    tracing::info!("Python backend initialized");
+    // Build the backend transport. The two paths are the ADR-006 cutover seam:
+    // PyO3 (legacy, in-process) vs IPC (default after soak; talks to
+    // crystalmath-server over a Unix socket). App is transport-agnostic.
+    #[cfg(feature = "pyo3-bridge")]
+    let bridge: Box<dyn bridge::BridgeService> = {
+        tracing::info!("Initializing Python backend (PyO3, legacy transport)...");
+        configure_python_env();
+        pyo3::Python::initialize();
+        let py_controller = bridge::init_python_backend()?;
+        tracing::info!("Python backend initialized");
+        Box::new(bridge::BridgeHandle::spawn(py_controller)?)
+    };
+    #[cfg(not(feature = "pyo3-bridge"))]
+    let bridge: Box<dyn bridge::BridgeService> = {
+        let socket = crystalmath_tui::ipc::default_socket_path();
+        tracing::info!(
+            "Using IPC transport; crystalmath-server socket: {:?}",
+            socket
+        );
+        Box::new(crystalmath_tui::bridge_ipc::IpcBridgeHandle::spawn(socket)?)
+    };
 
     // Setup terminal with RAII guard - ensures cleanup on any exit path
     let _terminal_guard = TerminalGuard::new()?;
@@ -359,8 +383,8 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Create application state (propagates error if Python bridge fails to spawn)
-    let mut app = App::new(py_controller)?;
+    // Create application state (propagates error if the bridge fails to spawn)
+    let mut app = App::new(bridge)?;
 
     // Run main loop - guard handles cleanup on success, error, or panic
     let result = run_app(&mut terminal, &mut app);

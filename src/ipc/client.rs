@@ -217,15 +217,24 @@ pub fn ensure_server_running(socket_path: &Path) -> Result<()> {
     // Try venv first (most common case), then PATH
     let server_binary = find_server_binary();
     tracing::info!("Starting crystalmath-server from {:?}...", server_binary);
-    let _child = Command::new(&server_binary)
+    let mut command = Command::new(&server_binary);
+    command
         .arg("--socket")
         .arg(socket_path)
         .stdout(Stdio::null())
-        .stderr(Stdio::piped()) // Pipe stderr for debugging if needed
-        .spawn()
-        .context(
-            "Failed to start crystalmath-server. Is it installed? (uv pip install -e python/)",
-        )?;
+        .stderr(Stdio::piped()); // Pipe stderr for debugging if needed
+
+    // Pass the resolved database path so the spawned server opens the SAME
+    // .crystal_tui.db the Rust side uses. Resolution lives in one place
+    // (bridge::find_database_path); the server reads CRYSTAL_TUI_DB. See ADR-006.
+    if let Some(db_path) = crate::bridge::find_database_path() {
+        tracing::info!("Passing CRYSTAL_TUI_DB={} to server", db_path);
+        command.env("CRYSTAL_TUI_DB", db_path);
+    }
+
+    let _child = command.spawn().context(
+        "Failed to start crystalmath-server. Is it installed? (uv pip install -e python/)",
+    )?;
 
     // Wait for socket to appear (max 5 seconds)
     let max_polls = (SERVER_STARTUP_TIMEOUT_SECS * 1000) / SERVER_POLL_INTERVAL_MS;
@@ -476,6 +485,27 @@ impl IpcClient {
 
         match result {
             Ok(Ok(response)) => self.process_response(response),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(IpcError::Timeout(self.timeout.as_secs())),
+        }
+    }
+
+    /// Send a pre-built JSON-RPC request and return the RAW response envelope.
+    ///
+    /// Unlike [`call`], this does NOT unwrap the JSON-RPC error into an
+    /// [`IpcError`] — a well-formed error envelope is returned as
+    /// `Ok(JsonRpcResponse)` so callers can apply per-method error handling
+    /// (e.g. mapping `NOT_FOUND` to `Ok(None)`). Only transport/parse failures
+    /// (timeout, I/O, malformed frame) become `Err`. Used by the IPC bridge
+    /// worker, which feeds the response into `bridge::route_rpc_response`.
+    ///
+    /// [`call`]: IpcClient::call
+    pub async fn call_rpc(
+        &mut self,
+        request: &JsonRpcRequest,
+    ) -> Result<JsonRpcResponse, IpcError> {
+        match timeout(self.timeout, self.send_receive(request)).await {
+            Ok(Ok(response)) => Ok(response),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(IpcError::Timeout(self.timeout.as_secs())),
         }
