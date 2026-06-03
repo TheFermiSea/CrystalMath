@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from crystalmath.api import CrystalController
+from crystalmath.backends import find_database_path
 from crystalmath.models import DftCode, JobSubmission, RunnerType
 
 app = typer.Typer(
@@ -35,8 +36,14 @@ def _db_path_callback(value: Optional[str]) -> Optional[str]:
 
 
 def _get_controller(use_aiida: bool = False) -> CrystalController:
-    """Create a CrystalController instance."""
-    return CrystalController(use_aiida=use_aiida, db_path=_db_path)
+    """Create a CrystalController instance.
+
+    When ``--db-path`` is not given, resolve the shared database the same way the
+    Rust TUI/server do (CRYSTAL_TUI_DB, project/CWD .crystal_tui.db, platform data
+    dir) so the CLI operates on real data instead of silently using demo data.
+    """
+    db_path = _db_path or find_database_path()
+    return CrystalController(use_aiida=use_aiida, db_path=db_path)
 
 
 @app.command()

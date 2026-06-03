@@ -32,6 +32,101 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _try_mkdir(path) -> bool:
+    """Create ``path`` (and parents) if possible; return success."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return True
+    except OSError:
+        return False
+
+
+def _platform_data_dir():
+    """Best-effort equivalent of Rust ``dirs::data_dir()`` for this platform."""
+    import os
+    import sys
+    from pathlib import Path
+
+    home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support"
+    if sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA")
+        return Path(appdata) if appdata else None
+    xdg = os.environ.get("XDG_DATA_HOME")
+    return Path(xdg) if xdg else home / ".local" / "share"
+
+
+def find_database_path() -> Optional[str]:
+    """Resolve the shared crystal_tui database path.
+
+    Mirrors the Rust resolver in ``src/bridge.rs::find_database_path`` so the
+    Python CLI/server open the SAME database the Rust TUI uses. Resolution order:
+
+    1. ``CRYSTAL_TUI_DB`` env var (used as-is; the parent dir is created so a new
+       DB can be initialized there).
+    2. ``.crystal_tui.db`` at the project root (nearest ancestor with
+       ``Cargo.toml``), then ``<project>/tui/.crystal_tui.db``.
+    3. ``.crystal_tui.db`` in the CWD, then ``./tui/.crystal_tui.db``.
+    4. ``~/.local/share/crystal-tui/jobs.db``.
+    5. The platform data dir: ``<data>/crystal-tui/jobs.db`` (created if absent).
+    6. Legacy ``./tui/jobs.db``.
+
+    Returns ``None`` (demo mode) only if every location above is unavailable.
+    """
+    import os
+    from pathlib import Path
+
+    # 1. Explicit override.
+    env = os.environ.get("CRYSTAL_TUI_DB")
+    if env:
+        p = Path(env)
+        if p.exists() or p.parent.exists() or _try_mkdir(p.parent):
+            return str(p)
+
+    db_name = ".crystal_tui.db"
+    here = Path.cwd()
+
+    # 2. Project root (nearest ancestor containing Cargo.toml).
+    for d in [here, *here.parents]:
+        if (d / "Cargo.toml").exists():
+            project_db = d / db_name
+            if project_db.exists():
+                return str(project_db)
+            tui_db = d / "tui" / db_name
+            if tui_db.exists():
+                return str(tui_db)
+            break
+
+    # 3. Current working directory.
+    cwd_db = here / db_name
+    if cwd_db.exists():
+        return str(cwd_db)
+    cwd_tui_db = here / "tui" / db_name
+    if cwd_tui_db.exists():
+        return str(cwd_tui_db)
+
+    # 4. Explicit XDG-style location (checked even on macOS, mirroring Rust).
+    xdg_db = Path.home() / ".local" / "share" / "crystal-tui" / "jobs.db"
+    if xdg_db.exists():
+        return str(xdg_db)
+
+    # 5. Platform data dir (created if missing, like the Rust resolver).
+    data_dir = _platform_data_dir()
+    if data_dir is not None:
+        platform_db = data_dir / "crystal-tui" / "jobs.db"
+        if platform_db.exists() or _try_mkdir(platform_db.parent):
+            return str(platform_db)
+
+    # 6. Legacy development location.
+    legacy_db = here / "tui" / "jobs.db"
+    if legacy_db.exists():
+        return str(legacy_db)
+
+    logger.warning("No database found - running in demo mode. Set CRYSTAL_TUI_DB to override.")
+    return None
+
+
 class Backend(ABC):
     """
     Abstract base class for job storage/execution backends.
@@ -204,4 +299,5 @@ __all__ = [
     "DemoBackend",
     "SQLiteBackend",
     "create_backend",
+    "find_database_path",
 ]
