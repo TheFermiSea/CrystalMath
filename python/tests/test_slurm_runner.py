@@ -755,5 +755,89 @@ class TestVaspPotcarStaging:
 
 
 # =============================================================================
+# SSH Host-Key Verification Tests (Finding #1 — fail closed, never silently off)
+# =============================================================================
+
+
+class TestKnownHostsFailClosed:
+    """asyncssh known_hosts semantics: None=OFF (insecure), ()=fail closed.
+
+    The runner's direct path and the vendored ConnectionManager must NEVER hand
+    asyncssh ``known_hosts=None`` unless verification was *explicitly* opted out.
+    """
+
+    def test_runner_get_known_hosts_fails_closed_when_no_known_hosts(
+        self, slurm_config, tmp_path, monkeypatch
+    ):
+        """No ~/.ssh/known_hosts + secure config -> () (fail closed), never None."""
+        from crystalmath.integrations.slurm_runner import SLURMWorkflowRunner
+
+        # Point HOME at an empty dir so ~/.ssh/known_hosts does not exist.
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        runner = SLURMWorkflowRunner(
+            config=slurm_config,
+            default_code="vasp",
+            state_file=tmp_path / "jobs.json",
+        )
+        assert runner._config.allow_insecure is False
+        assert runner._get_known_hosts() == ()
+
+    def test_runner_get_known_hosts_none_only_with_explicit_insecure(self, tmp_path, monkeypatch):
+        """known_hosts=None (verification OFF) only on explicit allow_insecure."""
+        from crystalmath.integrations.slurm_runner import SLURMConfig, SLURMWorkflowRunner
+
+        monkeypatch.delenv("CRYSTALMATH_ENV", raising=False)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        config = SLURMConfig(cluster_host="10.0.0.20", allow_insecure=True)
+        runner = SLURMWorkflowRunner(
+            config=config,
+            default_code="vasp",
+            state_file=tmp_path / "jobs.json",
+        )
+        assert runner._get_known_hosts() is None
+
+    def test_vendored_manager_fails_closed_when_no_known_hosts(self, tmp_path, monkeypatch):
+        """Vendored ConnectionManager must return () (not None) when strict checking
+        is on and ~/.ssh/known_hosts is absent — the dh7 hardening must not be
+        bypassable through the vendored path the runner prefers."""
+        from crystalmath._vendor.core.connection_manager import (
+            ConnectionConfig,
+            ConnectionManager,
+        )
+
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        config = ConnectionConfig(host="10.0.0.20", strict_host_key_checking=True)
+        # Absent known_hosts must FAIL CLOSED, not disable verification.
+        assert ConnectionManager._get_known_hosts_file(config) == ()
+
+    def test_vendored_manager_none_only_when_strict_disabled(self, tmp_path, monkeypatch):
+        """known_hosts=None (verification disabled) only when strict checking is
+        explicitly turned off — the deliberate insecure opt-in."""
+        from crystalmath._vendor.core.connection_manager import (
+            ConnectionConfig,
+            ConnectionManager,
+        )
+
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        config = ConnectionConfig(host="10.0.0.20", strict_host_key_checking=False)
+        assert ConnectionManager._get_known_hosts_file(config) is None
+
+    def test_vendored_manager_uses_known_hosts_path_when_present(self, tmp_path, monkeypatch):
+        """When ~/.ssh/known_hosts exists, verify against it (return the path)."""
+        from crystalmath._vendor.core.connection_manager import (
+            ConnectionConfig,
+            ConnectionManager,
+        )
+
+        ssh_dir = tmp_path / ".ssh"
+        ssh_dir.mkdir()
+        (ssh_dir / "known_hosts").write_text("example.com ssh-ed25519 AAAA\n")
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        config = ConnectionConfig(host="10.0.0.20", strict_host_key_checking=True)
+        result = ConnectionManager._get_known_hosts_file(config)
+        assert result == str(ssh_dir / "known_hosts")
+
+
+# =============================================================================
 # CRYSTAL23 .d12 Generation Tests (crystalmath-drm)
 # =============================================================================

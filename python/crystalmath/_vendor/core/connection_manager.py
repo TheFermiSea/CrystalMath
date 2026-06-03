@@ -389,31 +389,60 @@ class ConnectionManager:
     @staticmethod
     def _get_known_hosts_file(config: ConnectionConfig) -> Union[str, Tuple[()], None]:
         """
-        Determine the known_hosts file path to use for host key verification.
+        Determine the ``known_hosts`` value to pass to ``asyncssh.connect``.
+
+        asyncssh semantics (security-critical — see the dh7 hardening):
+          * a path -> verify host keys against that known_hosts file.
+          * ``()`` (empty tuple) -> verify, but trust nothing: *fail closed* for
+            any host that is not already known.
+          * ``None`` -> host-key verification is **DISABLED** (insecure). This is
+            only ever returned for an explicit, deliberately-plumbed insecure
+            opt-in (``strict_host_key_checking=False``), never as a silent default.
 
         Args:
             config: Connection configuration
 
         Returns:
-            Path to known_hosts file as string, or None to use asyncssh defaults,
-            or empty tuple () to disable host key verification.
+            Path to known_hosts file as string (verify against it), ``()`` to
+            verify but trust nothing (fail closed), or ``None`` only when strict
+            checking has been explicitly disabled.
 
         Precedence:
-            1. Custom known_hosts_file from config (if set to Path)
-            2. Empty Path() to disable checking
-            3. Default ~/.ssh/known_hosts
+            1. ``strict_host_key_checking=False`` -> ``None`` (verification OFF).
+            2. Custom ``known_hosts_file`` from config (Path).
+            3. Empty ``Path()`` -> ``()`` (fail closed, trust nothing).
+            4. Default ``~/.ssh/known_hosts`` if present, else ``()`` (fail closed).
         """
+        # Explicit insecure opt-in: only disable verification when strict checking
+        # has been deliberately turned off. `connect()` also handles this, but we
+        # honour it here so the returned value is never a misleading path.
+        if not config.strict_host_key_checking:
+            return None
+
         # If custom known_hosts file explicitly set
         if config.known_hosts_file is not None:
-            # Empty Path() means disable host key checking
+            # Empty Path() means "verify, trust nothing" (fail closed), NOT disable.
             if config.known_hosts_file.parts == ():
                 return ()
             # Otherwise use the specified path
             return str(config.known_hosts_file.expanduser().resolve())
 
-        # Use default SSH known_hosts location
+        # Use default SSH known_hosts location. If it does not exist we must NOT
+        # return None (that would DISABLE host-key verification despite strict
+        # checking). Return () to fail closed: asyncssh verifies but trusts no
+        # host, so unknown hosts are rejected. Add the host key to
+        # ~/.ssh/known_hosts (e.g. via ssh-keyscan) to enable connections.
         default_known_hosts = Path.home() / ".ssh" / "known_hosts"
-        return str(default_known_hosts) if default_known_hosts.exists() else None
+        if default_known_hosts.exists():
+            return str(default_known_hosts)
+
+        logger.warning(
+            "No ~/.ssh/known_hosts file found; SSH host-key verification will fail "
+            "closed (unknown hosts rejected). Add the host key to ~/.ssh/known_hosts "
+            "(e.g. `ssh-keyscan -H %s >> ~/.ssh/known_hosts`) to enable connections.",
+            config.host,
+        )
+        return ()
 
     async def disconnect(self, cluster_id: int) -> None:
         """

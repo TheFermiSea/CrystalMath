@@ -19,23 +19,39 @@ import uuid
 ALLOWED_RECIPE_PREFIX = "quacc.recipes."
 
 
+def _is_safe_segment(segment: str) -> bool:
+    """Return True iff ``segment`` is a plain ASCII Python identifier and not a dunder.
+
+    ``str.isidentifier()`` alone is too permissive: it accepts non-ASCII Unicode
+    identifiers (so a fullwidth homoglyph like ``ｖasp`` passes) and dunder names
+    like ``__builtins__``. Both are rejected here so the allowlist matches its
+    docstring (a clean, non-traversing dotted path).
+    """
+    if not segment.isascii() or not segment.isidentifier():
+        return False
+    # Reject dunder segments (e.g. ``__builtins__``, ``__class__``): they are not
+    # real recipe modules/functions and are a classic attribute-traversal vector.
+    return not (segment.startswith("__") and segment.endswith("__"))
+
+
 def is_allowed_recipe(recipe_fullname: Any) -> bool:
     """Return True iff ``recipe_fullname`` is a safe, importable quacc recipe path.
 
-    The name must be a plain dotted identifier path under ``quacc.recipes.`` —
-    no relative imports, whitespace, path separators, or dunder traversal. This
-    is the allowlist that guards the dynamic import in :meth:`JobRunner._import_recipe`.
+    The name must be a plain dotted ASCII-identifier path under ``quacc.recipes.`` —
+    no relative imports, whitespace, path separators, dunder traversal, or
+    non-ASCII homoglyphs. This is the allowlist that guards the dynamic import in
+    :meth:`JobRunner._import_recipe`.
     """
     if not recipe_fullname or not isinstance(recipe_fullname, str):
         return False
     if not recipe_fullname.startswith(ALLOWED_RECIPE_PREFIX):
         return False
-    # Require a clean dotted path (each segment a valid Python identifier) and at
-    # least one segment beyond the prefix (the function name).
+    # Require a clean dotted path (each segment a valid, non-dunder ASCII
+    # identifier) and at least one segment beyond the prefix (the function name).
     parts = recipe_fullname.split(".")
     if len(parts) <= ALLOWED_RECIPE_PREFIX.count("."):
         return False
-    return all(part.isidentifier() for part in parts)
+    return all(_is_safe_segment(part) for part in parts)
 
 
 class JobState(str, Enum):
@@ -165,9 +181,20 @@ class JobRunner(ABC):
 
             module_path, func_name = parts
             module = __import__(module_path, fromlist=[func_name])
-            return getattr(module, func_name)
+            recipe = getattr(module, func_name)
         except (ImportError, AttributeError) as e:
             raise ValueError(f"Cannot import recipe {recipe_fullname}: {e}") from e
+
+        # The resolved attribute must be callable: an allowed dotted path can still
+        # point at a module-level constant, submodule, or other non-function object.
+        # Importing/returning such a target would be meaningless (and could surface
+        # an unexpected object to the workflow engine), so fail closed.
+        if not callable(recipe):
+            raise ValueError(
+                f"Recipe {recipe_fullname!r} did not resolve to a callable "
+                f"(got {type(recipe).__name__})"
+            )
+        return recipe
 
     @staticmethod
     def generate_job_id() -> str:

@@ -261,6 +261,50 @@ class TestJobRunnerABC:
         with pytest.raises(ValueError, match="Cannot import recipe"):
             runner._import_recipe("quacc.recipes.nonexistent.function")
 
+        # Dunder segments are an attribute-traversal vector and are rejected by
+        # the allowlist (isidentifier() alone would accept "__builtins__").
+        with pytest.raises(ValueError, match="not permitted"):
+            runner._import_recipe("quacc.recipes.__builtins__")
+
+        # Non-ASCII homoglyph segments are rejected (fullwidth 'v').
+        with pytest.raises(ValueError, match="not permitted"):
+            runner._import_recipe("quacc.recipes.ｖasp.core.relax_job")
+
+    def test_job_runner_import_recipe_requires_callable(self):
+        """_import_recipe rejects an allowed path that resolves to a non-callable."""
+        import sys
+        import types
+
+        class TestRunner(JobRunner):
+            def submit(self, *args, **kwargs):
+                pass
+
+            def get_status(self, job_id):
+                return JobState.PENDING
+
+            def get_result(self, job_id):
+                return None
+
+            def cancel(self, job_id):
+                return False
+
+        runner = TestRunner()
+        mod_name = "quacc.recipes.faketest_runner.core"
+        mod = types.ModuleType(mod_name)
+        mod.constant = 3.14  # not callable
+
+        def relax_job():  # pragma: no cover - body never executed
+            return "ok"
+
+        mod.relax_job = relax_job
+        try:
+            sys.modules[mod_name] = mod
+            with pytest.raises(ValueError, match="did not resolve to a callable"):
+                runner._import_recipe(f"{mod_name}.constant")
+            assert runner._import_recipe(f"{mod_name}.relax_job") is relax_job
+        finally:
+            sys.modules.pop(mod_name, None)
+
 
 class TestGetRunner:
     """Tests for get_runner factory function."""
