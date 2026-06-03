@@ -61,10 +61,10 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.0.0",
 ]
+# AI features use the Anthropic SDK directly (crystalmath/ai/service.py); the
+# langchain/langchain-anthropic stack (~200MB transitive) was unused and removed.
 llm = [
     "anthropic>=0.39.0",
-    "langchain>=0.3.0",
-    "langchain-anthropic>=0.3.0",
 ]
 all = [
     "crystalmath[vasp,aiida,quacc,atomate2,dev,llm]",
