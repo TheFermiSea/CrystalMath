@@ -52,6 +52,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import shlex
 import sys
 import tempfile
 import uuid
@@ -150,6 +152,15 @@ class SLURMConfig:
     default_account: Optional[str] = None
     default_qos: Optional[str] = None
     allow_insecure: bool = False  # Disable SSH host key verification (opt-in)
+
+    def __post_init__(self) -> None:
+        # Never allow host-key verification to be disabled in a production
+        # environment, regardless of how the config was constructed.
+        if self.allow_insecure and os.getenv("CRYSTALMATH_ENV", "").lower() == "production":
+            raise ValueError(
+                "allow_insecure=True (SSH host-key verification disabled) is refused "
+                "when CRYSTALMATH_ENV=production. Add the host key to known_hosts instead."
+            )
 
     @classmethod
     def from_cluster_profile(cls, profile: "ClusterProfile") -> "SLURMConfig":
@@ -542,12 +553,18 @@ class SLURMWorkflowRunner:
             logger.warning("TUI connection manager not available, using direct asyncssh")
             self._connection_manager = "asyncssh"  # Flag for direct mode
 
-    def _get_known_hosts(self) -> Optional[str]:
-        """Resolve known_hosts file for SSH host key verification.
+    def _get_known_hosts(self) -> "str | tuple[()] | None":
+        """Resolve the ``known_hosts`` value for an asyncssh connection.
 
-        Returns:
-            Path to known_hosts file, or None to skip verification
-            (only when allow_insecure is explicitly True).
+        asyncssh semantics matter here:
+          * ``None``  -> host-key verification is **disabled** (insecure).
+          * a path    -> verify against that known_hosts file.
+          * ``()``    -> verify, but trust nothing -> fails closed for unknown hosts.
+
+        We therefore only return ``None`` when ``allow_insecure`` is explicitly set
+        (and never in production, enforced in ``SLURMConfig.__post_init__``). When no
+        ``~/.ssh/known_hosts`` exists we return ``()`` so the connection fails closed
+        rather than silently skipping verification.
         """
         if self._config.allow_insecure:
             logger.warning(
@@ -561,8 +578,15 @@ class SLURMWorkflowRunner:
         if known_hosts.exists():
             return str(known_hosts)
 
-        # Default: let asyncssh use its own defaults (will verify)
-        return ()  # type: ignore[return-value]
+        # Fail closed: no known_hosts file means we cannot verify the host key, so
+        # reject rather than connect blindly. Add the host key to ~/.ssh/known_hosts
+        # (e.g. `ssh-keyscan`) to enable connections.
+        logger.warning(
+            "No ~/.ssh/known_hosts file found; SSH connections to %s will fail until "
+            "the host key is added (secure fail-closed posture).",
+            self._config.cluster_host,
+        )
+        return ()
 
     async def _submit_to_slurm(
         self,
@@ -1275,7 +1299,8 @@ class SLURMWorkflowRunner:
         """
         await self._ensure_connection()
 
-        cmd = f"squeue -j {slurm_job_id} -h -o '%T' 2>/dev/null || sacct -j {slurm_job_id} -n -o State | head -1"
+        job = shlex.quote(slurm_job_id)
+        cmd = f"squeue -j {job} -h -o '%T' 2>/dev/null || sacct -j {job} -n -o State | head -1"
 
         if self._connection_manager == "asyncssh":
             import asyncssh
@@ -1534,7 +1559,7 @@ class SLURMWorkflowRunner:
         """Cancel SLURM job via scancel."""
         await self._ensure_connection()
 
-        cmd = f"scancel {slurm_job_id}"
+        cmd = f"scancel {shlex.quote(slurm_job_id)}"
 
         if self._connection_manager == "asyncssh":
             import asyncssh

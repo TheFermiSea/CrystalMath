@@ -89,6 +89,22 @@ class TestSLURMConfig:
         assert config.username == "root"
         assert config.default_partition == "compute"
 
+    def test_allow_insecure_refused_in_production(self, monkeypatch):
+        """allow_insecure=True must be refused when CRYSTALMATH_ENV=production."""
+        from crystalmath.integrations.slurm_runner import SLURMConfig
+
+        monkeypatch.setenv("CRYSTALMATH_ENV", "production")
+        with pytest.raises(ValueError, match="allow_insecure"):
+            SLURMConfig(cluster_host="10.0.0.20", allow_insecure=True)
+
+    def test_allow_insecure_permitted_outside_production(self, monkeypatch):
+        """allow_insecure=True is allowed in non-production environments."""
+        from crystalmath.integrations.slurm_runner import SLURMConfig
+
+        monkeypatch.delenv("CRYSTALMATH_ENV", raising=False)
+        config = SLURMConfig(cluster_host="10.0.0.20", allow_insecure=True)
+        assert config.allow_insecure is True
+
     def test_config_from_profile_missing_ssh_host(self):
         """Test config creation fails when ssh_host is missing."""
         from crystalmath.integrations.slurm_runner import SLURMConfig
