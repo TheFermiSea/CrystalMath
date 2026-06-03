@@ -11,8 +11,9 @@
 //! user experience for the TUI.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -33,6 +34,27 @@ const SERVER_STARTUP_TIMEOUT_SECS: u64 = 5;
 
 /// Polling interval when waiting for server socket.
 const SERVER_POLL_INTERVAL_MS: u64 = 100;
+
+/// Child processes for crystalmath-servers **this process spawned**. Their handles
+/// are retained so they can be terminated on shutdown instead of lingering until
+/// their own inactivity timeout (~300s). Servers that were already running when we
+/// connected are never added here, so we never kill a server we don't own.
+static SPAWNED_SERVERS: Mutex<Vec<Child>> = Mutex::new(Vec::new());
+
+/// Kill and reap every crystalmath-server this process spawned.
+///
+/// Idempotent and safe to call from `Drop`: it drains the registry, so a second
+/// call is a no-op. Servers started outside this process are untouched.
+pub fn shutdown_spawned_servers() {
+    let children = match SPAWNED_SERVERS.lock() {
+        Ok(mut guard) => std::mem::take(&mut *guard),
+        Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+    };
+    for mut child in children {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
 
 /// IPC-specific error types.
 ///
@@ -232,18 +254,23 @@ pub fn ensure_server_running(socket_path: &Path) -> Result<()> {
         command.env("CRYSTAL_TUI_DB", db_path);
     }
 
-    let _child = command.spawn().context(
+    let child = command.spawn().context(
         "Failed to start crystalmath-server. Is it installed? (uv pip install -e python/)",
     )?;
 
-    // Wait for socket to appear (max 5 seconds)
+    // Retain the handle so it can be killed on shutdown (see shutdown_spawned_servers).
+    if let Ok(mut servers) = SPAWNED_SERVERS.lock() {
+        servers.push(child);
+    }
+
+    // Wait until the server actually accepts a connection. Retrying a real
+    // `connect` (rather than checking that the socket file exists) closes the
+    // race where the socket node is present but the listener isn't ready yet.
     let max_polls = (SERVER_STARTUP_TIMEOUT_SECS * 1000) / SERVER_POLL_INTERVAL_MS;
     for i in 0..max_polls {
-        if socket_path.exists() {
-            // Socket exists - give server a moment to start accepting connections
-            std::thread::sleep(Duration::from_millis(SERVER_POLL_INTERVAL_MS));
+        if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
             tracing::info!(
-                "Server started after {}ms",
+                "Server accepting connections after {}ms",
                 (i + 1) * SERVER_POLL_INTERVAL_MS
             );
             return Ok(());

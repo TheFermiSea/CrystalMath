@@ -106,6 +106,11 @@ impl Drop for IpcBridgeHandle {
         // Signal the worker to exit; ignore errors (it may already be gone).
         let _ = self.request_tx.send(BridgeRequest::Shutdown);
 
+        // Terminate the crystalmath-server(s) we spawned before waiting on the
+        // worker. This also unblocks any socket read the worker is parked in, and
+        // prevents the server lingering until its ~300s inactivity timeout.
+        crate::ipc::shutdown_spawned_servers();
+
         if let Some(handle) = self.worker_handle.take() {
             const QUICK_CHECK_INTERVAL: Duration = Duration::from_millis(10);
             const MAX_QUICK_CHECKS: u32 = 10; // ~100ms total
