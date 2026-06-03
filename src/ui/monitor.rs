@@ -7,7 +7,7 @@ use crate::app::App;
 use crate::monitor::{threshold_color, MonitorSubView};
 
 /// Main render entry point for the Monitor tab.
-pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
+pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     // Sub-view tab bar (top) + content (rest)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -126,7 +126,7 @@ fn render_gpu_panel(
 
     let title = if gpu.memory_total_gb > 0.0 {
         format!(
-            " {} / GPU {} ({:.0} GB) ",
+            " {} / GPU {} ({:.0} GiB) ",
             gpu.node, gpu.gpu_index, gpu.memory_total_gb
         )
     } else {
@@ -164,15 +164,13 @@ fn render_gpu_panel(
             Style::default().fg(temp_color),
         ),
         Span::raw("    Power: "),
-        Span::raw(format!(
-            "{:.0}/{:.0}W",
-            gpu.power_watts,
-            if gpu.power_limit_watts > 0.0 {
-                gpu.power_limit_watts
-            } else {
-                250.0
-            }
-        )),
+        Span::raw(if gpu.power_limit_watts > 0.0 {
+            format!("{:.0}/{:.0}W", gpu.power_watts, gpu.power_limit_watts)
+        } else if gpu.power_watts > 0.0 {
+            format!("{:.0}W", gpu.power_watts)
+        } else {
+            "n/a".to_string()
+        }),
     ]);
     frame.render_widget(Paragraph::new(row1), chunks[0]);
 
@@ -187,7 +185,7 @@ fn render_gpu_panel(
     let row2 = Line::from(vec![
         Span::raw(" Mem:  "),
         Span::styled(
-            format!("{:.1}/{:.1} GB", gpu.memory_used_gb, gpu.memory_total_gb),
+            format!("{:.1}/{:.1} GiB", gpu.memory_used_gb, gpu.memory_total_gb),
             Style::default().fg(mem_color),
         ),
         Span::raw("    Freq: "),
@@ -325,7 +323,7 @@ fn render_node_panel(
     let row2 = Line::from(vec![
         Span::raw(" RAM: "),
         Span::styled(
-            format!("{:.1}/{:.1} GB", node.memory_used_gb, node.memory_total_gb),
+            format!("{:.1}/{:.1} GiB", node.memory_used_gb, node.memory_total_gb),
             Style::default().fg(mem_color),
         ),
         Span::styled(
@@ -346,7 +344,7 @@ fn render_node_panel(
         Span::raw(" Disk: "),
         Span::styled(format!("{:.0}%", disk_pct), Style::default().fg(disk_color)),
         Span::raw(format!(
-            " ({:.1}/{:.1} GB)",
+            " ({:.1}/{:.1} GiB)",
             node.disk_used_gb, node.disk_total_gb
         )),
     ]);

@@ -124,13 +124,8 @@ pub struct MonitorState {
     pub selected_index: usize,
     pub receiver: Option<Receiver<MonitorMessage>>,
     shutdown_tx: Option<watch::Sender<bool>>,
+    polling_thread: Option<std::thread::JoinHandle<()>>,
     polling_active: bool,
-}
-
-impl Default for MonitorState {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl MonitorState {
@@ -148,6 +143,7 @@ impl MonitorState {
             selected_index: 0,
             receiver: None,
             shutdown_tx: None,
+            polling_thread: None,
             polling_active: false,
         }
     }
@@ -172,16 +168,32 @@ impl MonitorState {
         if self.polling_active {
             return None;
         }
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(runtime) => runtime,
+            Err(err) => {
+                self.connected = false;
+                self.error = Some(format!("Monitor runtime unavailable: {}", err));
+                return None;
+            }
+        };
+        let client = match PrometheusClient::try_new() {
+            Ok(client) => client,
+            Err(err) => {
+                self.connected = false;
+                self.error = Some(format!("Prometheus client unavailable: {}", err));
+                return None;
+            }
+        };
+
         let (tx, rx) = mpsc::channel();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         self.receiver = Some(rx);
         self.shutdown_tx = Some(shutdown_tx);
         self.polling_active = true;
 
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            rt.block_on(poll_loop(tx, shutdown_rx));
-        });
+        self.polling_thread = Some(std::thread::spawn(move || {
+            runtime.block_on(poll_loop(tx, shutdown_rx, client));
+        }));
 
         Some(())
     }
@@ -190,6 +202,12 @@ impl MonitorState {
     pub fn stop_polling(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(true);
+        }
+        if let Some(handle) = self.polling_thread.take() {
+            if handle.join().is_err() {
+                self.connected = false;
+                self.error = Some("Monitor polling thread panicked".to_string());
+            }
         }
         self.polling_active = false;
         self.receiver = None;
@@ -211,6 +229,17 @@ impl MonitorState {
             MonitorSubView::SlurmStatus => self.last_slurm_update,
         };
         instant.map(|t| t.elapsed())
+    }
+
+    #[cfg(test)]
+    pub fn is_polling(&self) -> bool {
+        self.polling_active
+    }
+}
+
+impl Default for MonitorState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -246,10 +275,14 @@ pub fn threshold_color_inverse(value: f64, warn: f64, crit: f64) -> Color {
 
 // ===== Background Polling =====
 
-async fn poll_loop(tx: Sender<MonitorMessage>, shutdown: watch::Receiver<bool>) {
+async fn poll_loop(
+    tx: Sender<MonitorMessage>,
+    shutdown: watch::Receiver<bool>,
+    client: PrometheusClient,
+) {
     use std::sync::Arc;
 
-    let client = Arc::new(PrometheusClient::new());
+    let client = Arc::new(client);
     let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // GPU poll task (every 10s)
@@ -261,7 +294,11 @@ async fn poll_loop(tx: Sender<MonitorMessage>, shutdown: watch::Receiver<bool>) 
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "GPU poller") {
+                            break;
+                        }
+                    }
                     result = client.fetch_gpu_metrics() => match result {
                     Ok(metrics) => {
                         if !connected.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -275,7 +312,11 @@ async fn poll_loop(tx: Sender<MonitorMessage>, shutdown: watch::Receiver<bool>) 
                     }
                 }
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "GPU poller sleep") {
+                            break;
+                        }
+                    }
                     _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {}
                 }
             }
@@ -291,7 +332,11 @@ async fn poll_loop(tx: Sender<MonitorMessage>, shutdown: watch::Receiver<bool>) 
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "Node poller") {
+                            break;
+                        }
+                    }
                     result = client.fetch_node_metrics() => match result {
                     Ok(metrics) => {
                         if !connected.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -305,7 +350,11 @@ async fn poll_loop(tx: Sender<MonitorMessage>, shutdown: watch::Receiver<bool>) 
                     }
                 }
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "Node poller sleep") {
+                            break;
+                        }
+                    }
                     _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
                 }
             }
@@ -320,7 +369,11 @@ async fn poll_loop(tx: Sender<MonitorMessage>, shutdown: watch::Receiver<bool>) 
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "SLURM poller") {
+                            break;
+                        }
+                    }
                     result = client.fetch_slurm_metrics() => match result {
                     Ok(metrics) => {
                         if !connected.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -334,7 +387,11 @@ async fn poll_loop(tx: Sender<MonitorMessage>, shutdown: watch::Receiver<bool>) 
                     }
                 }
                 tokio::select! {
-                    _ = shutdown.changed() => break,
+                    shutdown_result = shutdown.changed() => {
+                        if should_stop_polling(shutdown_result, &shutdown, &tx, "SLURM poller sleep") {
+                            break;
+                        }
+                    }
                     _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
                 }
             }
@@ -343,6 +400,25 @@ async fn poll_loop(tx: Sender<MonitorMessage>, shutdown: watch::Receiver<bool>) 
 
     // Wait for all (they loop forever, so this blocks indefinitely)
     let _ = tokio::join!(gpu_handle, node_handle, slurm_handle);
+}
+
+fn should_stop_polling(
+    result: Result<(), watch::error::RecvError>,
+    shutdown: &watch::Receiver<bool>,
+    tx: &Sender<MonitorMessage>,
+    poller_name: &str,
+) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(err) => {
+            if !*shutdown.borrow() {
+                let _ = tx.send(MonitorMessage::Error(format!(
+                    "{poller_name} shutdown channel closed: {err}"
+                )));
+            }
+            true
+        }
+    }
 }
 
 /// Push to sparkline history with bounded length.

@@ -435,7 +435,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
         app.maybe_clear_error();
 
         // Only redraw if state has changed (dirty-flag optimization)
-        if app.take_needs_redraw() {
+        if app.needs_redraw() {
+            app.take_needs_redraw();
             terminal.draw(|f| ui::render(f, app))?;
         }
 

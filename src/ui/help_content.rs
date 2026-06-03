@@ -128,7 +128,7 @@ Global:
   ?           Open help
   Tab         Next tab
   Shift+Tab   Previous tab
-  1-4         Direct tab access
+  1-5         Direct tab access
   Ctrl+R      Refresh jobs
   Ctrl+Q      Quit
 
@@ -568,7 +568,7 @@ METRICS DISPLAYED:
   • Utilization %  (with sparkline history)
   • Temperature (°C)
   • Power usage / limit (Watts)
-  • Memory used / total (GB)
+  • Memory used / total (GiB)
   • Clock frequency (MHz)
 
 COLOR THRESHOLDS:
@@ -587,8 +587,8 @@ Shows a 2x2 grid of all cluster nodes with system metrics from node_exporter.
 METRICS DISPLAYED:
   • CPU usage % (with sparkline history)
   • Load average (1m / 5m / 15m)
-  • RAM used / total (GB)
-  • Disk used / total (GB)
+  • RAM used / total (GiB)
+  • Disk used / total (GiB)
   • Uptime
 
 COLOR THRESHOLDS:

@@ -686,7 +686,7 @@ mod tests {
         let ipc_err: IpcError = refused.into();
         assert!(matches!(ipc_err, IpcError::ConnectionFailed(_)));
 
-        let other = std::io::Error::new(std::io::ErrorKind::Other, "other");
+        let other = std::io::Error::other("other");
         let ipc_err: IpcError = other.into();
         assert!(matches!(ipc_err, IpcError::Io(_)));
     }

@@ -2652,9 +2652,9 @@ impl<'a> App<'a> {
                                     .get("parameter_value")
                                     .map(value_to_string)
                                     .unwrap_or_else(|| "-".to_string());
-                                let energy = point.get("energy").and_then(&parse_f64);
+                                let energy = point.get("energy").and_then(parse_f64);
                                 let energy_per_atom =
-                                    point.get("energy_per_atom").and_then(&parse_f64);
+                                    point.get("energy_per_atom").and_then(parse_f64);
                                 let status = point
                                     .get("status")
                                     .and_then(|v| v.as_str())
@@ -2696,9 +2696,9 @@ impl<'a> App<'a> {
                     .map(|arr| {
                         arr.iter()
                             .map(|point| crate::state::EosPointCache {
-                                volume_scale: point.get("volume_scale").and_then(&parse_f64),
-                                volume: point.get("volume").and_then(&parse_f64),
-                                energy: point.get("energy").and_then(&parse_f64),
+                                volume_scale: point.get("volume_scale").and_then(parse_f64),
+                                volume: point.get("volume").and_then(parse_f64),
+                                energy: point.get("energy").and_then(parse_f64),
                                 status: point
                                     .get("status")
                                     .and_then(|v| v.as_str())
@@ -2714,10 +2714,10 @@ impl<'a> App<'a> {
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
                     points,
-                    v0: result.get("v0").and_then(&parse_f64),
-                    e0: result.get("e0").and_then(&parse_f64),
-                    b0: result.get("b0").and_then(&parse_f64),
-                    bp: result.get("bp").and_then(&parse_f64),
+                    v0: result.get("v0").and_then(parse_f64),
+                    e0: result.get("e0").and_then(parse_f64),
+                    b0: result.get("b0").and_then(parse_f64),
+                    bp: result.get("bp").and_then(parse_f64),
                     residual: result.get("residual").and_then(parse_f64),
                     error_message: result
                         .get("error_message")
@@ -4393,6 +4393,7 @@ impl<'a> App<'a> {
                     self.monitor.gpu_metrics = metrics;
                     self.monitor.last_gpu_update = Some(std::time::Instant::now());
                     self.monitor.connected = true;
+                    self.monitor.error = None;
                     dirty = true;
                 }
                 MonitorMessage::NodeUpdate(mut metrics) => {
@@ -4419,12 +4420,14 @@ impl<'a> App<'a> {
                     self.monitor.node_metrics = metrics;
                     self.monitor.last_node_update = Some(std::time::Instant::now());
                     self.monitor.connected = true;
+                    self.monitor.error = None;
                     dirty = true;
                 }
                 MonitorMessage::SlurmUpdate(metrics) => {
                     self.monitor.slurm_metrics = Some(metrics);
                     self.monitor.last_slurm_update = Some(std::time::Instant::now());
                     self.monitor.connected = true;
+                    self.monitor.error = None;
                     dirty = true;
                 }
                 MonitorMessage::Error(e) => {
@@ -6035,42 +6038,54 @@ mod tests {
     fn test_tab_navigation_wraps_forward() {
         let mut app = create_test_app();
         assert_eq!(app.current_tab, AppTab::Jobs);
+        assert!(!app.monitor.is_polling());
 
         app.next_tab();
         assert_eq!(app.current_tab, AppTab::Editor);
+        assert!(!app.monitor.is_polling());
 
         app.next_tab();
         assert_eq!(app.current_tab, AppTab::Results);
+        assert!(!app.monitor.is_polling());
 
         app.next_tab();
         assert_eq!(app.current_tab, AppTab::Log);
+        assert!(!app.monitor.is_polling());
 
         app.next_tab();
         assert_eq!(app.current_tab, AppTab::Monitor);
+        assert!(app.monitor.is_polling());
 
         app.next_tab();
         assert_eq!(app.current_tab, AppTab::Jobs);
+        assert!(!app.monitor.is_polling());
     }
 
     #[test]
     fn test_tab_navigation_wraps_backward() {
         let mut app = create_test_app();
         assert_eq!(app.current_tab, AppTab::Jobs);
+        assert!(!app.monitor.is_polling());
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Monitor);
+        assert!(app.monitor.is_polling());
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Log);
+        assert!(!app.monitor.is_polling());
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Results);
+        assert!(!app.monitor.is_polling());
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Editor);
+        assert!(!app.monitor.is_polling());
 
         app.prev_tab();
         assert_eq!(app.current_tab, AppTab::Jobs);
+        assert!(!app.monitor.is_polling());
     }
 
     #[test]
@@ -6536,5 +6551,90 @@ mod tests {
         assert_eq!(id1, 0);
         assert_eq!(id2, 1);
         assert_eq!(id3, 2);
+    }
+
+    #[test]
+    fn test_poll_monitor_updates_preserves_gpu_history_and_clears_errors() {
+        let mut app = create_test_app();
+        let (tx, rx) = mpsc::channel();
+
+        let mut existing_history = VecDeque::new();
+        existing_history.push_back(15);
+        existing_history.push_back(35);
+        app.monitor.gpu_metrics = vec![crate::monitor::GpuMetrics {
+            node: "gpu-node".to_string(),
+            gpu_index: 0,
+            utilization_history: existing_history.clone(),
+            ..Default::default()
+        }];
+        app.monitor.receiver = Some(rx);
+
+        tx.send(MonitorMessage::Error(
+            "GPU exporter unavailable".to_string(),
+        ))
+        .unwrap();
+        tx.send(MonitorMessage::GpuUpdate(vec![
+            crate::monitor::GpuMetrics {
+                node: "gpu-node".to_string(),
+                gpu_index: 0,
+                utilization_pct: 72.0,
+                ..Default::default()
+            },
+        ]))
+        .unwrap();
+
+        app.poll_monitor_updates();
+
+        assert!(app.monitor.connected);
+        assert_eq!(app.monitor.error, None);
+        assert_eq!(app.monitor.gpu_metrics.len(), 1);
+        let history: Vec<u64> = app.monitor.gpu_metrics[0]
+            .utilization_history
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(history, vec![15, 35, 72]);
+    }
+
+    #[test]
+    fn test_poll_monitor_updates_clears_errors_for_node_and_slurm_updates() {
+        let mut app = create_test_app();
+
+        let (node_tx, node_rx) = mpsc::channel();
+        app.monitor.error = Some("stale node error".to_string());
+        app.monitor.receiver = Some(node_rx);
+        node_tx
+            .send(MonitorMessage::NodeUpdate(vec![
+                crate::monitor::NodeMetrics {
+                    hostname: "node-1".to_string(),
+                    cpu_usage_pct: 18.0,
+                    memory_used_gb: 8.0,
+                    memory_total_gb: 32.0,
+                    ..Default::default()
+                },
+            ]))
+            .unwrap();
+        app.poll_monitor_updates();
+
+        assert_eq!(app.monitor.error, None);
+        assert!(app.monitor.connected);
+        assert_eq!(app.monitor.node_metrics.len(), 1);
+
+        let (slurm_tx, slurm_rx) = mpsc::channel();
+        app.monitor.error = Some("stale slurm error".to_string());
+        app.monitor.receiver = Some(slurm_rx);
+        slurm_tx
+            .send(MonitorMessage::SlurmUpdate(
+                crate::monitor::SlurmClusterMetrics {
+                    jobs_running: 4,
+                    jobs_pending: 2,
+                    ..Default::default()
+                },
+            ))
+            .unwrap();
+        app.poll_monitor_updates();
+
+        assert_eq!(app.monitor.error, None);
+        assert_eq!(app.monitor.slurm_metrics.as_ref().unwrap().jobs_running, 4);
     }
 }
