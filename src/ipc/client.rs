@@ -10,10 +10,11 @@
 //! the Python server if it's not already running. This enables zero-config
 //! user experience for the TUI.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -35,21 +36,63 @@ const SERVER_STARTUP_TIMEOUT_SECS: u64 = 5;
 /// Polling interval when waiting for server socket.
 const SERVER_POLL_INTERVAL_MS: u64 = 100;
 
-/// Child processes for crystalmath-servers **this process spawned**. Their handles
-/// are retained so they can be terminated on shutdown instead of lingering until
-/// their own inactivity timeout (~300s). Servers that were already running when we
-/// connected are never added here, so we never kill a server we don't own.
-static SPAWNED_SERVERS: Mutex<Vec<Child>> = Mutex::new(Vec::new());
+/// Child processes for crystalmath-servers **this process spawned**, keyed by the
+/// socket path the server listens on. Their handles are retained so they can be
+/// terminated on shutdown instead of lingering until their own inactivity timeout
+/// (~300s). Servers that were already running when we connected are never added
+/// here, so we never kill a server we don't own.
+///
+/// Keying by socket path (rather than a flat list) means each owner can shut down
+/// *only* the server bound to its socket: dropping one bridge handle must not kill
+/// a server another handle started on a different socket.
+static SPAWNED_SERVERS: LazyLock<Mutex<HashMap<PathBuf, Child>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Lock the spawned-server registry, recovering from a poisoned mutex.
+///
+/// The registry only holds `Child` handles; a panic while holding the lock cannot
+/// leave them in a logically inconsistent state, so recovering the inner data is
+/// safe and preferable to propagating the poison (which would leak the children).
+fn lock_spawned_servers() -> std::sync::MutexGuard<'static, HashMap<PathBuf, Child>> {
+    SPAWNED_SERVERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Reap the child registered for `socket_path` (if any), without killing it.
+///
+/// Used after a server has been replaced/restarted on the same socket: we drop the
+/// stale handle and reap it to avoid a zombie, but do not signal it.
+fn take_spawned_server(socket_path: &Path) -> Option<Child> {
+    lock_spawned_servers().remove(socket_path)
+}
+
+/// Kill and reap **only** the crystalmath-server this process spawned for
+/// `socket_path`.
+///
+/// Idempotent and safe to call from `Drop`: it removes the child from the registry
+/// before killing, so a second call (or a concurrent call for the same socket) is a
+/// no-op. Servers started outside this process — and servers this process started on
+/// *other* sockets — are untouched.
+pub fn shutdown_spawned_server(socket_path: &Path) {
+    if let Some(mut child) = take_spawned_server(socket_path) {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
 
 /// Kill and reap every crystalmath-server this process spawned.
 ///
 /// Idempotent and safe to call from `Drop`: it drains the registry, so a second
 /// call is a no-op. Servers started outside this process are untouched.
+///
+/// Prefer [`shutdown_spawned_server`] when an owner only wants to tear down the
+/// server it itself started; this drain-all variant kills *every* spawned server.
 pub fn shutdown_spawned_servers() {
-    let children = match SPAWNED_SERVERS.lock() {
-        Ok(mut guard) => std::mem::take(&mut *guard),
-        Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
-    };
+    let children: Vec<Child> = lock_spawned_servers()
+        .drain()
+        .map(|(_, child)| child)
+        .collect();
     for mut child in children {
         let _ = child.kill();
         let _ = child.wait();
@@ -258,9 +301,16 @@ pub fn ensure_server_running(socket_path: &Path) -> Result<()> {
         "Failed to start crystalmath-server. Is it installed? (uv pip install -e python/)",
     )?;
 
-    // Retain the handle so it can be killed on shutdown (see shutdown_spawned_servers).
-    if let Ok(mut servers) = SPAWNED_SERVERS.lock() {
-        servers.push(child);
+    // Retain the handle (keyed by socket path) so the owner can kill it on shutdown
+    // (see shutdown_spawned_server). If we already had a handle for this socket — e.g.
+    // a prior server we spawned crashed and we're restarting it — reap the stale child
+    // here to avoid leaving a zombie, then register the fresh one.
+    let stale = lock_spawned_servers().insert(socket_path.to_path_buf(), child);
+    if let Some(mut stale) = stale {
+        // The old listener is gone (we only reach a spawn after a failed connect),
+        // so the process should already be exiting; kill+reap to be certain.
+        let _ = stale.kill();
+        let _ = stale.wait();
     }
 
     // Wait until the server actually accepts a connection. Retrying a real

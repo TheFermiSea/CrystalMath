@@ -42,6 +42,9 @@ pub struct IpcBridgeHandle {
     request_tx: SyncSender<BridgeRequest>,
     response_rx: Receiver<BridgeResponse>,
     worker_handle: Option<thread::JoinHandle<()>>,
+    /// Socket this handle's worker connects to. Used on `Drop` to kill **only** the
+    /// server we spawned for this socket — never a server another handle started.
+    socket_path: PathBuf,
 }
 
 impl IpcBridgeHandle {
@@ -54,6 +57,7 @@ impl IpcBridgeHandle {
         let (request_tx, request_rx) = mpsc::sync_channel::<BridgeRequest>(CHANNEL_BOUND);
         let (response_tx, response_rx) = mpsc::sync_channel::<BridgeResponse>(CHANNEL_BOUND);
 
+        let worker_socket = socket_path.clone();
         let worker_handle = thread::Builder::new()
             .name("ipc-bridge".to_string())
             .spawn(move || {
@@ -67,7 +71,7 @@ impl IpcBridgeHandle {
                         return;
                     }
                 };
-                rt.block_on(ipc_worker_loop(socket_path, request_rx, response_tx));
+                rt.block_on(ipc_worker_loop(worker_socket, request_rx, response_tx));
             })
             .context("Failed to spawn IPC bridge worker thread")?;
 
@@ -75,6 +79,7 @@ impl IpcBridgeHandle {
             request_tx,
             response_rx,
             worker_handle: Some(worker_handle),
+            socket_path,
         })
     }
 
@@ -106,10 +111,13 @@ impl Drop for IpcBridgeHandle {
         // Signal the worker to exit; ignore errors (it may already be gone).
         let _ = self.request_tx.send(BridgeRequest::Shutdown);
 
-        // Terminate the crystalmath-server(s) we spawned before waiting on the
-        // worker. This also unblocks any socket read the worker is parked in, and
-        // prevents the server lingering until its ~300s inactivity timeout.
-        crate::ipc::shutdown_spawned_servers();
+        // Terminate ONLY the crystalmath-server we spawned for this handle's socket
+        // before waiting on the worker. This also unblocks any socket read the worker
+        // is parked in, and prevents the server lingering until its ~300s inactivity
+        // timeout. Crucially, it must not touch a server another live handle started on
+        // a different socket (see Finding #2): use the per-socket shutdown, never the
+        // process-global drain.
+        crate::ipc::shutdown_spawned_server(&self.socket_path);
 
         if let Some(handle) = self.worker_handle.take() {
             const QUICK_CHECK_INTERVAL: Duration = Duration::from_millis(10);

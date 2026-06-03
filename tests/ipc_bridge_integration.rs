@@ -129,3 +129,74 @@ fn test_ipc_bridge_sequential_requests() {
     drop(bridge);
     let _ = std::fs::remove_file(&socket);
 }
+
+/// Regression for Finding #2: dropping one `IpcBridgeHandle` must kill ONLY the
+/// crystalmath-server it spawned (keyed by its own socket), never a server another
+/// live handle started on a different socket.
+///
+/// Before the fix, `Drop` called the process-global `shutdown_spawned_servers()`,
+/// which drained and killed EVERY spawned server. So dropping `bridge_a` here would
+/// kill `bridge_b`'s server, and the subsequent request on `bridge_b` would fail.
+/// This test runs both handles within a single test so it deterministically
+/// reproduces the cross-handle kill without relying on cargo's parallel scheduler.
+#[test]
+fn test_drop_one_bridge_does_not_kill_another() {
+    if should_skip() {
+        eprintln!("skip: CRYSTALMATH_SKIP_IPC_TESTS set");
+        return;
+    }
+    if !server_available() {
+        eprintln!("skip: crystalmath-server not available");
+        return;
+    }
+
+    let socket_a = unique_socket("isolation-a");
+    let socket_b = unique_socket("isolation-b");
+    let _ = std::fs::remove_file(&socket_a);
+    let _ = std::fs::remove_file(&socket_b);
+
+    let bridge_a = IpcBridgeHandle::spawn(socket_a.clone()).expect("spawn bridge A");
+    let bridge_b = IpcBridgeHandle::spawn(socket_b.clone()).expect("spawn bridge B");
+
+    // Drive one request on each handle so each worker spawns its OWN server bound
+    // to its OWN socket (distinct entries in the spawned-server registry).
+    bridge_a.request_fetch_jobs(0).expect("enqueue A");
+    assert!(
+        matches!(
+            wait_for_response(&bridge_a, Duration::from_secs(20)),
+            Some(BridgeResponse::Jobs { result: Ok(_), .. })
+        ),
+        "bridge A's first request should succeed against its own server"
+    );
+
+    bridge_b.request_fetch_jobs(0).expect("enqueue B");
+    assert!(
+        matches!(
+            wait_for_response(&bridge_b, Duration::from_secs(20)),
+            Some(BridgeResponse::Jobs { result: Ok(_), .. })
+        ),
+        "bridge B's first request should succeed against its own server"
+    );
+
+    // Drop A. This must tear down ONLY A's server, leaving B's untouched.
+    drop(bridge_a);
+
+    // B must still be able to talk to its server. If Drop killed B's server too,
+    // the worker would have to (and could) auto-respawn — but the regression we are
+    // guarding is that B's *running* server is not killed out from under it. Either
+    // way, the request must succeed; the bug manifested as an Err result.
+    bridge_b
+        .request_fetch_jobs(1)
+        .expect("enqueue B after dropping A");
+    match wait_for_response(&bridge_b, Duration::from_secs(20)) {
+        Some(BridgeResponse::Jobs { request_id, result }) => {
+            assert_eq!(request_id, 1);
+            result.expect("bridge B must still succeed after bridge A is dropped");
+        }
+        other => panic!("expected BridgeResponse::Jobs from bridge B, got {other:?}"),
+    }
+
+    drop(bridge_b);
+    let _ = std::fs::remove_file(&socket_a);
+    let _ = std::fs::remove_file(&socket_b);
+}

@@ -235,15 +235,42 @@ async fn test_stale_socket_cleanup() {
 
     assert!(socket_path.exists(), "Stale socket should exist");
 
-    // Verify connection is refused (simulating crashed server)
-    let refused = std::os::unix::net::UnixStream::connect(&socket_path);
-    assert!(
-        refused.is_err(),
-        "Connection should be refused to stale socket"
-    );
+    // Verify connection is refused (simulating crashed server).
+    //
+    // Closing a `UnixListener` does not synchronously tear down the bound socket on
+    // macOS: under parallel-test scheduling pressure the kernel can still accept a
+    // `connect()` into the dying listener's backlog for a brief window after `drop`,
+    // so a single immediate check is racy (the connect transiently *succeeds*). Poll
+    // with a short bound until the listener is fully gone — the orphaned socket then
+    // deterministically refuses, which is exactly the state `ensure_server_running`
+    // must clean up.
+    let refused_err = {
+        let mut last_ok = None;
+        let mut err = None;
+        for _ in 0..100 {
+            match std::os::unix::net::UnixStream::connect(&socket_path) {
+                Ok(stream) => {
+                    // Still half-open in the backlog; drop and let the kernel settle.
+                    drop(stream);
+                    last_ok = Some(());
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => {
+                    err = Some(e);
+                    break;
+                }
+            }
+        }
+        err.unwrap_or_else(|| {
+            panic!(
+                "stale socket never refused connections after ~500ms (last connect ok: {:?})",
+                last_ok
+            )
+        })
+    };
     println!(
         "Stale socket connection error (expected): {:?}",
-        refused.err()
+        refused_err
     );
 
     // ensure_server_running should detect stale and start fresh
