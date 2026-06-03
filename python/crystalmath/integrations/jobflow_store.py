@@ -57,6 +57,7 @@ Full implementations will be completed in Phase 3.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -81,6 +82,24 @@ if TYPE_CHECKING:
     from crystalmath.backends.sqlite import SQLiteBackend
     from crystalmath.models import JobDetails, JobStatus
     from crystalmath.protocols import Backend, WorkflowResult
+
+
+# Column/field identifiers that get interpolated into SQL (SELECT DISTINCT, WHERE,
+# ORDER BY) cannot be parameterized, so they MUST be validated against this strict
+# identifier allowlist before interpolation to prevent SQL injection. Applied
+# consistently across query()/distinct() (and any future remove_docs()).
+_VALID_COLUMN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_column(name: Any, *, context: str) -> str:
+    """Validate a SQL identifier (column/field name) before interpolation.
+
+    Raises ValueError if ``name`` is not a plain identifier. Returns the name so
+    callers can use it inline.
+    """
+    if not isinstance(name, str) or not _VALID_COLUMN.match(name):
+        raise ValueError(f"Invalid column name in {context}: {name!r}")
+    return name
 
 
 # =============================================================================
@@ -407,15 +426,11 @@ class SQLiteJobStore:
             self.connect()
         import json
 
-        import re
-
-        _VALID_COLUMN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
         where_clauses: List[str] = []
         params: List[Any] = []
         if criteria:
             for key, value in criteria.items():
-                if not _VALID_COLUMN.match(key):
-                    raise ValueError(f"Invalid column name in criteria: {key!r}")
+                _validate_column(key, context="criteria")
                 if isinstance(value, dict) and "$regex" in value:
                     where_clauses.append(f"{key} LIKE ?")
                     pattern = value["$regex"].replace(".*", "%").replace(".", "_")
@@ -430,8 +445,7 @@ class SQLiteJobStore:
         if sort:
             sort_clauses = []
             for field_name, direction in sort.items():
-                if not _VALID_COLUMN.match(field_name):
-                    raise ValueError(f"Invalid column name in sort: {field_name!r}")
+                _validate_column(field_name, context="sort")
                 sort_clauses.append(f"{field_name} {'ASC' if direction == 1 else 'DESC'}")
             sql += " ORDER BY " + ", ".join(sort_clauses)
         if limit:
@@ -543,6 +557,9 @@ class SQLiteJobStore:
         """
         if not self._connected:
             self.connect()
+        # `field` and criteria keys are interpolated into SQL and cannot be
+        # parameterized, so validate them as plain identifiers first.
+        _validate_column(field, context="distinct field")
         sql = f"SELECT DISTINCT {field} FROM {self._collection_name}"
         params: List[Any] = []
         if criteria:
@@ -550,6 +567,7 @@ class SQLiteJobStore:
 
             where_clauses: List[str] = []
             for key, value in criteria.items():
+                _validate_column(key, context="criteria")
                 where_clauses.append(f"{key} = ?")
                 params.append(value if not isinstance(value, dict) else json.dumps(value))
             sql += " WHERE " + " AND ".join(where_clauses)
