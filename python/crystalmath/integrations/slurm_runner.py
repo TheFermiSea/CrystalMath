@@ -54,7 +54,6 @@ import asyncio
 import logging
 import os
 import shlex
-import sys
 import tempfile
 import uuid
 from dataclasses import dataclass, field
@@ -339,20 +338,15 @@ class SLURMWorkflowRunner:
     def _check_availability(self) -> bool:
         """Check if required dependencies are available."""
         try:
-            # Check for TUI runner dependencies
-            tui_path = Path(__file__).parent.parent.parent.parent.parent / "tui"
-            if tui_path.exists():
-                return True
-
-            # Check if asyncssh is available for direct connection
+            # The vendored connection manager (ADR-006) needs asyncssh to drive
+            # a real SLURM cluster over SSH. The vendored module itself is always
+            # importable, so availability hinges on the asyncssh optional extra.
             try:
                 import asyncssh  # noqa: F401
 
                 return True
             except ImportError:
-                pass
-
-            return False
+                return False
 
         except Exception as e:
             logger.warning(f"SLURM runner availability check failed: {e}")
@@ -528,12 +522,8 @@ class SLURMWorkflowRunner:
             return
 
         try:
-            # Try to use TUI connection manager
-            tui_path = Path(__file__).parent.parent.parent.parent.parent / "tui"
-            if tui_path.exists() and str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
-            from src.core.connection_manager import ConnectionManager
+            # Use the vendored connection manager (ADR-006): no dependency on tui/.
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
 
             self._connection_manager = ConnectionManager()
 

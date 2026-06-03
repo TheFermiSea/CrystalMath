@@ -591,9 +591,9 @@ def _analyze_vasp_errors(content: str) -> list[dict[str, Any]]:
     Returns:
         List of error dictionaries
     """
-    # Try to use the full VASPErrorHandler from tui
+    # Try to use the full VASPErrorHandler (vendored from the deprecated TUI).
     try:
-        from tui.src.runners.vasp_errors import VASPErrorHandler
+        from crystalmath._vendor.runners.vasp_errors import VASPErrorHandler
 
         handler = VASPErrorHandler()
         vasp_errors = handler.analyze_outcar(content)

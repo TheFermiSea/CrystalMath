@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -50,17 +49,10 @@ class SQLiteBackend(Backend):
         self._init_database()
 
     def _init_database(self) -> None:
-        """Initialize connection to TUI database."""
+        """Initialize connection to the vendored database module."""
         try:
-            # Import TUI database module
-            # Need to add tui/src to path for core.database import
-            repo_root = Path(__file__).parent.parent.parent.parent  # crystalmath/
-            tui_path = repo_root / "tui" / "src"
-
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
-            from core.database import Database
+            # Vendored backend (ADR-006): no longer depends on the deprecated tui/ tree.
+            from crystalmath._vendor.core.database import Database
 
             self._db = Database(Path(self._db_path))
             self._available = True

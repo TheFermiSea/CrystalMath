@@ -167,7 +167,7 @@ class CrystalController:
         """Initialize SQLite database for fallback mode."""
         try:
             # Import TUI database module via uv workspace (crystal-tui package)
-            from src.core.database import Database
+            from crystalmath._vendor.core.database import Database
 
             self._db = Database(Path(db_path))
             logger.info(f"Loaded SQLite database: {db_path}")
@@ -988,8 +988,8 @@ class CrystalController:
 
         async def _run() -> list[dict[str, Any]]:
             # Lazy import to avoid loading heavy dependencies on startup
-            from src.core.materials_api.service import MaterialsService
-            from src.core.materials_api.settings import MaterialsSettings
+            from crystalmath._vendor.core.materials_api.service import MaterialsService
+            from crystalmath._vendor.core.materials_api.settings import MaterialsSettings
 
             settings = MaterialsSettings.get_instance()
 
@@ -1034,8 +1034,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> str:
-            from src.core.materials_api.service import MaterialsService
-            from src.core.materials_api.settings import MaterialsSettings
+            from crystalmath._vendor.core.materials_api.service import MaterialsService
+            from crystalmath._vendor.core.materials_api.settings import MaterialsSettings
 
             settings = MaterialsSettings.get_instance()
 
@@ -1072,8 +1072,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> dict[str, Any]:
-            from src.core.materials_api.service import MaterialsService
-            from src.core.materials_api.settings import MaterialsSettings
+            from crystalmath._vendor.core.materials_api.service import MaterialsService
+            from crystalmath._vendor.core.materials_api.settings import MaterialsSettings
 
             settings = MaterialsSettings.get_instance()
 
@@ -1124,8 +1124,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> list[dict[str, Any]]:
-            from src.core.connection_manager import ConnectionManager
-            from src.runners.slurm_runner import SLURMRunner
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
+            from crystalmath._vendor.runners.slurm_runner import SLURMRunner
 
             # Get cluster config from database
             if not hasattr(self, "_db") or not self._db:
@@ -1212,8 +1212,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> None:
-            from src.core.connection_manager import ConnectionManager
-            from src.runners.slurm_runner import SLURMRunner
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
+            from crystalmath._vendor.runners.slurm_runner import SLURMRunner
 
             if not hasattr(self, "_db") or not self._db:
                 logger.warning("Database not available - cannot sync remote jobs")
@@ -1376,8 +1376,8 @@ class CrystalController:
         import os
 
         async def _run() -> None:
-            from src.core.connection_manager import ConnectionManager
-            from src.runners.slurm_runner import SLURMRunner
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
+            from crystalmath._vendor.runners.slurm_runner import SLURMRunner
 
             if not hasattr(self, "_db") or not self._db:
                 raise ValueError("Database not available")
@@ -1487,8 +1487,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> dict[str, Any]:
-            from src.core.connection_manager import ConnectionManager
-            from src.runners.slurm_runner import SLURMRunner
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
+            from crystalmath._vendor.runners.slurm_runner import SLURMRunner
 
             # Get cluster config from database
             if not hasattr(self, "_db") or not self._db:
@@ -1774,7 +1774,7 @@ class CrystalController:
         import asyncio
 
         async def _test() -> dict[str, Any]:
-            from src.core.connection_manager import ConnectionManager
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
 
             if not hasattr(self, "_db") or not self._db:
                 raise ValueError("Database not available")
@@ -2164,7 +2164,7 @@ class CrystalController:
             - Error: {"ok": false, "error": {"code": "...", "message": "..."}}
         """
         try:
-            from src.core.templates import TemplateManager
+            from crystalmath._vendor.core.templates import TemplateManager
 
             # Use monorepo templates directory
             repo_root = Path(__file__).parent.parent.parent
@@ -2225,7 +2225,7 @@ class CrystalController:
             - Error: {"ok": false, "error": {"code": "...", "message": "..."}}
         """
         try:
-            from src.core.templates import TemplateManager
+            from crystalmath._vendor.core.templates import TemplateManager
 
             # Use monorepo templates directory
             repo_root = Path(__file__).parent.parent.parent
