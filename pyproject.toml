@@ -95,7 +95,12 @@ module = [
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["python/tests", "tui/tests"]
+# Root pytest runs the crystalmath core suite (the ADR-006 business-logic SSOT).
+# The deprecated Textual TUI (tui/) has its own testpaths and optional extras
+# (e.g. the `materials` extra ships aiosqlite); run it explicitly when needed via
+# `uv run --package crystal-tui pytest`. Including tui/tests here previously aborted
+# the entire run at collection when an optional extra was absent.
+testpaths = ["python/tests"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
 filterwarnings = [

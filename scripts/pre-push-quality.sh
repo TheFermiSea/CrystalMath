@@ -87,28 +87,32 @@ echo ""
 if $HAS_PYTHON; then
     echo "▸ Python changes detected"
 
-    # Format check (hard gate)
+    # Format check (hard gate). Scoped to the crystalmath core (python/); the
+    # Textual TUI (tui/) is deprecated (ADR-006) and carries pre-existing format
+    # debt, so it is not a hard gate. Format it explicitly if you touch it.
     echo "  Checking ruff format..."
-    if ! format_output=$(uv run ruff format --check python/ tui/ 2>&1); then
+    if ! format_output=$(uv run ruff format --check python/ 2>&1); then
         printf '%s\n' "$format_output"
-        echo "  ✗ Ruff format check failed. Run: uv run ruff format python/ tui/"
+        echo "  ✗ Ruff format check failed. Run: uv run ruff format python/"
         FAILURES=$((FAILURES + 1))
     else
         echo "  ✓ Format OK"
     fi
 
-    # Lint (warning only)
+    # Lint (warning only) — core only, same rationale as the format gate.
     echo "  Checking ruff lint..."
-    if ! uv run ruff check python/ tui/ > /dev/null 2>&1; then
+    if ! uv run ruff check python/ > /dev/null 2>&1; then
         echo "  ⚠ Ruff lint warnings (non-blocking)"
         WARNINGS=$((WARNINGS + 1))
     else
         echo "  ✓ Lint OK"
     fi
 
-    # Tests (hard gate)
+    # Tests (hard gate) — core suite only; tui/ is deprecated (ADR-006) and its
+    # tests need optional extras. Run them explicitly with `uv run --package
+    # crystal-tui pytest` when working on the deprecated TUI.
     echo "  Running Python tests..."
-    if ! uv run pytest python/tests/ tui/tests/ -x -q --tb=line 2>/dev/null; then
+    if ! uv run pytest python/tests/ -x -q --tb=line 2>/dev/null; then
         echo "  ✗ Python tests failed"
         FAILURES=$((FAILURES + 1))
     else

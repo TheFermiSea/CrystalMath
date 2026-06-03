@@ -11,6 +11,7 @@ Uses MockRunner to test without requiring Parsl/Covalent dependencies.
 
 from __future__ import annotations
 
+import importlib.util
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +20,14 @@ import pytest
 from crystalmath.quacc.mock_runner import MockRunner, MockJobState
 from crystalmath.quacc.runner import JobState
 from crystalmath.quacc.store import JobMetadata, JobStatus
+
+# Some submission tests patch ``ase.io.read`` to parse the structure payload. ASE
+# ships only in the optional ``crystalmath[vasp]`` / ``[quacc]`` extras, so guard
+# those tests behind its presence instead of hard-failing on a minimal install.
+HAS_ASE = importlib.util.find_spec("ase") is not None
+requires_ase = pytest.mark.skipif(
+    not HAS_ASE, reason="ase not installed (crystalmath[vasp] / [quacc] extra)"
+)
 
 
 # =============================================================================
@@ -174,6 +183,7 @@ class TestJobsSubmitHandler:
         atoms.get_chemical_symbols.return_value = ["Si"] * 8
         return atoms
 
+    @requires_ase
     @pytest.mark.asyncio
     async def test_submit_returns_job_id(self, mock_atoms):
         """Successful submission returns job_id."""
@@ -233,6 +243,7 @@ class TestJobsSubmitHandler:
         assert result["status"] == "error"
         assert "workflow engine" in result["error"].lower()
 
+    @requires_ase
     @pytest.mark.asyncio
     async def test_submit_potcar_validation_fails(self, mock_atoms):
         """Submission fails if POTCARs missing."""
@@ -297,6 +308,7 @@ class TestJobsSubmitHandler:
         assert result["status"] == "error"
         assert "structure" in result["error"].lower()
 
+    @requires_ase
     @pytest.mark.asyncio
     async def test_submit_invalid_structure(self):
         """Submission fails with invalid structure format."""
@@ -566,6 +578,7 @@ class TestJobsCancelHandler:
 class TestJobSubmissionIntegration:
     """Integration tests using MockRunner end-to-end."""
 
+    @requires_ase
     @pytest.mark.asyncio
     async def test_full_job_lifecycle_with_mock_runner(self):
         """Test complete job lifecycle: submit -> poll -> complete."""
@@ -636,6 +649,7 @@ class TestJobSubmissionIntegration:
             # Result should be populated
             assert status2["result"] is not None
 
+    @requires_ase
     @pytest.mark.asyncio
     async def test_job_failure_lifecycle(self):
         """Test job failure flow: submit -> poll -> fail."""

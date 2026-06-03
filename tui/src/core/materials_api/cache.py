@@ -26,7 +26,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import aiosqlite
+try:
+    import aiosqlite
+except ModuleNotFoundError:  # pragma: no cover
+    # aiosqlite ships only in the optional `crystal-tui[materials]` extra. The
+    # Textual TUI is deprecated (ADR-006); degrade gracefully so importing this
+    # package does not abort pytest collection when the extra is absent.
+    aiosqlite = None  # type: ignore[assignment]
 
 from .errors import CacheError
 from .models import CacheEntry, ContributionRecord, MaterialRecord
