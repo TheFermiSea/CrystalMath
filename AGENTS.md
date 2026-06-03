@@ -200,3 +200,24 @@ bd close <id>         # Complete work
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
+
+## Agent skills
+
+Per-repo configuration consumed by the [mattpocock/skills](https://github.com/mattpocock/skills)
+engineering & productivity skills (`triage`, `to-issues`, `to-prd`, `improve-codebase-architecture`,
+`diagnose`, `tdd`, `zoom-out`, …). Scaffolded by `/setup-matt-pocock-skills`.
+
+### Issue tracker
+
+Issues live in **beads** (`bd`, Dolt-backed under `.beads/`) — **not** GitHub Issues, `TodoWrite`, or
+markdown TODOs (see §4). See [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+Canonical 5-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`,
+`wontfix`), applied as `bd` labels. See [`docs/agents/triage-labels.md`](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` (created lazily) + ADRs in `docs/architecture/` (not `docs/adr/`).
+See [`docs/agents/domain.md`](docs/agents/domain.md).
