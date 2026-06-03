@@ -417,11 +417,16 @@ impl HelpState {
     }
 
     /// Scroll content pane up.
+    ///
+    /// Single-line scroll helpers; the help modal currently binds page-based
+    /// scrolling (`page_up`/`page_down`). Kept for an upcoming line-scroll binding.
+    #[allow(dead_code)]
     pub fn scroll_content_up(&mut self) {
         self.content_scroll = self.content_scroll.saturating_sub(1);
     }
 
     /// Scroll content pane down.
+    #[allow(dead_code)]
     pub fn scroll_content_down(&mut self) {
         self.content_scroll = self.content_scroll.saturating_add(1);
     }

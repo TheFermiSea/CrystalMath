@@ -37,8 +37,12 @@ pub enum OutputFileType {
     /// VASP OSZICAR file
     Oszicar,
     /// CRYSTAL output file
+    // Not yet passed to OutputViewerState::open (CRYSTAL output viewing pending);
+    // the variant's render/keyword handling is already implemented.
+    #[allow(dead_code)]
     CrystalOut,
     /// Generic log/output file
+    #[allow(dead_code)]
     GenericLog,
 }
 
@@ -221,6 +225,9 @@ pub struct BatchSubmissionState {
     pub common_mpi_ranks: String,
     pub common_walltime: String,
     pub common_memory_gb: String,
+    // Initialized but not yet surfaced in the batch-submission form; pending the
+    // per-job batch tracking work (crystalmath-7l6).
+    #[allow(dead_code)]
     pub common_partition: String,
 
     /// List of job configurations.
@@ -1106,6 +1113,9 @@ impl ConvergenceParameter {
         }
     }
 
+    // Backward cycle; paired with `next()` for symmetry, pending a reverse-cycle
+    // keybinding in the convergence form.
+    #[allow(dead_code)]
     pub fn prev(self) -> Self {
         match self {
             Self::Kpoints => Self::Ecutwfc,
@@ -1154,6 +1164,9 @@ impl BandPathPreset {
         }
     }
 
+    // Backward cycle; paired with `next()` for symmetry, pending a reverse-cycle
+    // keybinding in the band-path selector.
+    #[allow(dead_code)]
     pub fn prev(self) -> Self {
         match self {
             Self::Auto => Self::Custom,

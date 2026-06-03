@@ -127,6 +127,12 @@ pub struct MonitorState {
     polling_active: bool,
 }
 
+impl Default for MonitorState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MonitorState {
     pub fn new() -> Self {
         Self {

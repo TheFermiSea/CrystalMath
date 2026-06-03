@@ -435,6 +435,10 @@ impl<'a> App<'a> {
     }
 
     /// Check if redraw is needed without resetting.
+    ///
+    /// Non-consuming peek accessor (the render loop uses `take_needs_redraw`);
+    /// part of the documented dirty-flag API and exercised by the test suite.
+    #[allow(dead_code)]
     pub fn needs_redraw(&self) -> bool {
         self.needs_redraw
     }
@@ -2018,8 +2022,8 @@ impl<'a> App<'a> {
                                         Ok(api_response) => match api_response.into_result() {
                                             Ok(val_result) => {
                                                 if val_result.valid {
-                                                    self.vasp_input_state.status =
-                                                        Some("Validation passed!".to_string());
+                                                    self.vasp_input_state
+                                                        .set_status("Validation passed!".to_string());
                                                 } else {
                                                     self.vasp_input_state.set_error(
                                                         "Validation failed. See details."
@@ -4220,7 +4224,7 @@ impl<'a> App<'a> {
 
         // Set up validation request
         self.vasp_input_state.validation_request_id = self.next_request_id();
-        self.vasp_input_state.status = Some("Validating...".to_string());
+        self.vasp_input_state.set_status("Validating...".to_string());
         self.mark_dirty();
 
         let params = serde_json::json!({

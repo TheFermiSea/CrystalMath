@@ -57,6 +57,12 @@ pub struct PrometheusClient {
     base_url: String,
 }
 
+impl Default for PrometheusClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PrometheusClient {
     pub fn new() -> Self {
         let base_url =
