@@ -117,6 +117,20 @@ class WorkflowExecutionError(RunnerError):
     pass
 
 
+class NoRunnerConfiguredError(RunnerError):
+    """No execution runner is configured and stub execution was not opted into.
+
+    Raised by :meth:`BaseAnalysisRunner._execute_step` when ``self._runner`` is
+    ``None`` and ``metadata['allow_stub_execution']`` was not explicitly set to
+    ``True``. Previously this case silently returned a fake-success
+    ``StepResult(success=True, outputs={'simulated': True})``, which is
+    indistinguishable from a real result over IPC. Per the AGENTS.md security
+    rule, stub execution must be explicitly opted into.
+    """
+
+    pass
+
+
 class CodeNotAvailableError(RunnerError):
     """Required DFT code not available on cluster."""
 
@@ -1176,19 +1190,32 @@ class BaseAnalysisRunner(ABC):
         logger.info(f"Executing step: {step.name} ({step.code})")
         start_time = datetime.now()
 
-        try:
-            # In real implementation, this would submit to runner
-            # For now, return stub result
-            if self._runner is None:
-                # Stub execution for development
-                logger.warning(f"No runner configured - step {step.name} will be simulated")
+        # Handle the no-runner case BEFORE the broad try/except below so that a
+        # missing runner cannot be silently swallowed into a fake-success result.
+        if self._runner is None:
+            # Stub execution must be EXPLICITLY opted into (AGENTS.md security
+            # rule). Without that opt-in, returning success={'simulated': True}
+            # is indistinguishable from a real result over IPC, so we fail loud.
+            metadata = kwargs.get("metadata") or {}
+            if metadata.get("allow_stub_execution") is True:
+                logger.warning(
+                    f"No runner configured - step {step.name} will be simulated "
+                    f"(allow_stub_execution=True)"
+                )
                 return StepResult(
                     step_name=step.name,
                     success=True,
                     outputs={"simulated": True},
                     wall_time_seconds=(datetime.now() - start_time).total_seconds(),
                 )
+            raise NoRunnerConfiguredError(
+                f"No execution runner is configured for step '{step.name}', so it "
+                f"cannot be run. This previously returned a fake 'simulated' success. "
+                f"To run without a real runner (e.g. for local development), explicitly "
+                f"opt into stub execution by passing metadata={{'allow_stub_execution': True}}."
+            )
 
+        try:
             # Real execution via runner
             result = self._runner.submit(
                 workflow_type=step.workflow_type,
@@ -2451,6 +2478,7 @@ __all__ = [
     "StructureLoadError",
     "WorkflowBuildError",
     "WorkflowExecutionError",
+    "NoRunnerConfiguredError",
     "CodeNotAvailableError",
     "MultiCodeHandoffError",
     # Configuration
