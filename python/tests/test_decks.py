@@ -46,6 +46,30 @@ def test_vasp_relax_adds_ionic_relaxation_keywords_absent_from_scf():
     assert "NSW" not in scf_incar
 
 
+def _rocksalt_mgo():
+    """A genuine Fm-3m (#225) rocksalt cell, so symmetry detection is exercised."""
+    from pymatgen.core import Lattice, Structure
+
+    return Structure.from_spacegroup(
+        225, Lattice.cubic(4.21), ["Mg", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]]
+    )
+
+
+def test_crystal_deck_generator_produces_valid_d12():
+    """CrystalDeckGenerator emits a real .d12: true space group, basis set, +TOLDEE."""
+    from crystalmath.decks import get_deck_generator
+
+    deck = get_deck_generator("crystal23").generate(_rocksalt_mgo(), "scf", {})
+
+    assert deck.code == "crystal23"
+    d12 = deck.files["INPUT"]
+    assert "BASISSET" in d12
+    assert "TOLDEE" in d12
+    lines = d12.splitlines()
+    space_group = int(lines[lines.index("CRYSTAL") + 2].strip())
+    assert space_group == 225  # not the old hardcoded P1
+
+
 def test_registry_resolves_code_and_rejects_unknown():
     """The registry is the seam: callers ask for a deck generator by DFT code."""
     from crystalmath.decks import get_deck_generator
