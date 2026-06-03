@@ -371,3 +371,56 @@ class TestRustInteroperability:
 
         result = controller.cancel_job(99999)
         assert isinstance(result, bool)
+
+
+class TestPhononWorkflowHandler:
+    """Regression tests for create_phonon_workflow_json (crystalmath-3da).
+
+    The handler previously crashed before returning (wrong enum/class/method/field
+    names) and returned the displacements under the wrong key.
+    """
+
+    def _config(self):
+        return {
+            "source_job_pk": 1,
+            "supercell_dim": [2, 2, 2],
+            "structure": {
+                "cell": [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+                "positions": [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+                "symbols": ["Na", "Cl"],
+            },
+        }
+
+    def test_returns_inputs_array_with_content(self):
+        controller = CrystalController(use_aiida=False)
+        result = json.loads(controller.create_phonon_workflow_json(json.dumps(self._config())))
+
+        assert result["ok"] is True
+        data = result["data"]
+        # 2 atoms x 3 directions (symmetry on) = 6 displacements.
+        assert data["n_displacements"] == 6
+        # The Rust submit loop reads the "inputs" key, not "displacements".
+        assert isinstance(data["inputs"], list)
+        assert len(data["inputs"]) == 6
+        for item in data["inputs"]:
+            assert item["name"].startswith("phonon_disp_")
+            assert item["content"].strip()  # non-empty so the Rust loop won't skip it
+
+    def test_no_symmetry_doubles_displacements(self):
+        controller = CrystalController(use_aiida=False)
+        cfg = self._config()
+        cfg["use_symmetry"] = False
+        result = json.loads(controller.create_phonon_workflow_json(json.dumps(cfg)))
+
+        assert result["ok"] is True
+        # +/- directions when symmetry is disabled: 2 atoms x 6 = 12.
+        assert result["data"]["n_displacements"] == 12
+
+    def test_invalid_method_returns_structured_error(self):
+        controller = CrystalController(use_aiida=False)
+        cfg = self._config()
+        cfg["method"] = "not_a_real_method"
+        result = json.loads(controller.create_phonon_workflow_json(json.dumps(cfg)))
+
+        # A bad enum value must surface as a structured error, not an uncaught crash.
+        assert result["ok"] is False
