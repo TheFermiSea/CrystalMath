@@ -12,23 +12,23 @@ It handles:
 """
 
 import asyncio
-import re
 import logging
+import re
 import shlex
-from pathlib import Path
-from typing import Any, AsyncIterator, Optional, Dict, List, Tuple
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
+from typing import Any
 
-from .base import RemoteBaseRunner, JobResult, JobHandle, JobStatus, RunnerConfig
+from ..core.codes import DFTCode
+from ..core.connection_manager import ConnectionManager
+from .base import JobHandle, JobStatus, RemoteBaseRunner
 from .exceptions import SLURMRunnerError
 from .slurm_templates import (
     SLURMTemplateGenerator,
-    SLURMTemplateParams,
     SLURMTemplateValidationError,
 )
-from ..core.codes import DFTCode, get_code_config, get_parser, InvocationStyle
-from ..core.connection_manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
@@ -56,17 +56,17 @@ class SLURMJobConfig:
     ntasks: int = 1
     cpus_per_task: int = 4
     time_limit: str = "24:00:00"  # HH:MM:SS format
-    partition: Optional[str] = None
-    memory: Optional[str] = None  # e.g., "32GB"
-    account: Optional[str] = None
-    qos: Optional[str] = None
-    email: Optional[str] = None
-    email_type: Optional[str] = None  # e.g., "BEGIN,END,FAIL"
-    dependencies: List[str] = field(default_factory=list)  # Job IDs to depend on
-    array: Optional[str] = None  # Array specification, e.g., "1-10" or "1,3,5"
-    constraint: Optional[str] = None  # Node constraints
+    partition: str | None = None
+    memory: str | None = None  # e.g., "32GB"
+    account: str | None = None
+    qos: str | None = None
+    email: str | None = None
+    email_type: str | None = None  # e.g., "BEGIN,END,FAIL"
+    dependencies: list[str] = field(default_factory=list)  # Job IDs to depend on
+    array: str | None = None  # Array specification, e.g., "1-10" or "1,3,5"
+    constraint: str | None = None  # Node constraints
     exclusive: bool = False  # Request exclusive node access
-    modules: List[str] = field(default_factory=lambda: ["crystal23"])
+    modules: list[str] = field(default_factory=lambda: ["crystal23"])
     environment_setup: str = ""  # Additional environment setup commands
 
 
@@ -123,7 +123,7 @@ class SLURMRunner(RemoteBaseRunner):
         connection_manager: ConnectionManager,
         cluster_id: int,
         dft_code: DFTCode = DFTCode.CRYSTAL,
-        default_config: Optional[SLURMJobConfig] = None,
+        default_config: SLURMJobConfig | None = None,
         poll_interval: int = 30,
         remote_scratch_base: str = "/scratch/dft_jobs",
     ):
@@ -153,13 +153,13 @@ class SLURMRunner(RemoteBaseRunner):
         self.remote_scratch_base = remote_scratch_base
 
         # Track job ID mappings: our job_id -> SLURM job_id
-        self._slurm_job_ids: Dict[int, str] = {}
+        self._slurm_job_ids: dict[int, str] = {}
 
         # Track job states
-        self._job_states: Dict[int, SLURMJobState] = {}
+        self._job_states: dict[int, SLURMJobState] = {}
 
         # Track slot monitor tasks: job_handle -> asyncio.Task
-        self._slot_monitors: Dict[str, asyncio.Task] = {}
+        self._slot_monitors: dict[str, asyncio.Task] = {}
 
         # Initialize template generator for SLURM scripts
         self._template_generator = SLURMTemplateGenerator(dft_code=dft_code)
@@ -174,7 +174,7 @@ class SLURMRunner(RemoteBaseRunner):
     # -------------------------------------------------------------------------
 
     async def submit_job(
-        self, job_id: int, input_file: Path, work_dir: Path, threads: Optional[int] = None, **kwargs
+        self, job_id: int, input_file: Path, work_dir: Path, threads: int | None = None, **kwargs
     ) -> JobHandle:
         """
         Submit a job to SLURM and return a job handle.
@@ -511,7 +511,7 @@ class SLURMRunner(RemoteBaseRunner):
             raise SLURMRunnerError(f"Output streaming failed: {e}") from e
 
     async def retrieve_results(
-        self, job_handle: JobHandle, dest: Path, cleanup: Optional[bool] = None
+        self, job_handle: JobHandle, dest: Path, cleanup: bool | None = None
     ) -> None:
         """
         Retrieve all output files from a completed SLURM job.
@@ -540,7 +540,7 @@ class SLURMRunner(RemoteBaseRunner):
             logger.error(f"Failed to retrieve results for {job_handle}: {e}")
             raise SLURMRunnerError(f"Result retrieval failed: {e}") from e
 
-    def _parse_job_handle(self, job_handle: JobHandle) -> Tuple[int, str, str]:
+    def _parse_job_handle(self, job_handle: JobHandle) -> tuple[int, str, str]:
         """
         Parse a SLURM job handle into its components.
 
@@ -582,8 +582,8 @@ class SLURMRunner(RemoteBaseRunner):
         self,
         job_id: int,
         work_dir: Path,
-        threads: Optional[int] = None,
-        config: Optional[SLURMJobConfig] = None,
+        threads: int | None = None,
+        config: SLURMJobConfig | None = None,
     ) -> AsyncIterator[str]:
         """
         Submit a CRYSTAL job to SLURM and monitor until completion.
@@ -614,7 +614,7 @@ class SLURMRunner(RemoteBaseRunner):
         # Setup remote work directory
         remote_work_dir = f"{self.remote_scratch_base}/{job_id}_{work_dir.name}"
 
-        yield f"Preparing job submission to SLURM cluster"
+        yield "Preparing job submission to SLURM cluster"
         yield f"Remote directory: {remote_work_dir}"
 
         try:
@@ -637,11 +637,11 @@ class SLURMRunner(RemoteBaseRunner):
                 async with await conn.start_sftp_client() as sftp:
                     # Upload input file
                     await sftp.put(str(input_file), f"{remote_work_dir}/input.d12")
-                    yield f"  Uploaded: input.d12"
+                    yield "  Uploaded: input.d12"
 
                     # Upload SLURM script
                     await sftp.put(str(script_file), f"{remote_work_dir}/job.slurm")
-                    yield f"  Uploaded: job.slurm"
+                    yield "  Uploaded: job.slurm"
 
                     # Upload any additional files (.gui, .f9, etc.)
                     for file_path in work_dir.glob("*"):
@@ -671,9 +671,9 @@ class SLURMRunner(RemoteBaseRunner):
                 self._slurm_job_ids[job_id] = slurm_job_id
                 self._job_states[job_id] = SLURMJobState.PENDING
 
-                yield f"Job submitted successfully"
+                yield "Job submitted successfully"
                 yield f"SLURM Job ID: {slurm_job_id}"
-                yield f"Status: PENDING"
+                yield "Status: PENDING"
 
                 # Monitor job status
                 async for status_line in self._monitor_job(job_id, conn):
@@ -701,7 +701,7 @@ class SLURMRunner(RemoteBaseRunner):
 
                 elif final_state == SLURMJobState.OUT_OF_MEMORY:
                     yield "\n⚠ Job ran out of memory"
-                    yield f"Consider increasing memory allocation in SLURM config"
+                    yield "Consider increasing memory allocation in SLURM config"
 
         except Exception as e:
             logger.error(f"SLURM job execution failed: {e}")
@@ -762,7 +762,7 @@ class SLURMRunner(RemoteBaseRunner):
         state = self._job_states.get(job_id)
         return state in [SLURMJobState.PENDING, SLURMJobState.RUNNING]
 
-    def get_slurm_job_id(self, job_id: int) -> Optional[str]:
+    def get_slurm_job_id(self, job_id: int) -> str | None:
         """
         Get the SLURM job ID for a given database job ID.
 
@@ -774,7 +774,7 @@ class SLURMRunner(RemoteBaseRunner):
         """
         return self._slurm_job_ids.get(job_id)
 
-    def get_job_state(self, job_id: int) -> Optional[SLURMJobState]:
+    def get_job_state(self, job_id: int) -> SLURMJobState | None:
         """
         Get the current SLURM state for a job.
 
@@ -793,9 +793,9 @@ class SLURMRunner(RemoteBaseRunner):
     async def get_queue_status(
         self,
         user_only: bool = True,
-        partition: Optional[str] = None,
-        states: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        partition: str | None = None,
+        states: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Get SLURM queue status for the cluster.
 
@@ -894,7 +894,7 @@ class SLURMRunner(RemoteBaseRunner):
             logger.error(f"Failed to get queue status: {e}")
             return []
 
-    def _parse_squeue_json(self, jobs: List[Dict]) -> List[Dict[str, Any]]:
+    def _parse_squeue_json(self, jobs: list[dict]) -> list[dict[str, Any]]:
         """Parse squeue --json output into standardized format."""
         result = []
         for j in jobs:
@@ -962,7 +962,7 @@ class SLURMRunner(RemoteBaseRunner):
             )
         return result
 
-    def _parse_squeue_formatted(self, output: str) -> List[Dict[str, Any]]:
+    def _parse_squeue_formatted(self, output: str) -> list[dict[str, Any]]:
         """Parse formatted squeue output into standardized format."""
         result = []
         for line in output.strip().splitlines():
@@ -1014,7 +1014,7 @@ class SLURMRunner(RemoteBaseRunner):
         match = re.search(r"gres/gpu[^=]*=(\d+)", tres_str)
         return int(match.group(1)) if match else 0
 
-    async def get_job_details(self, slurm_job_id: str) -> Optional[Dict[str, Any]]:
+    async def get_job_details(self, slurm_job_id: str) -> dict[str, Any] | None:
         """
         Get detailed information for a specific SLURM job.
 
@@ -1058,7 +1058,7 @@ class SLURMRunner(RemoteBaseRunner):
             logger.error(f"Failed to get job details for {slurm_job_id}: {e}")
             return None
 
-    def _parse_scontrol_output(self, output: str) -> Dict[str, str]:
+    def _parse_scontrol_output(self, output: str) -> dict[str, str]:
         """Parse scontrol show job output into a dictionary."""
         result = {}
         # scontrol output is space-separated key=value pairs
@@ -1192,7 +1192,7 @@ class SLURMRunner(RemoteBaseRunner):
             logger.error(f"Failed to get job logs for {slurm_job_id}: {e}")
             yield f"Error: {e}"
 
-    async def get_partition_info(self) -> List[Dict[str, Any]]:
+    async def get_partition_info(self) -> list[dict[str, Any]]:
         """
         Get information about available SLURM partitions.
 
@@ -1236,7 +1236,7 @@ class SLURMRunner(RemoteBaseRunner):
             logger.error(f"Failed to get partition info: {e}")
             return []
 
-    async def cancel_slurm_job(self, slurm_job_id: str) -> Tuple[bool, str]:
+    async def cancel_slurm_job(self, slurm_job_id: str) -> tuple[bool, str]:
         """
         Cancel a SLURM job by its SLURM job ID.
 
@@ -1292,7 +1292,7 @@ class SLURMRunner(RemoteBaseRunner):
             )
 
     @staticmethod
-    def _validate_partition(partition: Optional[str]) -> None:
+    def _validate_partition(partition: str | None) -> None:
         """
         Validate SLURM partition name format.
 
@@ -1343,7 +1343,7 @@ class SLURMRunner(RemoteBaseRunner):
             )
 
     @staticmethod
-    def _validate_account(account: Optional[str]) -> None:
+    def _validate_account(account: str | None) -> None:
         """
         Validate SLURM account name format.
 
@@ -1368,7 +1368,7 @@ class SLURMRunner(RemoteBaseRunner):
             )
 
     @staticmethod
-    def _validate_qos(qos: Optional[str]) -> None:
+    def _validate_qos(qos: str | None) -> None:
         """
         Validate SLURM QOS name format.
 
@@ -1393,7 +1393,7 @@ class SLURMRunner(RemoteBaseRunner):
             )
 
     @staticmethod
-    def _validate_email(email: Optional[str]) -> None:
+    def _validate_email(email: str | None) -> None:
         """
         Validate email address format.
 
@@ -1563,7 +1563,7 @@ class SLURMRunner(RemoteBaseRunner):
         except SLURMTemplateValidationError as e:
             raise SLURMValidationError(str(e)) from e
 
-    def _parse_job_id(self, sbatch_output: str) -> Optional[str]:
+    def _parse_job_id(self, sbatch_output: str) -> str | None:
         """
         Parse SLURM job ID from sbatch output.
 
@@ -1633,7 +1633,7 @@ class SLURMRunner(RemoteBaseRunner):
 
     async def _check_status(
         self, connection, slurm_job_id: str
-    ) -> Tuple[SLURMJobState, Optional[str]]:
+    ) -> tuple[SLURMJobState, str | None]:
         """
         Check SLURM job status using squeue.
 

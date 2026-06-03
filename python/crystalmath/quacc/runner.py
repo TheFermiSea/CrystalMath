@@ -6,10 +6,10 @@ defines the contract, and get_runner() factory returns the appropriate
 implementation based on the configured engine.
 """
 
+import uuid
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Dict, Optional
-import uuid
+from typing import Any
 
 # Recipes are imported dynamically via ``__import__`` (see _import_recipe). A
 # job-submission request carries a caller-supplied recipe name, so the importable
@@ -124,7 +124,7 @@ class JobRunner(ABC):
         pass
 
     @abstractmethod
-    def get_result(self, job_id: str) -> Optional[Dict]:
+    def get_result(self, job_id: str) -> dict | None:
         """Get job result if complete.
 
         Args:
@@ -237,7 +237,7 @@ def get_runner(engine: str) -> JobRunner:
 
 
 # Registry of active runners (singleton pattern)
-_active_runners: Dict[str, JobRunner] = {}
+_active_runners: dict[str, JobRunner] = {}
 
 
 def get_or_create_runner(engine: str) -> JobRunner:

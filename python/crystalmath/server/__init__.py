@@ -421,7 +421,7 @@ class JsonRpcServer:
             sock.connect(str(self.socket_path))
             sock.close()
             raise RuntimeError(f"Server already running at {self.socket_path}")
-        except socket.error:
+        except OSError:
             # Connection failed - stale socket, safe to remove
             logger.info(f"Removing stale socket: {self.socket_path}")
             self.socket_path.unlink()

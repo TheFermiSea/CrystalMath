@@ -9,7 +9,6 @@ from __future__ import annotations
 from .base import DFTCode, DFTCodeConfig, InvocationStyle
 from .registry import register_code
 
-
 QE_CONFIG = DFTCodeConfig(
     name="quantum_espresso",
     display_name="Quantum Espresso",

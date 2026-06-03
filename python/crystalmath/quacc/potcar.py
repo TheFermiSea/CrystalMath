@@ -7,10 +7,9 @@ configuration issues.
 
 import os
 from pathlib import Path
-from typing import Set, Tuple, Optional
 
 
-def get_potcar_path() -> Optional[Path]:
+def get_potcar_path() -> Path | None:
     """Get POTCAR directory path from environment or quacc settings.
 
     Checks in order:
@@ -38,7 +37,7 @@ def get_potcar_path() -> Optional[Path]:
     return None
 
 
-def validate_potcars(elements: Set[str]) -> Tuple[bool, Optional[str]]:
+def validate_potcars(elements: set[str]) -> tuple[bool, str | None]:
     """Validate that POTCARs are available for given elements.
 
     Checks that:

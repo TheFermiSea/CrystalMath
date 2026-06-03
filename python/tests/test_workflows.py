@@ -14,20 +14,15 @@ Many tests are skipped as methods are private or require complex mocking.
 
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
-from dataclasses import dataclass
+from unittest.mock import Mock, patch
 
+import pytest
 from crystalmath.protocols import (
-    WorkflowType,
-    WorkflowStep,
-    WorkflowResult,
     ResourceRequirements,
-    ErrorRecoveryStrategy,
+    WorkflowResult,
+    WorkflowType,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -374,7 +369,7 @@ class TestOpticalAnalysisConfiguration:
 
     def test_code_not_available(self) -> None:
         """Test error when code not available on cluster."""
-        from crystalmath.high_level.runners import OpticalAnalysis, CodeNotAvailableError
+        from crystalmath.high_level.runners import CodeNotAvailableError, OpticalAnalysis
 
         mock_cluster = Mock()
         mock_cluster.available_codes = ["vasp"]  # yambo not available

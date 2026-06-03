@@ -8,12 +8,10 @@ code-specific modules during import time.
 
 from __future__ import annotations
 
-from typing import Dict, List
-
 from .base import DFTCode, DFTCodeConfig
 
 # Global registry populated by code modules
-DFT_CODE_REGISTRY: Dict[DFTCode, DFTCodeConfig] = {}
+DFT_CODE_REGISTRY: dict[DFTCode, DFTCodeConfig] = {}
 
 
 def register_code(code: DFTCode, config: DFTCodeConfig) -> None:
@@ -37,7 +35,7 @@ def get_code_config(code: DFTCode) -> DFTCodeConfig:
     return DFT_CODE_REGISTRY[code]
 
 
-def list_available_codes() -> List[DFTCode]:
+def list_available_codes() -> list[DFTCode]:
     """Return a list of registered DFT codes."""
 
     return list(DFT_CODE_REGISTRY.keys())

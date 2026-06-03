@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from ..settings import MaterialsSettings
-from ..models import ContributionRecord
 from ..errors import (
     AuthenticationError,
     MaterialsAPIError,
@@ -21,6 +19,8 @@ from ..errors import (
     RateLimitError,
     StructureNotFoundError,
 )
+from ..models import ContributionRecord
+from ..settings import MaterialsSettings
 
 if TYPE_CHECKING:
     from mpcontribs.client import Client as MpContribsClientSync
@@ -155,13 +155,13 @@ class MpContribsClient:
             project = project.get("name", project.get("id", ""))
 
         # Material ID linkage
-        material_id = contrib.get("identifier", None)
+        material_id = contrib.get("identifier")
         if material_id and not material_id.startswith("mp-"):
             # Some contributions use 'identifier' for non-MP IDs
             material_id = None
 
         # Formula extraction
-        formula = contrib.get("formula", None)
+        formula = contrib.get("formula")
         if not formula and "data" in contrib:
             formula = contrib["data"].get("formula", None)
 

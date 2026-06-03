@@ -40,6 +40,7 @@ Architecture Layers:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -47,12 +48,8 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
-    List,
     Literal,
-    Optional,
     Protocol,
-    Sequence,
     runtime_checkable,
 )
 
@@ -141,14 +138,14 @@ class ResourceRequirements:
     memory_gb: float = 4.0
     walltime_hours: float = 24.0
     gpus: int = 0
-    partition: Optional[str] = None
-    account: Optional[str] = None
-    qos: Optional[str] = None
+    partition: str | None = None
+    account: str | None = None
+    qos: str | None = None
 
     # Custom SLURM/scheduler directives
-    extra_directives: Dict[str, str] = field(default_factory=dict)
+    extra_directives: dict[str, str] = field(default_factory=dict)
 
-    def to_slurm_dict(self) -> Dict[str, Any]:
+    def to_slurm_dict(self) -> dict[str, Any]:
         """Convert to SLURM resource specification."""
         resources = {
             "num_machines": self.num_nodes,
@@ -159,7 +156,7 @@ class ResourceRequirements:
             resources["num_gpus_per_machine"] = self.gpus // self.num_nodes
         return resources
 
-    def to_aiida_dict(self) -> Dict[str, Any]:
+    def to_aiida_dict(self) -> dict[str, Any]:
         """Convert to AiiDA resource specification."""
         return {
             "resources": self.to_slurm_dict(),
@@ -172,23 +169,23 @@ class WorkflowResult:
     """Standard result container for workflow outputs."""
 
     success: bool
-    workflow_id: Optional[str] = None
-    workflow_pk: Optional[int] = None
-    outputs: Dict[str, Any] = field(default_factory=dict)
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    workflow_id: str | None = None
+    workflow_pk: int | None = None
+    outputs: dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     # Timing information
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    wall_time_seconds: Optional[float] = None
-    cpu_time_seconds: Optional[float] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    wall_time_seconds: float | None = None
+    cpu_time_seconds: float | None = None
 
     # Recovery information
-    checkpoints: List[Dict[str, Any]] = field(default_factory=list)
+    checkpoints: list[dict[str, Any]] = field(default_factory=list)
     can_restart: bool = False
-    restart_info: Optional[Dict[str, Any]] = None
+    restart_info: dict[str, Any] | None = None
 
 
 @dataclass
@@ -197,13 +194,13 @@ class StructureInfo:
 
     formula: str
     num_atoms: int
-    space_group_number: Optional[int] = None
-    space_group_symbol: Optional[str] = None
-    volume: Optional[float] = None
+    space_group_number: int | None = None
+    space_group_symbol: str | None = None
+    volume: float | None = None
     is_magnetic: bool = False
     dimensionality: int = 3  # 3D, 2D (slab), 1D (polymer), 0D (molecule)
-    source: Optional[str] = None  # "mp", "cif", "poscar", "manual"
-    source_id: Optional[str] = None  # Materials Project ID, etc.
+    source: str | None = None  # "mp", "cif", "poscar", "manual"
+    source_id: str | None = None  # Materials Project ID, etc.
 
 
 @dataclass
@@ -213,10 +210,10 @@ class WorkflowStep:
     name: str
     workflow_type: WorkflowType
     code: DFTCode
-    parameters: Dict[str, Any] = field(default_factory=dict)
-    resources: Optional[ResourceRequirements] = None
-    depends_on: List[str] = field(default_factory=list)  # Step names
-    outputs_to_pass: List[str] = field(default_factory=list)  # Output keys
+    parameters: dict[str, Any] = field(default_factory=dict)
+    resources: ResourceRequirements | None = None
+    depends_on: list[str] = field(default_factory=list)  # Step names
+    outputs_to_pass: list[str] = field(default_factory=list)  # Output keys
 
 
 # =============================================================================
@@ -285,7 +282,7 @@ class StructureProvider(Protocol):
         """
         ...
 
-    def validate(self, structure: Any) -> tuple[bool, List[str]]:
+    def validate(self, structure: Any) -> tuple[bool, list[str]]:
         """
         Validate structure for DFT calculations.
 
@@ -334,9 +331,9 @@ class WorkflowRunner(Protocol):
         self,
         workflow_type: WorkflowType,
         structure: Any,
-        parameters: Dict[str, Any],
+        parameters: dict[str, Any],
         code: DFTCode,
-        resources: Optional[ResourceRequirements] = None,
+        resources: ResourceRequirements | None = None,
         **kwargs: Any,
     ) -> WorkflowResult:
         """
@@ -412,9 +409,9 @@ class WorkflowRunner(Protocol):
 
     def list_workflows(
         self,
-        state: Optional[WorkflowState] = None,
+        state: WorkflowState | None = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         List workflows with optional state filter.
 
@@ -455,15 +452,15 @@ class Backend(Protocol):
         """Whether this backend is ready for use."""
         ...
 
-    def get_jobs(self, limit: int = 100) -> List["JobStatus"]:
+    def get_jobs(self, limit: int = 100) -> list[JobStatus]:
         """Get list of jobs."""
         ...
 
-    def get_job_details(self, pk: int) -> Optional["JobDetails"]:
+    def get_job_details(self, pk: int) -> JobDetails | None:
         """Get detailed information for a specific job."""
         ...
 
-    def submit_job(self, submission: "JobSubmission") -> int:
+    def submit_job(self, submission: JobSubmission) -> int:
         """Submit a new job."""
         ...
 
@@ -471,7 +468,7 @@ class Backend(Protocol):
         """Cancel a running job."""
         ...
 
-    def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
+    def get_job_log(self, pk: int, tail_lines: int = 100) -> dict[str, list[str]]:
         """Get job stdout/stderr logs."""
         ...
 
@@ -493,7 +490,7 @@ class ResultsCollector(Protocol):
     - Storing results in databases or files
     """
 
-    def collect(self, workflow_result: WorkflowResult) -> Dict[str, Any]:
+    def collect(self, workflow_result: WorkflowResult) -> dict[str, Any]:
         """
         Collect and parse results from a workflow.
 
@@ -505,23 +502,23 @@ class ResultsCollector(Protocol):
         """
         ...
 
-    def get_energy(self, workflow_result: WorkflowResult) -> Optional[float]:
+    def get_energy(self, workflow_result: WorkflowResult) -> float | None:
         """Extract total energy from results (Hartree)."""
         ...
 
-    def get_bandgap(self, workflow_result: WorkflowResult) -> Optional[float]:
+    def get_bandgap(self, workflow_result: WorkflowResult) -> float | None:
         """Extract band gap from results (eV)."""
         ...
 
-    def get_structure(self, workflow_result: WorkflowResult) -> Optional[Any]:
+    def get_structure(self, workflow_result: WorkflowResult) -> Any | None:
         """Extract optimized/final structure from results."""
         ...
 
-    def get_bands(self, workflow_result: WorkflowResult) -> Optional[Any]:
+    def get_bands(self, workflow_result: WorkflowResult) -> Any | None:
         """Extract band structure data."""
         ...
 
-    def get_dos(self, workflow_result: WorkflowResult) -> Optional[Any]:
+    def get_dos(self, workflow_result: WorkflowResult) -> Any | None:
         """Extract DOS data."""
         ...
 
@@ -557,7 +554,7 @@ class ParameterGenerator(Protocol):
         code: DFTCode,
         protocol: str = "moderate",
         **overrides: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate calculation parameters.
 
@@ -583,10 +580,10 @@ class ParameterGenerator(Protocol):
 
     def get_basis_set(
         self,
-        elements: List[str],
+        elements: list[str],
         code: DFTCode,
         quality: str = "moderate",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get basis set configuration for elements."""
         ...
 
@@ -608,7 +605,7 @@ class ErrorHandler(Protocol):
     - Managing restarts from checkpoints
     """
 
-    def diagnose(self, workflow_result: WorkflowResult) -> Dict[str, Any]:
+    def diagnose(self, workflow_result: WorkflowResult) -> dict[str, Any]:
         """
         Diagnose failure cause.
 
@@ -673,7 +670,7 @@ class ProgressCallback(Protocol):
         workflow_id: str,
         step: str,
         progress_percent: float,
-        message: Optional[str] = None,
+        message: str | None = None,
     ) -> None:
         """Called on progress update."""
         ...
@@ -710,7 +707,7 @@ class WorkflowComposer(Protocol):
             .build()
     """
 
-    def create(self) -> "WorkflowComposer":
+    def create(self) -> WorkflowComposer:
         """Create new composition context."""
         ...
 
@@ -719,10 +716,10 @@ class WorkflowComposer(Protocol):
         name: str,
         workflow_type: WorkflowType,
         code: DFTCode = "crystal23",
-        parameters: Optional[Dict[str, Any]] = None,
-        depends_on: Optional[List[str]] = None,
-        outputs_to_pass: Optional[List[str]] = None,
-    ) -> "WorkflowComposer":
+        parameters: dict[str, Any] | None = None,
+        depends_on: list[str] | None = None,
+        outputs_to_pass: list[str] | None = None,
+    ) -> WorkflowComposer:
         """Add a step to the workflow."""
         ...
 
@@ -730,7 +727,7 @@ class WorkflowComposer(Protocol):
         """Build the workflow definition."""
         ...
 
-    def validate(self) -> tuple[bool, List[str]]:
+    def validate(self) -> tuple[bool, list[str]]:
         """Validate workflow is well-formed (no cycles, etc.)."""
         ...
 

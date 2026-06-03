@@ -7,7 +7,6 @@ This module provides a Typer-based CLI wrapper around the CrystalController API.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -25,10 +24,10 @@ app = typer.Typer(
 console = Console()
 
 # Global state set by --db-path callback
-_db_path: Optional[str] = None
+_db_path: str | None = None
 
 
-def _db_path_callback(value: Optional[str]) -> Optional[str]:
+def _db_path_callback(value: str | None) -> str | None:
     """Store the db-path for use by _get_controller."""
     global _db_path
     _db_path = value
@@ -49,15 +48,13 @@ def _get_controller(use_aiida: bool = False) -> CrystalController:
 @app.command()
 def run(
     input_file: str = typer.Argument(..., help="Input file name (without .d12 extension)"),
-    ranks: Optional[int] = typer.Argument(
-        None, help="Number of MPI ranks (serial if not specified)"
-    ),
+    ranks: int | None = typer.Argument(None, help="Number of MPI ranks (serial if not specified)"),
     explain: bool = typer.Option(False, "--explain", help="Show execution plan without running"),
     dft_code: str = typer.Option(
         "crystal", help="DFT code to use (crystal, vasp, quantum_espresso)"
     ),
     runner: str = typer.Option("local", help="Execution backend (local, ssh, slurm)"),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None, "--db-path", help="Path to database file", callback=_db_path_callback
     ),
 ) -> None:
@@ -99,7 +96,7 @@ def run(
 
     # Show execution plan if --explain
     if explain:
-        console.print(f"[bold]Execution Plan:[/bold]")
+        console.print("[bold]Execution Plan:[/bold]")
         console.print(f"  Input file:   {input_path.absolute()}")
         console.print(f"  Job name:     {input_file}")
         console.print(f"  DFT code:     {dft_code_enum.value}")
@@ -132,7 +129,7 @@ def run(
     try:
         controller = _get_controller()
         job_pk = controller.submit_job(submission)
-        console.print(f"[green]Job submitted successfully![/green]")
+        console.print("[green]Job submitted successfully![/green]")
         console.print(f"  Job ID: {job_pk}")
         console.print(f"  Name:   {input_file}")
         console.print(f"\nUse 'crystal status {job_pk}' to check progress")
@@ -144,7 +141,7 @@ def run(
 @app.command(name="list")
 def list_jobs(
     limit: int = typer.Option(100, help="Maximum number of jobs to show"),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None, "--db-path", help="Path to database file", callback=_db_path_callback
     ),
 ) -> None:
@@ -207,7 +204,7 @@ def list_jobs(
 @app.command()
 def status(
     pk: int = typer.Argument(..., help="Job ID"),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None, "--db-path", help="Path to database file", callback=_db_path_callback
     ),
 ) -> None:
@@ -235,7 +232,7 @@ def status(
 
         # Results
         if details.final_energy is not None:
-            console.print(f"\n[bold]Results:[/bold]")
+            console.print("\n[bold]Results:[/bold]")
             console.print(f"  Energy:       {details.final_energy:.6f} Ha")
             if details.bandgap_ev is not None:
                 console.print(f"  Bandgap:      {details.bandgap_ev:.3f} eV")
@@ -245,7 +242,7 @@ def status(
 
         # Timing
         if details.wall_time_seconds is not None or details.cpu_time_seconds is not None:
-            console.print(f"\n[bold]Timing:[/bold]")
+            console.print("\n[bold]Timing:[/bold]")
             if details.wall_time_seconds is not None:
                 console.print(f"  Wall time:    {_format_seconds(details.wall_time_seconds)}")
             if details.cpu_time_seconds is not None:
@@ -264,7 +261,7 @@ def status(
 
         # Work directory
         if details.work_dir:
-            console.print(f"\n[bold]Files:[/bold]")
+            console.print("\n[bold]Files:[/bold]")
             console.print(f"  Work dir:     {details.work_dir}")
 
         console.print()  # Blank line
@@ -278,7 +275,7 @@ def status(
 def log(
     pk: int = typer.Argument(..., help="Job ID"),
     lines: int = typer.Option(100, "--lines", "-n", help="Number of lines to show"),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None, "--db-path", help="Path to database file", callback=_db_path_callback
     ),
 ) -> None:
@@ -319,7 +316,7 @@ def log(
 @app.command()
 def cancel(
     pk: int = typer.Argument(..., help="Job ID"),
-    db_path: Optional[str] = typer.Option(
+    db_path: str | None = typer.Option(
         None, "--db-path", help="Path to database file", callback=_db_path_callback
     ),
 ) -> None:

@@ -59,28 +59,20 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
-    Dict,
-    Iterator,
-    List,
     Literal,
-    Optional,
-    Type,
-    Union,
 )
 
 if TYPE_CHECKING:
     from maggma.stores import Store
-    from monty.json import MSONable
 
-    from crystalmath.backends.sqlite import SQLiteBackend
-    from crystalmath.models import JobDetails, JobStatus
+    from crystalmath.models import JobStatus
     from crystalmath.protocols import Backend, WorkflowResult
 
 
@@ -151,16 +143,16 @@ class JobRecord:
     """
 
     uuid: str
-    pk: Optional[int] = None
+    pk: int | None = None
     name: str = ""
     state: str = "created"
-    created_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    inputs: Dict[str, Any] = field(default_factory=dict)
-    outputs: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = None
+    completed_at: datetime | None = None
+    inputs: dict[str, Any] = field(default_factory=dict)
+    outputs: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_jobflow_dict(self) -> Dict[str, Any]:
+    def to_jobflow_dict(self) -> dict[str, Any]:
         """Convert to jobflow JobStore document format."""
         return {
             "uuid": self.uuid,
@@ -177,7 +169,7 @@ class JobRecord:
         }
 
     @classmethod
-    def from_jobflow_dict(cls, doc: Dict[str, Any]) -> "JobRecord":
+    def from_jobflow_dict(cls, doc: dict[str, Any]) -> JobRecord:
         """Create from jobflow JobStore document."""
         return cls(
             uuid=doc.get("uuid", ""),
@@ -195,7 +187,7 @@ class JobRecord:
             metadata=doc.get("metadata", {}),
         )
 
-    def to_crystalmath_status(self) -> "JobStatus":
+    def to_crystalmath_status(self) -> JobStatus:
         """Convert to CrystalMath JobStatus."""
         from crystalmath.models import JobStatus
 
@@ -226,7 +218,7 @@ class SyncStats:
     jobs_synced: int = 0
     jobs_created: int = 0
     jobs_updated: int = 0
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
     duration_seconds: float = 0.0
 
 
@@ -270,7 +262,7 @@ class JobStoreBridge(ABC):
         pass
 
     @abstractmethod
-    def get_job(self, uuid: str) -> Optional[JobRecord]:
+    def get_job(self, uuid: str) -> JobRecord | None:
         """
         Get a job by UUID.
 
@@ -287,10 +279,10 @@ class JobStoreBridge(ABC):
     @abstractmethod
     def query_jobs(
         self,
-        state: Optional[str] = None,
-        name_pattern: Optional[str] = None,
+        state: str | None = None,
+        name_pattern: str | None = None,
         limit: int = 100,
-    ) -> List[JobRecord]:
+    ) -> list[JobRecord]:
         """
         Query jobs with filters.
 
@@ -332,7 +324,7 @@ class SQLiteJobStore:
 
     def __init__(
         self,
-        db_path: Union[str, Path],
+        db_path: str | Path,
         collection_name: str = "jobflow_jobs",
     ):
         """
@@ -376,8 +368,8 @@ class SQLiteJobStore:
         self._conn = sqlite3.connect(str(self._db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS {} (
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._collection_name} (
                 uuid TEXT PRIMARY KEY,
                 name TEXT,
                 state TEXT DEFAULT 'created',
@@ -387,7 +379,7 @@ class SQLiteJobStore:
                 output_json TEXT DEFAULT '{{}}',
                 metadata_json TEXT DEFAULT '{{}}'
             )
-            """.format(self._collection_name)
+            """
         )
         self._conn.commit()
         self._connected = True
@@ -401,12 +393,12 @@ class SQLiteJobStore:
 
     def query(
         self,
-        criteria: Optional[Dict[str, Any]] = None,
-        properties: Optional[List[str]] = None,
-        sort: Optional[Dict[str, int]] = None,
+        criteria: dict[str, Any] | None = None,
+        properties: list[str] | None = None,
+        sort: dict[str, int] | None = None,
         skip: int = 0,
         limit: int = 0,
-    ) -> Iterator[Dict[str, Any]]:
+    ) -> Iterator[dict[str, Any]]:
         """
         Query documents from the store.
 
@@ -426,8 +418,8 @@ class SQLiteJobStore:
             self.connect()
         import json
 
-        where_clauses: List[str] = []
-        params: List[Any] = []
+        where_clauses: list[str] = []
+        params: list[Any] = []
         if criteria:
             for key, value in criteria.items():
                 _validate_column(key, context="criteria")
@@ -470,9 +462,9 @@ class SQLiteJobStore:
 
     def query_one(
         self,
-        criteria: Optional[Dict[str, Any]] = None,
-        properties: Optional[List[str]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        criteria: dict[str, Any] | None = None,
+        properties: list[str] | None = None,
+    ) -> dict[str, Any] | None:
         """
         Query a single document.
 
@@ -489,7 +481,7 @@ class SQLiteJobStore:
 
     def update(
         self,
-        docs: List[Dict[str, Any]],
+        docs: list[dict[str, Any]],
         key: str = "uuid",
     ) -> None:
         """
@@ -527,7 +519,7 @@ class SQLiteJobStore:
 
     def count(
         self,
-        criteria: Optional[Dict[str, Any]] = None,
+        criteria: dict[str, Any] | None = None,
     ) -> int:
         """
         Count matching documents.
@@ -543,8 +535,8 @@ class SQLiteJobStore:
     def distinct(
         self,
         field: str,
-        criteria: Optional[Dict[str, Any]] = None,
-    ) -> List[Any]:
+        criteria: dict[str, Any] | None = None,
+    ) -> list[Any]:
         """
         Get distinct values for a field.
 
@@ -561,11 +553,11 @@ class SQLiteJobStore:
         # parameterized, so validate them as plain identifiers first.
         _validate_column(field, context="distinct field")
         sql = f"SELECT DISTINCT {field} FROM {self._collection_name}"
-        params: List[Any] = []
+        params: list[Any] = []
         if criteria:
             import json
 
-            where_clauses: List[str] = []
+            where_clauses: list[str] = []
             for key, value in criteria.items():
                 _validate_column(key, context="criteria")
                 where_clauses.append(f"{key} = ?")
@@ -576,7 +568,7 @@ class SQLiteJobStore:
 
     def remove_docs(
         self,
-        criteria: Dict[str, Any],
+        criteria: dict[str, Any],
     ) -> None:
         """
         Remove documents matching criteria.
@@ -627,8 +619,8 @@ class CrystalMathJobStore(JobStoreBridge):
 
     def __init__(
         self,
-        primary_store: Optional["Store"] = None,
-        crystalmath_backend: Optional["Backend"] = None,
+        primary_store: Store | None = None,
+        crystalmath_backend: Backend | None = None,
         sync_enabled: bool = True,
     ):
         """
@@ -649,8 +641,8 @@ class CrystalMathJobStore(JobStoreBridge):
     @classmethod
     def from_crystalmath_db(
         cls,
-        db_path: Optional[Union[str, Path]] = None,
-    ) -> "CrystalMathJobStore":
+        db_path: str | Path | None = None,
+    ) -> CrystalMathJobStore:
         """
         Create from existing CrystalMath database.
 
@@ -679,7 +671,7 @@ class CrystalMathJobStore(JobStoreBridge):
         port: int = 27017,
         database: str = "crystalmath",
         collection: str = "jobs",
-    ) -> "CrystalMathJobStore":
+    ) -> CrystalMathJobStore:
         """
         Create with MongoDB backend.
 
@@ -731,12 +723,12 @@ class CrystalMathJobStore(JobStoreBridge):
 
     def query(
         self,
-        criteria: Optional[Dict[str, Any]] = None,
-        properties: Optional[List[str]] = None,
-        sort: Optional[Dict[str, int]] = None,
+        criteria: dict[str, Any] | None = None,
+        properties: list[str] | None = None,
+        sort: dict[str, int] | None = None,
         skip: int = 0,
         limit: int = 0,
-    ) -> Iterator[Dict[str, Any]]:
+    ) -> Iterator[dict[str, Any]]:
         """
         Query documents from the store.
 
@@ -756,7 +748,7 @@ class CrystalMathJobStore(JobStoreBridge):
 
     def update(
         self,
-        docs: List[Dict[str, Any]],
+        docs: list[dict[str, Any]],
         key: str = "uuid",
     ) -> None:
         """
@@ -774,7 +766,7 @@ class CrystalMathJobStore(JobStoreBridge):
         if self._sync_enabled and self._crystalmath_backend:
             self._sync_docs_to_crystalmath(docs)
 
-    def _sync_docs_to_crystalmath(self, docs: List[Dict[str, Any]]) -> None:
+    def _sync_docs_to_crystalmath(self, docs: list[dict[str, Any]]) -> None:
         """
         Sync documents to CrystalMath backend.
 
@@ -831,7 +823,7 @@ class CrystalMathJobStore(JobStoreBridge):
             "CrystalMathJobStore.sync_from_crystalmath() will be implemented in Phase 3."
         )
 
-    def get_job(self, uuid: str) -> Optional[JobRecord]:
+    def get_job(self, uuid: str) -> JobRecord | None:
         """
         Get a job by UUID.
 
@@ -851,10 +843,10 @@ class CrystalMathJobStore(JobStoreBridge):
 
     def query_jobs(
         self,
-        state: Optional[str] = None,
-        name_pattern: Optional[str] = None,
+        state: str | None = None,
+        name_pattern: str | None = None,
         limit: int = 100,
-    ) -> List[JobRecord]:
+    ) -> list[JobRecord]:
         """
         Query jobs with filters.
 
@@ -866,7 +858,7 @@ class CrystalMathJobStore(JobStoreBridge):
         Returns:
             List of JobRecords
         """
-        criteria: Dict[str, Any] = {}
+        criteria: dict[str, Any] = {}
         if state:
             criteria["state"] = state
         if name_pattern:
@@ -885,7 +877,7 @@ class CrystalMathJobStore(JobStoreBridge):
     def to_workflow_results(
         self,
         flow_uuid: str,
-    ) -> List["WorkflowResult"]:
+    ) -> list[WorkflowResult]:
         """
         Get all WorkflowResults for a Flow.
 
@@ -906,7 +898,7 @@ class CrystalMathJobStore(JobStoreBridge):
 
     def import_from_aiida(
         self,
-        aiida_pks: List[int],
+        aiida_pks: list[int],
     ) -> SyncStats:
         """
         Import jobs from AiiDA into the jobflow store.

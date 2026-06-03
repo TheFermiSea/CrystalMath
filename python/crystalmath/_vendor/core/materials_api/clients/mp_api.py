@@ -23,7 +23,6 @@ from ..errors import (
     NetworkError,
     RateLimitError,
     StructureNotFoundError,
-    ValidationError,
 )
 from ..models import MaterialRecord
 from ..settings import MaterialsSettings
@@ -113,7 +112,7 @@ class MpApiClient:
                     logger.debug("MPRester client initialized")
                 except ImportError as e:
                     raise MaterialsAPIError(
-                        f"mp-api package not installed. Install with: pip install mp-api",
+                        "mp-api package not installed. Install with: pip install mp-api",
                         source=_SOURCE,
                     ) from e
                 except Exception as e:
@@ -488,7 +487,7 @@ class MpApiClient:
                 self._mpr = None
                 logger.debug("MPRester client closed")
 
-    async def __aenter__(self) -> "MpApiClient":
+    async def __aenter__(self) -> MpApiClient:
         """Async context manager entry."""
         return self
 

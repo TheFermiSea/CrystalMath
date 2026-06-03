@@ -5,7 +5,6 @@ from __future__ import annotations
 from .base import DFTCode, DFTCodeConfig, InvocationStyle
 from .registry import register_code
 
-
 CRYSTAL_CONFIG = DFTCodeConfig(
     name="crystal",
     display_name="CRYSTAL23",

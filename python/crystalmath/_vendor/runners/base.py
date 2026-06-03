@@ -15,15 +15,15 @@ Design principles:
 - DFT code-agnostic through DFTCodeConfig abstraction
 """
 
+import asyncio
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import AsyncIterator, Any, Dict, Optional, NewType
-import asyncio
+from typing import Any, NewType
 
 from ..core.codes import DFTCode, get_code_config
-
 
 # Type alias for job handles (runner-specific identifiers)
 JobHandle = NewType("JobHandle", str)
@@ -79,14 +79,14 @@ class RunnerConfig:
     name: str = "default"
     dft_code: DFTCode = DFTCode.CRYSTAL  # Default for backwards compatibility
     scratch_dir: Path = Path.home() / "tmp_crystal"
-    executable_path: Optional[Path] = None
+    executable_path: Path | None = None
     default_threads: int = 4
     max_concurrent_jobs: int = 1
     timeout_seconds: float = 0.0
     cleanup_on_success: bool = False
     cleanup_on_failure: bool = False
     output_buffer_lines: int = 100
-    extra_config: Dict[str, Any] = field(default_factory=dict)
+    extra_config: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         """Validate and normalize configuration after initialization."""
@@ -134,14 +134,14 @@ class JobInfo:
     job_handle: JobHandle
     status: JobStatus
     work_dir: Path
-    scratch_dir: Optional[Path] = None
-    pid: Optional[int] = None
-    submit_time: Optional[float] = None
-    start_time: Optional[float] = None
-    end_time: Optional[float] = None
-    exit_code: Optional[int] = None
-    resource_usage: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    scratch_dir: Path | None = None
+    pid: int | None = None
+    submit_time: float | None = None
+    start_time: float | None = None
+    end_time: float | None = None
+    exit_code: int | None = None
+    resource_usage: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -163,12 +163,12 @@ class JobResult:
     """
 
     success: bool
-    final_energy: Optional[float]
+    final_energy: float | None
     energy_unit: str = "Hartree"  # Default for backwards compatibility
     convergence_status: str = "UNKNOWN"
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseRunner(ABC):
@@ -190,7 +190,7 @@ class BaseRunner(ABC):
         config: Runner configuration
     """
 
-    def __init__(self, config: Optional[RunnerConfig] = None):
+    def __init__(self, config: RunnerConfig | None = None):
         """
         Initialize the base runner.
 
@@ -199,7 +199,7 @@ class BaseRunner(ABC):
         """
         self.config = config or RunnerConfig()
         self._semaphore = asyncio.Semaphore(self.config.max_concurrent_jobs)
-        self._active_jobs: Dict[JobHandle, asyncio.Task] = {}
+        self._active_jobs: dict[JobHandle, asyncio.Task] = {}
 
     # -------------------------------------------------------------------------
     # Core Abstract Methods - Must be implemented by all runners
@@ -207,7 +207,7 @@ class BaseRunner(ABC):
 
     @abstractmethod
     async def submit_job(
-        self, job_id: int, input_file: Path, work_dir: Path, threads: Optional[int] = None, **kwargs
+        self, job_id: int, input_file: Path, work_dir: Path, threads: int | None = None, **kwargs
     ) -> JobHandle:
         """
         Submit a job for execution and return a job handle.
@@ -325,7 +325,7 @@ class BaseRunner(ABC):
 
     @abstractmethod
     async def retrieve_results(
-        self, job_handle: JobHandle, dest: Path, cleanup: Optional[bool] = None
+        self, job_handle: JobHandle, dest: Path, cleanup: bool | None = None
     ) -> None:
         """
         Retrieve all output files from a completed job.
@@ -384,7 +384,7 @@ class BaseRunner(ABC):
         )
 
     async def wait_for_completion(
-        self, job_handle: JobHandle, poll_interval: float = 1.0, timeout: Optional[float] = None
+        self, job_handle: JobHandle, poll_interval: float = 1.0, timeout: float | None = None
     ) -> JobStatus:
         """
         Wait for a job to complete.
@@ -576,8 +576,8 @@ class RemoteBaseRunner(BaseRunner):
         connection_manager: "ConnectionManager",  # Forward reference
         cluster_id: int,
         dft_code: DFTCode = DFTCode.CRYSTAL,
-        remote_scratch_dir: Optional[Path] = None,
-        config: Optional[RunnerConfig] = None,
+        remote_scratch_dir: Path | None = None,
+        config: RunnerConfig | None = None,
     ):
         """
         Initialize the remote base runner.
@@ -601,7 +601,7 @@ class RemoteBaseRunner(BaseRunner):
         conn: Any,  # asyncssh.SSHClientConnection
         local_dir: Path,
         remote_dir: str,
-        patterns: Optional[list[str]] = None,
+        patterns: list[str] | None = None,
     ) -> list[str]:
         """
         Upload files to remote machine via SFTP.
@@ -661,7 +661,7 @@ class RemoteBaseRunner(BaseRunner):
         conn: Any,  # asyncssh.SSHClientConnection
         remote_dir: str,
         local_dir: Path,
-        patterns: Optional[list[str]] = None,
+        patterns: list[str] | None = None,
     ) -> list[str]:
         """
         Download output files from remote machine via SFTP.
@@ -680,7 +680,6 @@ class RemoteBaseRunner(BaseRunner):
         """
         import fnmatch
         import logging
-        import shlex
 
         logger = logging.getLogger(__name__)
 
@@ -759,8 +758,8 @@ class RemoteBaseRunner(BaseRunner):
             conn: SSH connection
             remote_dir: Remote directory path to remove
         """
-        import shlex
         import logging
+        import shlex
 
         logger = logging.getLogger(__name__)
         cleanup_cmd = f"rm -rf {shlex.quote(remote_dir)}"

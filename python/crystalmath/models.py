@@ -13,10 +13,9 @@ Schema Compatibility:
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
 
 # ========== State Mapping Helper ==========
 
@@ -39,7 +38,7 @@ class JobState(str, Enum):
 
 
 # Mapping from AiiDA/legacy states to UI states (centralized)
-_AIIDA_STATE_MAP: Dict[str, JobState] = {
+_AIIDA_STATE_MAP: dict[str, JobState] = {
     # AiiDA process states
     "created": JobState.CREATED,
     "waiting": JobState.QUEUED,
@@ -126,7 +125,7 @@ class SchedulerOptions(BaseModel):
     memory_gb: str = Field(default="32", description="Memory per node in GB")
     cpus_per_task: int = Field(default=4, gt=0, description="CPUs per task")
     nodes: int = Field(default=1, gt=0, description="Number of nodes")
-    partition: Optional[str] = Field(default=None, description="SLURM partition/queue")
+    partition: str | None = Field(default=None, description="SLURM partition/queue")
 
 
 class JobSubmission(BaseModel):
@@ -141,30 +140,28 @@ class JobSubmission(BaseModel):
 
     name: str = Field(..., min_length=3, max_length=100, description="Job display name")
     dft_code: DftCode = Field(default=DftCode.CRYSTAL, description="DFT code to use")
-    workflow_id: Optional[str] = Field(
+    workflow_id: str | None = Field(
         default=None, description="Parent workflow ID (for workflow-linked jobs)"
     )
-    cluster_id: Optional[int] = Field(
-        default=None, description="Target cluster ID (None for local)"
-    )
+    cluster_id: int | None = Field(default=None, description="Target cluster ID (None for local)")
     runner_type: RunnerType = Field(default=RunnerType.LOCAL, description="Execution backend")
-    parameters: Dict[str, Any] = Field(default_factory=dict, description="DFT input parameters")
-    structure_path: Optional[str] = Field(
+    parameters: dict[str, Any] = Field(default_factory=dict, description="DFT input parameters")
+    structure_path: str | None = Field(
         default=None, description="Path to structure file (.cif, .xyz)"
     )
-    input_content: Optional[str] = Field(
+    input_content: str | None = Field(
         default=None, description="Raw input file content (.d12, INCAR)"
     )
 
     # Extended configuration
-    auxiliary_files: Optional[Dict[str, str]] = Field(
+    auxiliary_files: dict[str, str] | None = Field(
         default=None, description="Auxiliary files map (type -> source_path)"
     )
-    scheduler_options: Optional[SchedulerOptions] = Field(
+    scheduler_options: SchedulerOptions | None = Field(
         default=None, description="SLURM resource settings"
     )
-    mpi_ranks: Optional[int] = Field(default=None, gt=0, description="Number of MPI ranks")
-    parallel_mode: Optional[str] = Field(
+    mpi_ranks: int | None = Field(default=None, gt=0, description="Number of MPI ranks")
+    parallel_mode: str | None = Field(
         default=None, description="Parallel mode ('serial' or 'parallel')"
     )
 
@@ -201,16 +198,14 @@ class JobStatus(BaseModel):
     state: JobState = Field(..., description="Current execution state")
     dft_code: DftCode = Field(default=DftCode.CRYSTAL, description="DFT code type")
     runner_type: RunnerType = Field(default=RunnerType.LOCAL, description="Execution backend")
-    workflow_id: Optional[str] = Field(
+    workflow_id: str | None = Field(
         default=None, description="Parent workflow identifier (if created by workflow)"
     )
     progress_percent: float = Field(
         default=0.0, ge=0.0, le=100.0, description="Completion progress"
     )
-    wall_time_seconds: Optional[float] = Field(
-        default=None, ge=0.0, description="Elapsed wall time"
-    )
-    created_at: Optional[datetime] = Field(default=None, description="Job creation timestamp")
+    wall_time_seconds: float | None = Field(default=None, ge=0.0, description="Elapsed wall time")
+    created_at: datetime | None = Field(default=None, description="Job creation timestamp")
 
     @field_validator("state", mode="before")
     @classmethod
@@ -230,34 +225,32 @@ class JobDetails(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pk: int = Field(..., description="Primary key (database ID)")
-    uuid: Optional[str] = Field(default=None, description="Unique identifier")
+    uuid: str | None = Field(default=None, description="Unique identifier")
     name: str = Field(..., description="Job display name")
     state: JobState = Field(..., description="Current execution state")
     dft_code: DftCode = Field(default=DftCode.CRYSTAL, description="DFT code type")
 
     # Computed results
-    final_energy: Optional[float] = Field(default=None, description="Final total energy (Hartree)")
-    bandgap_ev: Optional[float] = Field(default=None, ge=0.0, description="Band gap (eV)")
+    final_energy: float | None = Field(default=None, description="Final total energy (Hartree)")
+    bandgap_ev: float | None = Field(default=None, ge=0.0, description="Band gap (eV)")
     convergence_met: bool = Field(default=False, description="SCF convergence achieved")
-    scf_cycles: Optional[int] = Field(default=None, ge=0, description="Number of SCF cycles")
+    scf_cycles: int | None = Field(default=None, ge=0, description="Number of SCF cycles")
 
     # Timing
-    cpu_time_seconds: Optional[float] = Field(default=None, ge=0.0, description="CPU time")
-    wall_time_seconds: Optional[float] = Field(default=None, ge=0.0, description="Wall clock time")
+    cpu_time_seconds: float | None = Field(default=None, ge=0.0, description="CPU time")
+    wall_time_seconds: float | None = Field(default=None, ge=0.0, description="Wall clock time")
 
     # Diagnostics
-    warnings: List[str] = Field(default_factory=list, description="Warning messages")
-    errors: List[str] = Field(default_factory=list, description="Error messages")
-    stdout_tail: List[str] = Field(default_factory=list, description="Last N lines of stdout")
+    warnings: list[str] = Field(default_factory=list, description="Warning messages")
+    errors: list[str] = Field(default_factory=list, description="Error messages")
+    stdout_tail: list[str] = Field(default_factory=list, description="Last N lines of stdout")
 
     # Full results dict (for JSON export)
-    key_results: Optional[Dict[str, Any]] = Field(
-        default=None, description="Full results dictionary"
-    )
+    key_results: dict[str, Any] | None = Field(default=None, description="Full results dictionary")
 
     # Input/output paths
-    work_dir: Optional[str] = Field(default=None, description="Working directory path")
-    input_file: Optional[str] = Field(default=None, description="Input file content")
+    work_dir: str | None = Field(default=None, description="Working directory path")
+    input_file: str | None = Field(default=None, description="Input file content")
 
     @field_validator("state", mode="before")
     @classmethod
@@ -275,7 +268,7 @@ class ClusterConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: Optional[int] = Field(default=None, description="Database ID")
+    id: int | None = Field(default=None, description="Database ID")
     name: str = Field(..., min_length=1, max_length=50, description="Cluster display name")
     cluster_type: Literal["ssh", "slurm"] = Field(..., description="Cluster type")
     hostname: str = Field(..., min_length=1, description="Hostname or IP address")
@@ -283,15 +276,15 @@ class ClusterConfig(BaseModel):
     username: str = Field(..., min_length=1, description="SSH username")
 
     # Optional configuration
-    key_file: Optional[str] = Field(default=None, description="Path to SSH private key")
-    remote_workdir: Optional[str] = Field(default=None, description="Remote working directory")
-    queue_name: Optional[str] = Field(default=None, description="SLURM queue/partition name")
+    key_file: str | None = Field(default=None, description="Path to SSH private key")
+    remote_workdir: str | None = Field(default=None, description="Remote working directory")
+    queue_name: str | None = Field(default=None, description="SLURM queue/partition name")
     max_concurrent: int = Field(default=4, ge=1, description="Max concurrent jobs")
 
     # Environment configuration
-    cry23_root: Optional[str] = Field(default=None, description="Path to CRYSTAL23 installation")
-    vasp_root: Optional[str] = Field(default=None, description="Path to VASP installation")
-    setup_commands: List[str] = Field(
+    cry23_root: str | None = Field(default=None, description="Path to CRYSTAL23 installation")
+    vasp_root: str | None = Field(default=None, description="Path to VASP installation")
+    setup_commands: list[str] = Field(
         default_factory=list, description="Setup commands (e.g. module load)"
     )
 
@@ -328,18 +321,16 @@ class StructureData(BaseModel):
     beta: float = Field(default=90.0, ge=0, le=180, description="Angle beta (degrees)")
     gamma: float = Field(default=90.0, ge=0, le=180, description="Angle gamma (degrees)")
 
-    space_group: Optional[int] = Field(default=None, ge=1, le=230, description="Space group number")
-    layer_group: Optional[int] = Field(
-        default=None, ge=1, le=80, description="Layer group (for SLAB)"
-    )
+    space_group: int | None = Field(default=None, ge=1, le=230, description="Space group number")
+    layer_group: int | None = Field(default=None, ge=1, le=80, description="Layer group (for SLAB)")
 
     # Atomic positions
-    atoms: List[Dict[str, Any]] = Field(default_factory=list, description="Atomic positions")
+    atoms: list[dict[str, Any]] = Field(default_factory=list, description="Atomic positions")
 
     # Source information
-    source: Optional[str] = Field(default=None, description="Data source (mp, cif, manual)")
-    material_id: Optional[str] = Field(default=None, description="Materials Project ID")
+    source: str | None = Field(default=None, description="Data source (mp, cif, manual)")
+    material_id: str | None = Field(default=None, description="Materials Project ID")
 
 
 # Type aliases for Rust compatibility
-JobStatusList = List[JobStatus]
+JobStatusList = list[JobStatus]

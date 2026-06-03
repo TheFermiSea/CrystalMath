@@ -11,9 +11,10 @@ This module provides a comprehensive template system with:
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
+
 import yaml
-from jinja2 import FileSystemLoader, Template as Jinja2Template, TemplateSyntaxError
+from jinja2 import FileSystemLoader, TemplateSyntaxError
 from jinja2.sandbox import SandboxedEnvironment
 
 
@@ -25,13 +26,13 @@ class ParameterDefinition:
     type: str  # string, integer, float, boolean, select, multiselect, file, structure
     default: Any = None
     description: str = ""
-    min: Optional[Union[int, float]] = None
-    max: Optional[Union[int, float]] = None
-    options: Optional[List[str]] = None  # For select/multiselect
+    min: int | float | None = None
+    max: int | float | None = None
+    options: list[str] | None = None  # For select/multiselect
     required: bool = False
-    depends_on: Optional[Dict[str, Any]] = None  # Conditional parameters
+    depends_on: dict[str, Any] | None = None  # Conditional parameters
 
-    def validate(self, value: Any) -> List[str]:
+    def validate(self, value: Any) -> list[str]:
         """Validate a parameter value against this definition.
 
         Args:
@@ -117,15 +118,15 @@ class Template:
     version: str
     description: str
     author: str
-    tags: List[str]
-    parameters: Dict[str, ParameterDefinition]
+    tags: list[str]
+    parameters: dict[str, ParameterDefinition]
     input_template: str
-    extends: Optional[str] = None  # Template inheritance
-    includes: List[str] = field(default_factory=list)  # Include other templates
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    extends: str | None = None  # Template inheritance
+    includes: list[str] = field(default_factory=list)  # Include other templates
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Template":
+    def from_dict(cls, data: dict[str, Any]) -> "Template":
         """Create a Template from a dictionary (loaded from YAML)."""
         # Parse parameters
         params = {}
@@ -155,7 +156,7 @@ class Template:
             metadata=data.get("metadata", {}),
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert Template to dictionary (for saving to YAML)."""
         params_dict = {}
         for name, param in self.parameters.items():
@@ -209,7 +210,7 @@ class TemplateManager:
     - No file system access: Templates cannot read/write files
     """
 
-    def __init__(self, template_dir: Optional[Path] = None):
+    def __init__(self, template_dir: Path | None = None):
         """Initialize the template manager with security hardening.
 
         Args:
@@ -245,7 +246,7 @@ class TemplateManager:
         )
 
         # Cache loaded templates
-        self._template_cache: Dict[str, Template] = {}
+        self._template_cache: dict[str, Template] = {}
 
     @staticmethod
     def _validate_template_dir(template_dir: Path) -> None:
@@ -300,7 +301,7 @@ class TemplateManager:
         if cache_key in self._template_cache:
             return self._template_cache[cache_key]
 
-        with open(full_path, "r") as f:
+        with open(full_path) as f:
             data = yaml.safe_load(f)
 
         if not data:
@@ -366,7 +367,7 @@ class TemplateManager:
                 f"{self.template_dir}"
             ) from e
 
-    def render(self, template: Template, params: Dict[str, Any]) -> str:
+    def render(self, template: Template, params: dict[str, Any]) -> str:
         """Render a template with given parameters.
 
         Args:
@@ -383,7 +384,7 @@ class TemplateManager:
         # Validate parameters
         errors = self.validate_params(template, params)
         if errors:
-            raise ValueError(f"Parameter validation failed:\n" + "\n".join(errors))
+            raise ValueError("Parameter validation failed:\n" + "\n".join(errors))
 
         # Merge with defaults
         render_params = self.get_default_params(template)
@@ -397,7 +398,7 @@ class TemplateManager:
         except TemplateSyntaxError as e:
             raise TemplateSyntaxError(f"Template syntax error: {e}", e.lineno)
 
-    def validate_params(self, template: Template, params: Dict[str, Any]) -> List[str]:
+    def validate_params(self, template: Template, params: dict[str, Any]) -> list[str]:
         """Validate parameters against template definition.
 
         Args:
@@ -443,7 +444,7 @@ class TemplateManager:
 
         return errors
 
-    def get_default_params(self, template: Template) -> Dict[str, Any]:
+    def get_default_params(self, template: Template) -> dict[str, Any]:
         """Get dictionary of default parameter values.
 
         Args:
@@ -458,7 +459,7 @@ class TemplateManager:
                 defaults[param_name] = param_def.default
         return defaults
 
-    def list_templates(self, tags: Optional[List[str]] = None) -> List[Template]:
+    def list_templates(self, tags: list[str] | None = None) -> list[Template]:
         """List all available templates, optionally filtered by tags.
 
         Args:
@@ -522,7 +523,7 @@ class TemplateManager:
         cache_key = str(full_path.resolve())
         self._template_cache[cache_key] = template
 
-    def find_template(self, name: str) -> Optional[Template]:
+    def find_template(self, name: str) -> Template | None:
         """Find a template by name.
 
         Args:
@@ -551,7 +552,7 @@ class TemplateManager:
         except Exception as e:
             return f"Error rendering preview: {e}"
 
-    def get_template_info(self, template: Template) -> Dict[str, Any]:
+    def get_template_info(self, template: Template) -> dict[str, Any]:
         """Get detailed information about a template.
 
         Args:
@@ -583,7 +584,7 @@ class TemplateManager:
 
 
 # Convenience function for quick template rendering
-def render_template(template_path: Path, params: Dict[str, Any]) -> str:
+def render_template(template_path: Path, params: dict[str, Any]) -> str:
     """Quick function to render a template.
 
     Args:

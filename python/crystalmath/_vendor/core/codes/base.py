@@ -13,7 +13,6 @@ import shlex
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional
 
 
 class DFTCode(Enum):
@@ -39,18 +38,18 @@ class DFTCodeConfig:
 
     name: str
     display_name: str
-    input_extensions: List[str] = field(default_factory=list)
+    input_extensions: list[str] = field(default_factory=list)
     output_extension: str = ".out"
-    auxiliary_inputs: Dict[str, str] = field(default_factory=dict)
-    auxiliary_outputs: Dict[str, str] = field(default_factory=dict)
+    auxiliary_inputs: dict[str, str] = field(default_factory=dict)
+    auxiliary_outputs: dict[str, str] = field(default_factory=dict)
     serial_executable: str = ""
     parallel_executable: str = ""
     invocation_style: InvocationStyle = InvocationStyle.STDIN
     root_env_var: str = ""
-    bashrc_pattern: Optional[str] = None
+    bashrc_pattern: str | None = None
     energy_unit: str = ""
-    convergence_patterns: List[str] = field(default_factory=list)
-    error_patterns: List[str] = field(default_factory=list)
+    convergence_patterns: list[str] = field(default_factory=list)
+    error_patterns: list[str] = field(default_factory=list)
 
     def get_executable(self, parallel: bool = False) -> str:
         """Return the executable name for serial or parallel execution.
@@ -74,7 +73,7 @@ class DFTCodeConfig:
 
     def build_command(
         self, input_file: Path, output_file: Path, parallel: bool = False
-    ) -> List[str]:
+    ) -> list[str]:
         """Construct a best-effort command line for this code.
 
         The returned list is intended for execution with subprocess without
@@ -112,8 +111,8 @@ class DFTCodeConfig:
 
 
 # Import at end to avoid circular dependencies during type checking
-from .registry import DFT_CODE_REGISTRY  # noqa: E402  pylint: disable=wrong-import-position
 from .parsers.base import OutputParser  # noqa: E402  pylint: disable=wrong-import-position
+from .registry import DFT_CODE_REGISTRY  # noqa: E402  pylint: disable=wrong-import-position
 
 __all__ = [
     "DFTCode",

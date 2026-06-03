@@ -63,25 +63,18 @@ See Also:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
-    List,
     Literal,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
 )
 
 if TYPE_CHECKING:
     from crystalmath.protocols import (
         DFTCode,
-        ErrorRecoveryStrategy,
-        ResourceRequirements,
         WorkflowStep,
         WorkflowType,
     )
@@ -150,14 +143,14 @@ class PWDNode:
         ... )
     """
 
-    id: Union[str, int]
+    id: str | int
     type: Literal["input", "function", "output"]
     value: Any = None
-    name: Optional[str] = None
+    name: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to PWD JSON format."""
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "id": self.id,
             "type": self.type,
         }
@@ -168,7 +161,7 @@ class PWDNode:
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PWDNode":
+    def from_dict(cls, data: dict[str, Any]) -> PWDNode:
         """Create from PWD JSON dict."""
         return cls(
             id=data["id"],
@@ -201,12 +194,12 @@ class PWDEdge:
         ... )
     """
 
-    source: Union[str, int]
-    source_port: Optional[str] = None
-    target: Union[str, int] = ""
-    target_port: Optional[str] = None
+    source: str | int
+    source_port: str | None = None
+    target: str | int = ""
+    target_port: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to PWD JSON format."""
         return {
             "source": self.source,
@@ -216,7 +209,7 @@ class PWDEdge:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PWDEdge":
+    def from_dict(cls, data: dict[str, Any]) -> PWDEdge:
         """Create from PWD JSON dict."""
         return cls(
             source=data["source"],
@@ -252,15 +245,15 @@ class CrystalMathExtensions:
         ... )
     """
 
-    resources: Optional[Dict[str, Any]] = None
-    error_recovery: Optional[str] = None
-    protocol_level: Optional[str] = None
-    code: Optional[str] = None
-    workflow_type: Optional[str] = None
+    resources: dict[str, Any] | None = None
+    error_recovery: str | None = None
+    protocol_level: str | None = None
+    code: str | None = None
+    workflow_type: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
         if self.resources is not None:
             result["resources"] = self.resources
         if self.error_recovery is not None:
@@ -274,7 +267,7 @@ class CrystalMathExtensions:
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CrystalMathExtensions":
+    def from_dict(cls, data: dict[str, Any]) -> CrystalMathExtensions:
         """Create from JSON dict."""
         return cls(
             resources=data.get("resources"),
@@ -343,7 +336,7 @@ class PWDConverter:
         self._include_inputs = include_inputs
         self._include_outputs = include_outputs
 
-    def to_pwd(self, steps: Sequence["WorkflowStep"]) -> Dict[str, Any]:
+    def to_pwd(self, steps: Sequence[WorkflowStep]) -> dict[str, Any]:
         """
         Export WorkflowSteps to PWD JSON format.
 
@@ -379,9 +372,9 @@ class PWDConverter:
             >>> print(pwd["nodes"])  # List of node dicts
             >>> print(pwd["edges"])  # List of edge dicts
         """
-        nodes: List[PWDNode] = []
-        edges: List[PWDEdge] = []
-        step_to_node_id: Dict[str, str] = {}
+        nodes: list[PWDNode] = []
+        edges: list[PWDEdge] = []
+        step_to_node_id: dict[str, str] = {}
 
         # Create input node for structure if enabled
         if self._include_inputs:
@@ -462,7 +455,7 @@ class PWDConverter:
             "edges": [edge.to_dict() for edge in edges],
         }
 
-    def from_pwd(self, pwd_json: Dict[str, Any]) -> List["WorkflowStep"]:
+    def from_pwd(self, pwd_json: dict[str, Any]) -> list[WorkflowStep]:
         """
         Import PWD JSON to WorkflowSteps.
 
@@ -493,7 +486,7 @@ class PWDConverter:
             >>> steps = converter.from_pwd(pwd_json)
             >>> print([s.name for s in steps])
         """
-        from crystalmath.protocols import WorkflowStep, WorkflowType
+        from crystalmath.protocols import WorkflowStep
 
         self._validate_pwd_json(pwd_json)
 
@@ -504,7 +497,7 @@ class PWDConverter:
         function_nodes = [n for n in nodes if n.type == "function"]
 
         # Build dependency map from edges
-        dependency_map: Dict[Union[str, int], List[str]] = {}
+        dependency_map: dict[str | int, list[str]] = {}
         for edge in edges:
             target_id = edge.target
             source_id = edge.source
@@ -526,7 +519,7 @@ class PWDConverter:
                 dependency_map[target_id].append(dep_name)
 
         # Convert function nodes to WorkflowSteps
-        steps: List[WorkflowStep] = []
+        steps: list[WorkflowStep] = []
         for node in function_nodes:
             name = node.name or self._extract_name_from_value(node.value)
             workflow_type, code = self._parse_function_path(node.value)
@@ -545,8 +538,8 @@ class PWDConverter:
         return steps
 
     def to_pwd_with_extensions(
-        self, steps: Sequence["WorkflowStep"]
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        self, steps: Sequence[WorkflowStep]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """
         Export with CrystalMath extensions in separate dict.
 
@@ -588,7 +581,7 @@ class PWDConverter:
         """
         pwd_json = self.to_pwd(steps)
 
-        extensions: Dict[str, Dict[str, Any]] = {}
+        extensions: dict[str, dict[str, Any]] = {}
 
         for step in steps:
             node_id = f"func_{step.name}"
@@ -639,7 +632,7 @@ class PWDConverter:
 
     def save_pwd(
         self,
-        steps: Sequence["WorkflowStep"],
+        steps: Sequence[WorkflowStep],
         output_dir: Path,
         name: str,
     ) -> None:
@@ -698,7 +691,7 @@ class PWDConverter:
         with open(environment_yml_path, "w") as f:
             f.write(environment_yml)
 
-    def load_pwd(self, pwd_dir: Path) -> List["WorkflowStep"]:
+    def load_pwd(self, pwd_dir: Path) -> list[WorkflowStep]:
         """
         Load workflow from PWD directory.
 
@@ -720,7 +713,7 @@ class PWDConverter:
             >>> for step in steps:
             ...     print(f"{step.name}: {step.workflow_type}")
         """
-        from crystalmath.protocols import ResourceRequirements, WorkflowStep
+        from crystalmath.protocols import ResourceRequirements
 
         pwd_dir = Path(pwd_dir)
 
@@ -775,7 +768,7 @@ class PWDConverter:
     # Helper Methods
     # =========================================================================
 
-    def _get_function_path(self, step: "WorkflowStep") -> str:
+    def _get_function_path(self, step: WorkflowStep) -> str:
         """Generate function path for a workflow step."""
         workflow_type = (
             step.workflow_type.value
@@ -784,7 +777,7 @@ class PWDConverter:
         )
         return f"{self._function_prefix}.{workflow_type}"
 
-    def _find_leaf_steps(self, steps: Sequence["WorkflowStep"]) -> List["WorkflowStep"]:
+    def _find_leaf_steps(self, steps: Sequence[WorkflowStep]) -> list[WorkflowStep]:
         """Find steps that have no dependents (leaf nodes)."""
         all_names = {step.name for step in steps}
         depended_on: set[str] = set()
@@ -795,7 +788,7 @@ class PWDConverter:
 
         return [step for step in steps if step.name not in depended_on]
 
-    def _validate_pwd_json(self, pwd_json: Dict[str, Any]) -> None:
+    def _validate_pwd_json(self, pwd_json: dict[str, Any]) -> None:
         """Validate PWD JSON structure."""
         if not isinstance(pwd_json, dict):
             raise PWDValidationError("PWD JSON must be a dictionary")
@@ -820,7 +813,7 @@ class PWDConverter:
             if "target" not in edge:
                 raise PWDValidationError("Edge missing 'target' field")
 
-    def _extract_name_from_value(self, value: Optional[str]) -> str:
+    def _extract_name_from_value(self, value: str | None) -> str:
         """Extract step name from function path value."""
         if not value:
             return "unknown"
@@ -828,7 +821,7 @@ class PWDConverter:
         parts = value.split(".")
         return parts[-1] if parts else "unknown"
 
-    def _parse_function_path(self, value: Optional[str]) -> Tuple["WorkflowType", "DFTCode"]:
+    def _parse_function_path(self, value: str | None) -> tuple[WorkflowType, DFTCode]:
         """Parse workflow type and code from function path."""
         from crystalmath.protocols import WorkflowType
 
@@ -850,7 +843,7 @@ class PWDConverter:
 
         return workflow_type, code
 
-    def _generate_workflow_py(self, steps: Sequence["WorkflowStep"]) -> str:
+    def _generate_workflow_py(self, steps: Sequence[WorkflowStep]) -> str:
         """Generate Python module with workflow function stubs."""
         lines = [
             '"""',
@@ -875,23 +868,23 @@ class PWDConverter:
             func_name = workflow_type
 
             lines.append(f"def {func_name}(structure: Any, **kwargs: Any) -> Dict[str, Any]:")
-            lines.append(f'    """')
+            lines.append('    """')
             lines.append(f"    {step.name.capitalize()} calculation step.")
-            lines.append(f"    ")
-            lines.append(f"    Args:")
-            lines.append(f"        structure: Input crystal structure")
-            lines.append(f"        **kwargs: Additional calculation parameters")
-            lines.append(f"    ")
-            lines.append(f"    Returns:")
-            lines.append(f"        Dict with calculation results")
-            lines.append(f'    """')
-            lines.append(f'    raise NotImplementedError("Use CrystalMath workflow runners")')
+            lines.append("    ")
+            lines.append("    Args:")
+            lines.append("        structure: Input crystal structure")
+            lines.append("        **kwargs: Additional calculation parameters")
+            lines.append("    ")
+            lines.append("    Returns:")
+            lines.append("        Dict with calculation results")
+            lines.append('    """')
+            lines.append('    raise NotImplementedError("Use CrystalMath workflow runners")')
             lines.append("")
             lines.append("")
 
         return "\n".join(lines)
 
-    def _generate_environment_yml(self, steps: Sequence["WorkflowStep"]) -> str:
+    def _generate_environment_yml(self, steps: Sequence[WorkflowStep]) -> str:
         """Generate conda environment specification."""
         # Collect unique codes to determine dependencies
         codes = {step.code for step in steps}
@@ -928,9 +921,9 @@ class PWDConverter:
 
 
 def export_to_pwd(
-    steps: Sequence["WorkflowStep"],
-    output_path: Optional[Path] = None,
-) -> Dict[str, Any]:
+    steps: Sequence[WorkflowStep],
+    output_path: Path | None = None,
+) -> dict[str, Any]:
     """
     Export workflow steps to PWD format.
 
@@ -961,8 +954,8 @@ def export_to_pwd(
 
 
 def import_from_pwd(
-    source: Union[Path, Dict[str, Any]],
-) -> List["WorkflowStep"]:
+    source: Path | dict[str, Any],
+) -> list[WorkflowStep]:
     """
     Import workflow from PWD format.
 

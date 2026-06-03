@@ -15,7 +15,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from crystalmath.quacc.config import ClusterConfigStore, ParslClusterConfig
 from crystalmath.quacc.discovery import discover_vasp_recipes
 from crystalmath.quacc.engines import (
@@ -24,7 +23,6 @@ from crystalmath.quacc.engines import (
     get_workflow_engine,
 )
 from crystalmath.quacc.store import JobMetadata, JobStatus, JobStore
-
 
 # =============================================================================
 # Discovery Tests
@@ -165,24 +163,26 @@ class TestDiscoverVaspRecipes:
         mock_quacc.recipes = mock_recipes  # type: ignore[attr-defined]
         mock_recipes.vasp = mock_vasp  # type: ignore[attr-defined]
 
-        with patch.dict(
-            sys.modules,
-            {
-                "quacc": mock_quacc,
-                "quacc.recipes": mock_recipes,
-                "quacc.recipes.vasp": mock_vasp,
-            },
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "quacc": mock_quacc,
+                    "quacc.recipes": mock_recipes,
+                    "quacc.recipes.vasp": mock_vasp,
+                },
+            ),
+            patch("crystalmath.quacc.discovery.pkgutil.walk_packages") as mock_walk,
         ):
-            with patch("crystalmath.quacc.discovery.pkgutil.walk_packages") as mock_walk:
-                mock_walk.return_value = [
-                    (None, "quacc.recipes.vasp.broken", False),
-                ]
+            mock_walk.return_value = [
+                (None, "quacc.recipes.vasp.broken", False),
+            ]
 
-                with patch("crystalmath.quacc.discovery.import_module") as mock_import:
-                    mock_import.side_effect = ImportError("missing dep")
+            with patch("crystalmath.quacc.discovery.import_module") as mock_import:
+                mock_import.side_effect = ImportError("missing dep")
 
-                    with caplog.at_level(logging.DEBUG):
-                        discover_vasp_recipes()
+                with caplog.at_level(logging.DEBUG):
+                    discover_vasp_recipes()
 
         # Check log contains the skip message
         assert any(
@@ -227,6 +227,7 @@ class TestGetWorkflowEngine:
         with patch.dict(sys.modules, {"quacc": mock_quacc}):
             # Need to reimport to pick up mock
             from importlib import reload
+
             import crystalmath.quacc.engines as engines_mod
 
             reload(engines_mod)

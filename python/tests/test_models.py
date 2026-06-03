@@ -12,8 +12,6 @@ import json
 from datetime import datetime
 
 import pytest
-from pydantic import ValidationError
-
 from crystalmath.models import (
     ClusterConfig,
     DftCode,
@@ -24,6 +22,7 @@ from crystalmath.models import (
     RunnerType,
     StructureData,
 )
+from pydantic import ValidationError
 
 
 class TestJobState:

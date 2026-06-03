@@ -8,15 +8,15 @@ Includes support for:
 - Schema versioning and migrations
 """
 
-import sqlite3
 import json
+import sqlite3
 import warnings
-from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from queue import SimpleQueue
-from contextlib import contextmanager
+from typing import Any
 
 
 def _safe_get_column(row: sqlite3.Row, col_name: str, default: Any = None) -> Any:
@@ -54,25 +54,25 @@ class DependencyType(Enum):
 class Job:
     """Represents a DFT calculation job."""
 
-    id: Optional[int]
+    id: int | None
     name: str
     work_dir: str
     status: str
-    workflow_id: Optional[str] = None
-    created_at: Optional[str] = None
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    pid: Optional[int] = None
-    input_file: Optional[str] = None
-    final_energy: Optional[float] = None
-    key_results: Optional[Dict[str, Any]] = None
+    workflow_id: str | None = None
+    created_at: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    pid: int | None = None
+    input_file: str | None = None
+    final_energy: float | None = None
+    key_results: dict[str, Any] | None = None
     # Phase 2 fields
-    cluster_id: Optional[int] = None
+    cluster_id: int | None = None
     runner_type: str = "local"
-    parallelism_config: Optional[Dict[str, Any]] = None
-    queue_time: Optional[str] = None
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
+    parallelism_config: dict[str, Any] | None = None
+    queue_time: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
     # Phase 3 field - DFT code type
     dft_code: str = "crystal"  # crystal, quantum_espresso, vasp
 
@@ -81,43 +81,43 @@ class Job:
 class Cluster:
     """Represents a remote cluster configuration."""
 
-    id: Optional[int]
+    id: int | None
     name: str
     type: str  # ssh or slurm
     hostname: str
     port: int
     username: str
-    connection_config: Dict[str, Any]  # JSON: key_file, password, etc.
+    connection_config: dict[str, Any]  # JSON: key_file, password, etc.
     status: str  # active, inactive, error
-    cry23_root: Optional[str] = None
-    vasp_root: Optional[str] = None
-    setup_commands: Optional[List[str]] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    cry23_root: str | None = None
+    vasp_root: str | None = None
+    setup_commands: list[str] | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass
 class RemoteJob:
     """Represents remote job execution details."""
 
-    id: Optional[int]
+    id: int | None
     job_id: int
     cluster_id: int
     remote_handle: str  # Remote job ID (PID for SSH, job ID for SLURM)
-    submission_time: Optional[str] = None
-    queue_name: Optional[str] = None
-    node_list: Optional[str] = None
+    submission_time: str | None = None
+    queue_name: str | None = None
+    node_list: str | None = None
     working_directory: str = ""
-    stdout_path: Optional[str] = None
-    stderr_path: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    stdout_path: str | None = None
+    stderr_path: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass
 class JobDependency:
     """Represents a dependency between two jobs."""
 
-    id: Optional[int]
+    id: int | None
     job_id: int
     depends_on_job_id: int
     dependency_type: str
@@ -127,14 +127,14 @@ class JobDependency:
 class JobResult:
     """Represents detailed job results (normalized from jobs table)."""
 
-    id: Optional[int]
+    id: int | None
     job_id: int
-    key_results: Optional[Dict[str, Any]] = None
-    convergence_status: Optional[str] = None
-    scf_cycles: Optional[int] = None
-    cpu_time_seconds: Optional[float] = None
-    wall_time_seconds: Optional[float] = None
-    created_at: Optional[str] = None
+    key_results: dict[str, Any] | None = None
+    convergence_status: str | None = None
+    scf_cycles: int | None = None
+    cpu_time_seconds: float | None = None
+    wall_time_seconds: float | None = None
+    created_at: str | None = None
 
 
 class Database:
@@ -795,10 +795,10 @@ class Database:
         name: str,
         work_dir: str,
         input_content: str,
-        workflow_id: Optional[str] = None,
-        cluster_id: Optional[int] = None,
+        workflow_id: str | None = None,
+        cluster_id: int | None = None,
         runner_type: str = "local",
-        parallelism_config: Optional[Dict[str, Any]] = None,
+        parallelism_config: dict[str, Any] | None = None,
         dft_code: str = "crystal",
     ) -> int:
         """Create a new job entry."""
@@ -827,7 +827,7 @@ class Database:
                     raise RuntimeError("Failed to create job: lastrowid is None")
                 return job_id
 
-    def get_job(self, job_id: int) -> Optional[Job]:
+    def get_job(self, job_id: int) -> Job | None:
         """Get a job by ID."""
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
@@ -837,14 +837,14 @@ class Database:
 
             return self._row_to_job(row)
 
-    def get_all_jobs(self) -> List[Job]:
+    def get_all_jobs(self) -> list[Job]:
         """Get all jobs ordered by creation date."""
         with self.connection() as conn:
             rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
 
             return [self._row_to_job(row) for row in rows]
 
-    def get_job_statuses_batch(self, job_ids: List[int]) -> Dict[int, str]:
+    def get_job_statuses_batch(self, job_ids: list[int]) -> dict[int, str]:
         """
         Get statuses for multiple jobs in a single batch query.
 
@@ -868,7 +868,7 @@ class Database:
             )
             return {row[0]: row[1] for row in cursor.fetchall()}
 
-    def job_exists_batch(self, job_ids: List[int]) -> Dict[int, bool]:
+    def job_exists_batch(self, job_ids: list[int]) -> dict[int, bool]:
         """
         Check if multiple jobs exist in a single batch query.
 
@@ -892,7 +892,7 @@ class Database:
             # Return dict with True for existing jobs, False for non-existent
             return {job_id: job_id in existing_ids for job_id in job_ids}
 
-    def get_jobs_by_cluster(self, cluster_id: int) -> List[Job]:
+    def get_jobs_by_cluster(self, cluster_id: int) -> list[Job]:
         """Get all jobs for a specific cluster."""
         with self.connection() as conn:
             rows = conn.execute(
@@ -901,7 +901,7 @@ class Database:
 
             return [self._row_to_job(row) for row in rows]
 
-    def get_jobs_by_status(self, status: str) -> List[Job]:
+    def get_jobs_by_status(self, status: str) -> list[Job]:
         """Get all jobs with a specific status."""
         with self.connection() as conn:
             rows = conn.execute(
@@ -910,7 +910,7 @@ class Database:
 
             return [self._row_to_job(row) for row in rows]
 
-    def update_status(self, job_id: int, status: str, pid: Optional[int] = None) -> None:
+    def update_status(self, job_id: int, status: str, pid: int | None = None) -> None:
         """Update job status and optionally PID."""
         timestamp_field = None
         if status == "RUNNING":
@@ -918,40 +918,38 @@ class Database:
         elif status in ("COMPLETED", "FAILED", "CANCELLED"):
             timestamp_field = "completed_at"
 
-        with self.connection() as conn:
-            with conn:
-                if timestamp_field:
-                    conn.execute(
-                        f"""
+        with self.connection() as conn, conn:
+            if timestamp_field:
+                conn.execute(
+                    f"""
                         UPDATE jobs
                         SET status = ?, pid = ?, {timestamp_field} = CURRENT_TIMESTAMP
                         WHERE id = ?
                         """,
-                        (status, pid, job_id),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE jobs SET status = ?, pid = ? WHERE id = ?", (status, pid, job_id)
-                    )
+                    (status, pid, job_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE jobs SET status = ?, pid = ? WHERE id = ?", (status, pid, job_id)
+                )
 
     def update_results(
         self,
         job_id: int,
-        final_energy: Optional[float] = None,
-        key_results: Optional[Dict[str, Any]] = None,
+        final_energy: float | None = None,
+        key_results: dict[str, Any] | None = None,
     ) -> None:
         """Update job results after completion."""
         results_json = json.dumps(key_results) if key_results else None
-        with self.connection() as conn:
-            with conn:
-                conn.execute(
-                    """
+        with self.connection() as conn, conn:
+            conn.execute(
+                """
                     UPDATE jobs
                     SET final_energy = ?, key_results = ?
                     WHERE id = ?
                     """,
-                    (final_energy, results_json, job_id),
-                )
+                (final_energy, results_json, job_id),
+            )
 
     def _row_to_job(self, row: sqlite3.Row) -> Job:
         """Convert database row to Job object."""
@@ -994,41 +992,40 @@ class Database:
         hostname: str,
         username: str,
         port: int = 22,
-        connection_config: Optional[Dict[str, Any]] = None,
-        cry23_root: Optional[str] = None,
-        vasp_root: Optional[str] = None,
-        setup_commands: Optional[List[str]] = None,
+        connection_config: dict[str, Any] | None = None,
+        cry23_root: str | None = None,
+        vasp_root: str | None = None,
+        setup_commands: list[str] | None = None,
     ) -> int:
         """Create a new cluster configuration."""
         config_json = json.dumps(connection_config or {})
         setup_json = json.dumps(setup_commands or [])
 
-        with self.connection() as conn:
-            with conn:
-                cursor = conn.execute(
-                    """
+        with self.connection() as conn, conn:
+            cursor = conn.execute(
+                """
                     INSERT INTO clusters (name, type, hostname, port, username, connection_config,
                                          cry23_root, vasp_root, setup_commands)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (
-                        name,
-                        type,
-                        hostname,
-                        port,
-                        username,
-                        config_json,
-                        cry23_root,
-                        vasp_root,
-                        setup_json,
-                    ),
-                )
-                cluster_id = cursor.lastrowid
-                if cluster_id is None:
-                    raise RuntimeError("Failed to create cluster: lastrowid is None")
-                return cluster_id
+                (
+                    name,
+                    type,
+                    hostname,
+                    port,
+                    username,
+                    config_json,
+                    cry23_root,
+                    vasp_root,
+                    setup_json,
+                ),
+            )
+            cluster_id = cursor.lastrowid
+            if cluster_id is None:
+                raise RuntimeError("Failed to create cluster: lastrowid is None")
+            return cluster_id
 
-    def get_cluster(self, cluster_id: int) -> Optional[Cluster]:
+    def get_cluster(self, cluster_id: int) -> Cluster | None:
         """Get a cluster by ID."""
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM clusters WHERE id = ?", (cluster_id,)).fetchone()
@@ -1038,7 +1035,7 @@ class Database:
 
             return self._row_to_cluster(row)
 
-    def get_cluster_by_name(self, name: str) -> Optional[Cluster]:
+    def get_cluster_by_name(self, name: str) -> Cluster | None:
         """Get a cluster by name."""
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM clusters WHERE name = ?", (name,)).fetchone()
@@ -1048,14 +1045,14 @@ class Database:
 
             return self._row_to_cluster(row)
 
-    def get_all_clusters(self) -> List[Cluster]:
+    def get_all_clusters(self) -> list[Cluster]:
         """Get all clusters ordered by name."""
         with self.connection() as conn:
             rows = conn.execute("SELECT * FROM clusters ORDER BY name").fetchall()
 
             return [self._row_to_cluster(row) for row in rows]
 
-    def get_active_clusters(self) -> List[Cluster]:
+    def get_active_clusters(self) -> list[Cluster]:
         """Get all active clusters."""
         with self.connection() as conn:
             rows = conn.execute(
@@ -1067,15 +1064,15 @@ class Database:
     def update_cluster(
         self,
         cluster_id: int,
-        name: Optional[str] = None,
-        hostname: Optional[str] = None,
-        port: Optional[int] = None,
-        username: Optional[str] = None,
-        connection_config: Optional[Dict[str, Any]] = None,
-        status: Optional[str] = None,
-        cry23_root: Optional[str] = None,
-        vasp_root: Optional[str] = None,
-        setup_commands: Optional[List[str]] = None,
+        name: str | None = None,
+        hostname: str | None = None,
+        port: int | None = None,
+        username: str | None = None,
+        connection_config: dict[str, Any] | None = None,
+        status: str | None = None,
+        cry23_root: str | None = None,
+        vasp_root: str | None = None,
+        setup_commands: list[str] | None = None,
     ) -> None:
         """Update cluster configuration."""
         updates = []
@@ -1113,16 +1110,14 @@ class Database:
             updates.append("updated_at = CURRENT_TIMESTAMP")
             params.append(cluster_id)
 
-            with self.connection() as conn:
-                with conn:
-                    query = f"UPDATE clusters SET {', '.join(updates)} WHERE id = ?"
-                    conn.execute(query, params)
+            with self.connection() as conn, conn:
+                query = f"UPDATE clusters SET {', '.join(updates)} WHERE id = ?"
+                conn.execute(query, params)
 
     def delete_cluster(self, cluster_id: int) -> None:
         """Delete a cluster configuration."""
-        with self.connection() as conn:
-            with conn:
-                conn.execute("DELETE FROM clusters WHERE id = ?", (cluster_id,))
+        with self.connection() as conn, conn:
+            conn.execute("DELETE FROM clusters WHERE id = ?", (cluster_id,))
 
     def _row_to_cluster(self, row: sqlite3.Row) -> Cluster:
         """Convert database row to Cluster object."""
@@ -1159,35 +1154,34 @@ class Database:
         cluster_id: int,
         remote_handle: str,
         working_directory: str,
-        queue_name: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        queue_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> int:
         """Create a remote job tracking entry."""
         metadata_json = json.dumps(metadata or {})
 
-        with self.connection() as conn:
-            with conn:
-                cursor = conn.execute(
-                    """
+        with self.connection() as conn, conn:
+            cursor = conn.execute(
+                """
                     INSERT INTO remote_jobs (job_id, cluster_id, remote_handle, working_directory,
                                             queue_name, metadata, submission_time)
                     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     """,
-                    (
-                        job_id,
-                        cluster_id,
-                        remote_handle,
-                        working_directory,
-                        queue_name,
-                        metadata_json,
-                    ),
-                )
-                remote_job_id = cursor.lastrowid
-                if remote_job_id is None:
-                    raise RuntimeError("Failed to create remote job: lastrowid is None")
-                return remote_job_id
+                (
+                    job_id,
+                    cluster_id,
+                    remote_handle,
+                    working_directory,
+                    queue_name,
+                    metadata_json,
+                ),
+            )
+            remote_job_id = cursor.lastrowid
+            if remote_job_id is None:
+                raise RuntimeError("Failed to create remote job: lastrowid is None")
+            return remote_job_id
 
-    def get_remote_job(self, remote_job_id: int) -> Optional[RemoteJob]:
+    def get_remote_job(self, remote_job_id: int) -> RemoteJob | None:
         """Get a remote job by ID."""
         with self.connection() as conn:
             row = conn.execute(
@@ -1199,7 +1193,7 @@ class Database:
 
             return self._row_to_remote_job(row)
 
-    def get_remote_job_by_job_id(self, job_id: int) -> Optional[RemoteJob]:
+    def get_remote_job_by_job_id(self, job_id: int) -> RemoteJob | None:
         """Get a remote job by job ID."""
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM remote_jobs WHERE job_id = ?", (job_id,)).fetchone()
@@ -1212,10 +1206,10 @@ class Database:
     def update_remote_job(
         self,
         remote_job_id: int,
-        node_list: Optional[str] = None,
-        stdout_path: Optional[str] = None,
-        stderr_path: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        node_list: str | None = None,
+        stdout_path: str | None = None,
+        stderr_path: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Update remote job details."""
         updates = []
@@ -1236,10 +1230,9 @@ class Database:
 
         if updates:
             params.append(remote_job_id)
-            with self.connection() as conn:
-                with conn:
-                    query = f"UPDATE remote_jobs SET {', '.join(updates)} WHERE id = ?"
-                    conn.execute(query, params)
+            with self.connection() as conn, conn:
+                query = f"UPDATE remote_jobs SET {', '.join(updates)} WHERE id = ?"
+                conn.execute(query, params)
 
     def _row_to_remote_job(self, row: sqlite3.Row) -> RemoteJob:
         """Convert database row to RemoteJob object."""
@@ -1267,21 +1260,20 @@ class Database:
         self, job_id: int, depends_on_job_id: int, dependency_type: str = "after_ok"
     ) -> int:
         """Add a dependency between two jobs."""
-        with self.connection() as conn:
-            with conn:
-                cursor = conn.execute(
-                    """
+        with self.connection() as conn, conn:
+            cursor = conn.execute(
+                """
                     INSERT INTO job_dependencies (job_id, depends_on_job_id, dependency_type)
                     VALUES (?, ?, ?)
                     """,
-                    (job_id, depends_on_job_id, dependency_type),
-                )
-                dep_id = cursor.lastrowid
-                if dep_id is None:
-                    raise RuntimeError("Failed to create job dependency: lastrowid is None")
-                return dep_id
+                (job_id, depends_on_job_id, dependency_type),
+            )
+            dep_id = cursor.lastrowid
+            if dep_id is None:
+                raise RuntimeError("Failed to create job dependency: lastrowid is None")
+            return dep_id
 
-    def get_job_dependencies(self, job_id: int) -> List[JobDependency]:
+    def get_job_dependencies(self, job_id: int) -> list[JobDependency]:
         """Get all dependencies for a job."""
         with self.connection() as conn:
             rows = conn.execute(
@@ -1290,7 +1282,7 @@ class Database:
 
             return [self._row_to_job_dependency(row) for row in rows]
 
-    def get_dependent_jobs(self, job_id: int) -> List[JobDependency]:
+    def get_dependent_jobs(self, job_id: int) -> list[JobDependency]:
         """Get all jobs that depend on this job."""
         with self.connection() as conn:
             rows = conn.execute(
@@ -1301,11 +1293,10 @@ class Database:
 
     def remove_job_dependency(self, dependency_id: int) -> None:
         """Remove a job dependency."""
-        with self.connection() as conn:
-            with conn:
-                conn.execute("DELETE FROM job_dependencies WHERE id = ?", (dependency_id,))
+        with self.connection() as conn, conn:
+            conn.execute("DELETE FROM job_dependencies WHERE id = ?", (dependency_id,))
 
-    def can_job_run(self, job_id: int) -> Tuple[bool, List[str]]:
+    def can_job_run(self, job_id: int) -> tuple[bool, list[str]]:
         """
         Check if a job can run based on its dependencies.
 
@@ -1352,11 +1343,11 @@ class Database:
     def save_job_result(
         self,
         job_id: int,
-        key_results: Optional[Dict[str, Any]] = None,
-        convergence_status: Optional[str] = None,
-        scf_cycles: Optional[int] = None,
-        cpu_time_seconds: Optional[float] = None,
-        wall_time_seconds: Optional[float] = None,
+        key_results: dict[str, Any] | None = None,
+        convergence_status: str | None = None,
+        scf_cycles: int | None = None,
+        cpu_time_seconds: float | None = None,
+        wall_time_seconds: float | None = None,
     ) -> int:
         """
         Save detailed job results to normalized job_results table.
@@ -1365,11 +1356,10 @@ class Database:
         """
         results_json = json.dumps(key_results) if key_results else None
 
-        with self.connection() as conn:
-            with conn:
-                # Upsert into job_results table
-                cursor = conn.execute(
-                    """
+        with self.connection() as conn, conn:
+            # Upsert into job_results table
+            cursor = conn.execute(
+                """
                     INSERT INTO job_results (job_id, key_results, convergence_status,
                                             scf_cycles, cpu_time_seconds, wall_time_seconds)
                     VALUES (?, ?, ?, ?, ?, ?)
@@ -1380,29 +1370,29 @@ class Database:
                         cpu_time_seconds = excluded.cpu_time_seconds,
                         wall_time_seconds = excluded.wall_time_seconds
                     """,
-                    (
-                        job_id,
-                        results_json,
-                        convergence_status,
-                        scf_cycles,
-                        cpu_time_seconds,
-                        wall_time_seconds,
-                    ),
-                )
+                (
+                    job_id,
+                    results_json,
+                    convergence_status,
+                    scf_cycles,
+                    cpu_time_seconds,
+                    wall_time_seconds,
+                ),
+            )
 
-                # Also update legacy column for backward compatibility
-                conn.execute("UPDATE jobs SET key_results = ? WHERE id = ?", (results_json, job_id))
+            # Also update legacy column for backward compatibility
+            conn.execute("UPDATE jobs SET key_results = ? WHERE id = ?", (results_json, job_id))
 
-                result_id = cursor.lastrowid
-                if result_id is None:
-                    # Upsert updated existing row, get the ID
-                    row = conn.execute(
-                        "SELECT id FROM job_results WHERE job_id = ?", (job_id,)
-                    ).fetchone()
-                    result_id = row[0] if row else 0
-                return result_id
+            result_id = cursor.lastrowid
+            if result_id is None:
+                # Upsert updated existing row, get the ID
+                row = conn.execute(
+                    "SELECT id FROM job_results WHERE job_id = ?", (job_id,)
+                ).fetchone()
+                result_id = row[0] if row else 0
+            return result_id
 
-    def get_job_result(self, job_id: int) -> Optional[JobResult]:
+    def get_job_result(self, job_id: int) -> JobResult | None:
         """Get detailed job results from normalized table."""
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM job_results WHERE job_id = ?", (job_id,)).fetchone()
@@ -1412,7 +1402,7 @@ class Database:
 
             return self._row_to_job_result(row)
 
-    def get_job_with_results(self, job_id: int) -> Optional[Tuple[Job, Optional[JobResult]]]:
+    def get_job_with_results(self, job_id: int) -> tuple[Job, JobResult | None] | None:
         """
         Get a job with its detailed results in a single operation.
 

@@ -32,7 +32,6 @@ Example:
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -257,7 +256,7 @@ class CrystalD12Generator:
         return ELEMENT_TO_Z[clean_symbol]
 
     @staticmethod
-    def _detect_dimensionality(structure: "Structure") -> CrystalSystem:
+    def _detect_dimensionality(structure: Structure) -> CrystalSystem:
         """Detect structure dimensionality from lattice parameters.
 
         Uses lattice vector lengths and vacuum detection to determine
@@ -298,7 +297,7 @@ class CrystalD12Generator:
 
     @staticmethod
     def _format_lattice_params(
-        structure: "Structure",
+        structure: Structure,
         system: CrystalSystem,
     ) -> list[str]:
         """Format lattice parameters for CRYSTAL23 geometry block.
@@ -362,7 +361,7 @@ class CrystalD12Generator:
 
     @staticmethod
     def _get_symmetry_info(
-        structure: "Structure",
+        structure: Structure,
         system: CrystalSystem,
     ) -> tuple[int, str]:
         """Get space group or layer group number for structure.
@@ -397,7 +396,7 @@ class CrystalD12Generator:
 
     @staticmethod
     def _get_irreducible_atoms(
-        structure: "Structure",
+        structure: Structure,
         space_group: int,
     ) -> list[tuple[int, float, float, float]]:
         """Get irreducible (asymmetric unit) atoms.
@@ -447,7 +446,7 @@ class CrystalD12Generator:
 
     @staticmethod
     def structure_to_geometry(
-        structure: "Structure",
+        structure: Structure,
         title: str = "Structure from Materials Project",
         system: CrystalSystem | None = None,
         symmetry_group: int | None = None,
@@ -518,7 +517,7 @@ class CrystalD12Generator:
 
     @staticmethod
     def _format_basis_set_block(
-        structure: "Structure",
+        structure: Structure,
         config: BasisSetConfig,
     ) -> str:
         """Format basis set block for .d12 file.
@@ -628,7 +627,7 @@ class CrystalD12Generator:
 
     @staticmethod
     def generate_full_input(
-        structure: "Structure",
+        structure: Structure,
         title: str = "MP Structure",
         system: CrystalSystem | None = None,
         symmetry_group: int | None = None,
@@ -773,7 +772,7 @@ class CrystalD12Generator:
 
     @staticmethod
     def from_mp_structure(
-        structure: "Structure",
+        structure: Structure,
         mp_id: str,
         functional: str = "PBE",
         shrink: tuple[int, int] = (8, 8),

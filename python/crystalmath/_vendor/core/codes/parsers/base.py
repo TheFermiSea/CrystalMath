@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..base import DFTCode
 
@@ -20,14 +20,14 @@ class ParsingResult:
     """Normalized results extracted from a DFT calculation output."""
 
     success: bool
-    final_energy: Optional[float]
+    final_energy: float | None
     energy_unit: str
     convergence_status: str
-    scf_cycles: Optional[int] = None
-    geometry_converged: Optional[bool] = None
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    scf_cycles: int | None = None
+    geometry_converged: bool | None = None
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class OutputParser(ABC):
@@ -42,7 +42,7 @@ class OutputParser(ABC):
         """Return the energy unit the parser reports (e.g., Hartree, eV)."""
 
 
-PARSER_REGISTRY: Dict[DFTCode, OutputParser] = {}
+PARSER_REGISTRY: dict[DFTCode, OutputParser] = {}
 
 
 def register_parser(code: DFTCode, parser: OutputParser) -> None:

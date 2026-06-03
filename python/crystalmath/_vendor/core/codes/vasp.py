@@ -16,11 +16,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from .base import DFTCode, DFTCodeConfig, InvocationStyle
 from .registry import register_code
-
 
 # VASP required input files
 VASP_REQUIRED_FILES = ["POSCAR", "INCAR", "KPOINTS", "POTCAR"]
@@ -57,11 +55,11 @@ class VASPInputFiles:
     potcar: str  # Pseudopotentials (concatenated)
 
     # Optional restart files
-    wavecar: Optional[Path] = None  # Binary file, keep as path
-    chgcar: Optional[Path] = None  # Binary file, keep as path
-    contcar: Optional[str] = None  # Alternative structure
+    wavecar: Path | None = None  # Binary file, keep as path
+    chgcar: Path | None = None  # Binary file, keep as path
+    contcar: str | None = None  # Alternative structure
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Validate input files and return list of issues.
 
         Returns:
@@ -94,7 +92,7 @@ class VASPInputFiles:
 
         return issues
 
-    def write_to_directory(self, work_dir: Path) -> Dict[str, Path]:
+    def write_to_directory(self, work_dir: Path) -> dict[str, Path]:
         """Write all input files to the specified work directory.
 
         Args:
@@ -141,7 +139,7 @@ class VASPInputFiles:
         return written
 
     @classmethod
-    def from_directory(cls, source_dir: Path) -> "VASPInputFiles":
+    def from_directory(cls, source_dir: Path) -> VASPInputFiles:
         """Read VASP input files from a directory.
 
         Args:
@@ -187,7 +185,7 @@ class VASPInputFiles:
         )
 
 
-def get_vasp_files_to_stage(work_dir: Path) -> List[Path]:
+def get_vasp_files_to_stage(work_dir: Path) -> list[Path]:
     """Get list of VASP files to stage for remote execution.
 
     Args:
@@ -213,7 +211,7 @@ def get_vasp_files_to_stage(work_dir: Path) -> List[Path]:
     return files
 
 
-def get_vasp_output_patterns() -> List[str]:
+def get_vasp_output_patterns() -> list[str]:
     """Get list of patterns for VASP output files to retrieve.
 
     Returns:

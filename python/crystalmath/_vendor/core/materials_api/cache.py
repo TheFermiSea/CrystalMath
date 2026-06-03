@@ -123,7 +123,7 @@ class CacheRepository:
         cls,
         db_path: Path | str,
         settings: MaterialsSettings | None = None,
-    ) -> "CacheRepository":
+    ) -> CacheRepository:
         """Factory method to create and initialize a CacheRepository.
 
         This is the preferred way to create a CacheRepository when using it

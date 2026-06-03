@@ -9,11 +9,11 @@ Tests cover:
 - Job tracking and status management
 """
 
-import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
 from datetime import datetime
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
 
 # =============================================================================
 # Fixtures
@@ -188,8 +188,8 @@ class TestSLURMAutoSelection:
 
     def test_auto_select_with_slurm_cluster(self):
         """Test that SLURM runner is auto-selected for SLURM clusters."""
-        from crystalmath.high_level.runners import StandardAnalysis
         from crystalmath.high_level.clusters import get_cluster_profile
+        from crystalmath.high_level.runners import StandardAnalysis
 
         profile = get_cluster_profile("beefcake2")
         analysis = StandardAnalysis(cluster=profile, protocol="fast")
@@ -199,8 +199,8 @@ class TestSLURMAutoSelection:
 
     def test_no_auto_select_for_local_cluster(self):
         """Test that SLURM runner is NOT selected for local clusters."""
-        from crystalmath.high_level.runners import StandardAnalysis
         from crystalmath.high_level.clusters import get_cluster_profile
+        from crystalmath.high_level.runners import StandardAnalysis
 
         profile = get_cluster_profile("local")
         analysis = StandardAnalysis(cluster=profile, protocol="fast")
@@ -210,8 +210,8 @@ class TestSLURMAutoSelection:
 
     def test_explicit_runner_overrides_auto_select(self):
         """Test that explicitly provided runner takes precedence."""
-        from crystalmath.high_level.runners import StandardAnalysis
         from crystalmath.high_level.clusters import get_cluster_profile
+        from crystalmath.high_level.runners import StandardAnalysis
 
         profile = get_cluster_profile("beefcake2")
 
@@ -348,7 +348,7 @@ class TestInputGeneration:
 
     def test_slurm_script_with_resources(self, slurm_runner):
         """Test SLURM script with custom resources."""
-        from crystalmath.protocols import WorkflowType, ResourceRequirements
+        from crystalmath.protocols import ResourceRequirements, WorkflowType
 
         resources = ResourceRequirements(
             num_nodes=2,
@@ -413,8 +413,8 @@ class TestYamboResultParsing:
 
     def test_parse_yambo_shg_output_empty(self, slurm_runner):
         """Test parsing when no output files exist."""
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmpdir:
             results = slurm_runner._parse_yambo_shg_output(Path(tmpdir))
@@ -422,8 +422,8 @@ class TestYamboResultParsing:
 
     def test_parse_yambo_shg_output_with_data(self, slurm_runner):
         """Test parsing YAMBO SHG output files."""
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
@@ -458,8 +458,8 @@ class TestSLURMIntegration:
 
     def test_standard_analysis_with_slurm(self):
         """Test StandardAnalysis uses SLURM runner when configured."""
-        from crystalmath.high_level.runners import StandardAnalysis
         from crystalmath.high_level.clusters import get_cluster_profile
+        from crystalmath.high_level.runners import StandardAnalysis
         from crystalmath.integrations.slurm_runner import SLURMWorkflowRunner
 
         profile = get_cluster_profile("beefcake2")
@@ -470,8 +470,8 @@ class TestSLURMIntegration:
 
     def test_optical_analysis_with_slurm(self):
         """Test OpticalAnalysis uses SLURM runner when configured."""
-        from crystalmath.high_level.runners import OpticalAnalysis
         from crystalmath.high_level.clusters import get_cluster_profile
+        from crystalmath.high_level.runners import OpticalAnalysis
         from crystalmath.integrations.slurm_runner import SLURMWorkflowRunner
 
         profile = get_cluster_profile("beefcake2")
@@ -481,8 +481,8 @@ class TestSLURMIntegration:
 
     def test_phonon_analysis_with_slurm(self):
         """Test PhononAnalysis uses SLURM runner when configured."""
-        from crystalmath.high_level.runners import PhononAnalysis
         from crystalmath.high_level.clusters import get_cluster_profile
+        from crystalmath.high_level.runners import PhononAnalysis
         from crystalmath.integrations.slurm_runner import SLURMWorkflowRunner
 
         profile = get_cluster_profile("beefcake2")
@@ -627,7 +627,6 @@ class TestSLURMJobPersistence:
 
     def test_reloaded_job_status_not_failed(self, slurm_config, tmp_path):
         """After reload, get_status must no longer treat the job as unknown."""
-        from unittest.mock import patch
 
         state_file = tmp_path / "slurm_jobs.json"
         runner = _make_runner(slurm_config, state_file)
@@ -648,7 +647,6 @@ class TestSLURMJobPersistence:
 
     def test_reloaded_job_can_be_cancelled(self, slurm_config, tmp_path):
         """cancel() must locate a job that only exists via persisted state."""
-        from unittest.mock import patch
 
         state_file = tmp_path / "slurm_jobs.json"
         runner = _make_runner(slurm_config, state_file)

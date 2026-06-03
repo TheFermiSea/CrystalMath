@@ -39,8 +39,6 @@ from .clients.mp_api import MpApiClient
 from .clients.mpcontribs import MpContribsClient
 from .clients.optimade import OptimadeClient
 from .errors import (
-    CacheError,
-    MaterialsAPIError,
     NetworkError,
     StructureNotFoundError,
     ValidationError,
@@ -50,7 +48,7 @@ from .settings import MaterialsSettings
 from .transforms.crystal_d12 import CrystalD12Generator, OptimizationConfig
 
 if TYPE_CHECKING:
-    from pymatgen.core import Structure
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +167,7 @@ class MaterialsService:
         # Track if we're in context manager
         self._entered = False
 
-    async def __aenter__(self) -> "MaterialsService":
+    async def __aenter__(self) -> MaterialsService:
         """Enter async context manager.
 
         Initializes the cache repository if db_path was provided.

@@ -2,7 +2,7 @@
 
 from .base import DFTCode, DFTCodeConfig, InvocationStyle
 from .parsers.base import OutputParser, ParsingResult, get_parser, register_parser
-from .registry import DFT_CODE_REGISTRY, get_code_config, register_code, list_available_codes
+from .registry import DFT_CODE_REGISTRY, get_code_config, list_available_codes, register_code
 
 __all__ = [
     # Enums and Config
@@ -22,7 +22,9 @@ __all__ = [
 ]
 
 # Register built-in code configurations
-from . import crystal  # noqa: F401  pylint: disable=wrong-import-position
-from . import quantum_espresso  # noqa: F401  pylint: disable=wrong-import-position
-from . import vasp  # noqa: F401  pylint: disable=wrong-import-position
-from . import yambo  # noqa: F401  pylint: disable=wrong-import-position
+from . import (
+    crystal,  # noqa: F401  pylint: disable=wrong-import-position
+    quantum_espresso,  # noqa: F401  pylint: disable=wrong-import-position
+    vasp,  # noqa: F401  pylint: disable=wrong-import-position
+    yambo,  # noqa: F401  pylint: disable=wrong-import-position
+)

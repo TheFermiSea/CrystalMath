@@ -6,7 +6,7 @@ import the concrete crystal/quantum_espresso/vasp parser modules, which are
 outside the vendored closure.
 """
 
-from .base import OutputParser, ParsingResult, get_parser, register_parser, PARSER_REGISTRY
+from .base import PARSER_REGISTRY, OutputParser, ParsingResult, get_parser, register_parser
 
 __all__ = [
     "OutputParser",

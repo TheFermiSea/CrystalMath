@@ -7,7 +7,6 @@ recovery suggestions based on common failure modes.
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Tuple
 from enum import Enum
 
 
@@ -26,14 +25,14 @@ class VASPError:
     code: str  # Short error code (e.g., "ZBRENT")
     severity: VASPErrorSeverity
     message: str  # Human-readable error description
-    line_content: Optional[str] = None  # Actual line from OUTCAR
-    suggestions: List[str] = field(default_factory=list)  # Recovery suggestions
-    incar_changes: Dict[str, str] = field(default_factory=dict)  # Suggested INCAR changes
+    line_content: str | None = None  # Actual line from OUTCAR
+    suggestions: list[str] = field(default_factory=list)  # Recovery suggestions
+    incar_changes: dict[str, str] = field(default_factory=dict)  # Suggested INCAR changes
 
 
 # Known VASP error patterns with recovery strategies
-VASP_ERROR_PATTERNS: List[
-    Tuple[re.Pattern, str, VASPErrorSeverity, str, List[str], Dict[str, str]]
+VASP_ERROR_PATTERNS: list[
+    tuple[re.Pattern, str, VASPErrorSeverity, str, list[str], dict[str, str]]
 ] = [
     # ZBRENT: Bracketing error in Brent algorithm (common in relaxation)
     (
@@ -227,7 +226,7 @@ class VASPErrorHandler:
         """Initialize the error handler."""
         self._patterns = VASP_ERROR_PATTERNS
 
-    def analyze_outcar(self, content: str) -> List[VASPError]:
+    def analyze_outcar(self, content: str) -> list[VASPError]:
         """
         Analyze OUTCAR content for errors.
 
@@ -259,7 +258,7 @@ class VASPErrorHandler:
 
         return errors
 
-    def get_recovery_incar(self, errors: List[VASPError]) -> Dict[str, str]:
+    def get_recovery_incar(self, errors: list[VASPError]) -> dict[str, str]:
         """
         Generate combined INCAR changes to address all detected errors.
 
@@ -275,7 +274,7 @@ class VASPErrorHandler:
                 combined.update(error.incar_changes)
         return combined
 
-    def format_error_report(self, errors: List[VASPError]) -> str:
+    def format_error_report(self, errors: list[VASPError]) -> str:
         """
         Format errors into a human-readable report.
 
@@ -315,7 +314,7 @@ class VASPErrorHandler:
         return "\n".join(lines)
 
 
-def analyze_vasp_errors(outcar_content: str) -> Tuple[List[VASPError], str]:
+def analyze_vasp_errors(outcar_content: str) -> tuple[list[VASPError], str]:
     """
     Convenience function to analyze VASP errors.
 

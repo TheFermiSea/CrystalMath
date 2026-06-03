@@ -16,8 +16,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from crystalmath.quacc.mock_runner import MockRunner, MockJobState
+from crystalmath.quacc.mock_runner import MockJobState, MockRunner
 from crystalmath.quacc.runner import JobState
 from crystalmath.quacc.store import JobMetadata, JobStatus
 
@@ -726,8 +725,8 @@ class TestJobSubmissionIntegration:
     async def test_full_job_lifecycle_with_mock_runner(self):
         """Test complete job lifecycle: submit -> poll -> complete."""
         from crystalmath.server.handlers.jobs import (
-            handle_jobs_submit,
             handle_jobs_status,
+            handle_jobs_submit,
         )
 
         mock_runner = MockRunner()
@@ -797,8 +796,8 @@ class TestJobSubmissionIntegration:
     async def test_job_failure_lifecycle(self):
         """Test job failure flow: submit -> poll -> fail."""
         from crystalmath.server.handlers.jobs import (
-            handle_jobs_submit,
             handle_jobs_status,
+            handle_jobs_submit,
         )
 
         mock_runner = MockRunner()

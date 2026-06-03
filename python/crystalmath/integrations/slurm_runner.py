@@ -58,17 +58,13 @@ import os
 import shlex
 import tempfile
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Union,
 )
 
 if TYPE_CHECKING:
@@ -145,13 +141,13 @@ class SLURMConfig:
     cluster_host: str
     cluster_port: int = 22
     username: str = "ubuntu"
-    key_file: Optional[Path] = None
+    key_file: Path | None = None
     remote_scratch: str = "/scratch/crystalmath"
     poll_interval_seconds: int = 30
     max_concurrent_jobs: int = 10
-    default_partition: Optional[str] = None
-    default_account: Optional[str] = None
-    default_qos: Optional[str] = None
+    default_partition: str | None = None
+    default_account: str | None = None
+    default_qos: str | None = None
     allow_insecure: bool = False  # Disable SSH host key verification (opt-in)
 
     def __post_init__(self) -> None:
@@ -164,7 +160,7 @@ class SLURMConfig:
             )
 
     @classmethod
-    def from_cluster_profile(cls, profile: "ClusterProfile") -> "SLURMConfig":
+    def from_cluster_profile(cls, profile: ClusterProfile) -> SLURMConfig:
         """Create SLURMConfig from a ClusterProfile.
 
         Args:
@@ -209,18 +205,18 @@ class SLURMJobInfo:
     state: str = "PENDING"
     remote_dir: str = ""
     code: str = "vasp"
-    submitted_at: Optional[datetime] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    outputs: Dict[str, Any] = field(default_factory=dict)
-    errors: List[str] = field(default_factory=list)
+    submitted_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    outputs: dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
 
     # datetime fields that must be (de)serialized to/from ISO-8601 strings.
     _DATETIME_FIELDS = ("submitted_at", "started_at", "completed_at")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dict (datetimes -> ISO-8601 strings)."""
-        data: Dict[str, Any] = {}
+        data: dict[str, Any] = {}
         for f in fields(self):
             value = getattr(self, f.name)
             if isinstance(value, datetime):
@@ -229,7 +225,7 @@ class SLURMJobInfo:
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SLURMJobInfo":
+    def from_dict(cls, data: dict[str, Any]) -> SLURMJobInfo:
         """Deserialize from a dict produced by :meth:`to_dict`.
 
         Unknown keys are ignored and missing keys fall back to dataclass
@@ -237,7 +233,7 @@ class SLURMJobInfo:
         ISO-8601 strings in datetime fields are parsed back to ``datetime``.
         """
         known = {f.name for f in fields(cls)}
-        kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
+        kwargs: dict[str, Any] = {k: v for k, v in data.items() if k in known}
         for name in cls._DATETIME_FIELDS:
             raw = kwargs.get(name)
             if isinstance(raw, str):
@@ -294,7 +290,7 @@ class SLURMWorkflowRunner:
         self,
         config: SLURMConfig,
         default_code: str = "vasp",
-        state_file: Optional[Union[str, Path]] = None,
+        state_file: str | Path | None = None,
     ) -> None:
         """Initialize SLURM workflow runner.
 
@@ -308,10 +304,10 @@ class SLURMWorkflowRunner:
         """
         self._config = config
         self._default_code = default_code
-        self._is_available: Optional[bool] = None
+        self._is_available: bool | None = None
 
         # Track submitted jobs: workflow_id -> SLURMJobInfo
-        self._jobs: Dict[str, SLURMJobInfo] = {}
+        self._jobs: dict[str, SLURMJobInfo] = {}
 
         # Resolve the persistence location. This must never fail construction.
         self._state_file: Path = (
@@ -319,8 +315,8 @@ class SLURMWorkflowRunner:
         )
 
         # Connection manager (lazy loaded)
-        self._connection_manager: Optional[Any] = None
-        self._slurm_runner: Optional[Any] = None
+        self._connection_manager: Any | None = None
+        self._slurm_runner: Any | None = None
 
         # Reload any previously-persisted in-progress jobs so that
         # get_status/get_result/cancel keep working across a server restart.
@@ -335,10 +331,10 @@ class SLURMWorkflowRunner:
     @classmethod
     def from_cluster_profile(
         cls,
-        profile: "ClusterProfile",
+        profile: ClusterProfile,
         default_code: str = "vasp",
-        state_file: Optional[Union[str, Path]] = None,
-    ) -> "SLURMWorkflowRunner":
+        state_file: str | Path | None = None,
+    ) -> SLURMWorkflowRunner:
         """Create SLURMWorkflowRunner from a ClusterProfile.
 
         Args:
@@ -514,13 +510,13 @@ class SLURMWorkflowRunner:
 
     async def submit_async(
         self,
-        workflow_type: "WorkflowType",
+        workflow_type: WorkflowType,
         structure: Any,
-        parameters: Dict[str, Any],
-        code: Optional["DFTCode"] = None,
-        resources: Optional["ResourceRequirements"] = None,
+        parameters: dict[str, Any],
+        code: DFTCode | None = None,
+        resources: ResourceRequirements | None = None,
         **kwargs: Any,
-    ) -> "WorkflowResult":
+    ) -> WorkflowResult:
         """
         Submit a workflow for execution via SLURM (async).
 
@@ -608,13 +604,13 @@ class SLURMWorkflowRunner:
 
     def submit(
         self,
-        workflow_type: "WorkflowType",
+        workflow_type: WorkflowType,
         structure: Any,
-        parameters: Dict[str, Any],
-        code: Optional["DFTCode"] = None,
-        resources: Optional["ResourceRequirements"] = None,
+        parameters: dict[str, Any],
+        code: DFTCode | None = None,
+        resources: ResourceRequirements | None = None,
         **kwargs: Any,
-    ) -> "WorkflowResult":
+    ) -> WorkflowResult:
         """Sync entry point for submit. Use submit_async() in async contexts."""
         return self._run_sync(
             self.submit_async(workflow_type, structure, parameters, code, resources, **kwargs)
@@ -623,11 +619,11 @@ class SLURMWorkflowRunner:
     async def _submit_async(
         self,
         workflow_id: str,
-        workflow_type: "WorkflowType",
+        workflow_type: WorkflowType,
         structure: Any,
-        parameters: Dict[str, Any],
+        parameters: dict[str, Any],
         code: str,
-        resources: Optional["ResourceRequirements"] = None,
+        resources: ResourceRequirements | None = None,
         **kwargs: Any,
     ) -> tuple[str, str]:
         """Async implementation of job submission.
@@ -700,7 +696,7 @@ class SLURMWorkflowRunner:
             logger.warning("TUI connection manager not available, using direct asyncssh")
             self._connection_manager = "asyncssh"  # Flag for direct mode
 
-    def _get_known_hosts(self) -> "str | tuple[()] | None":
+    def _get_known_hosts(self) -> str | tuple[()] | None:
         """Resolve the ``known_hosts`` value for an asyncssh connection.
 
         asyncssh semantics matter here:
@@ -838,9 +834,9 @@ class SLURMWorkflowRunner:
     def _generate_input_files(
         self,
         work_dir: Path,
-        workflow_type: "WorkflowType",
+        workflow_type: WorkflowType,
         structure: Any,
-        parameters: Dict[str, Any],
+        parameters: dict[str, Any],
         code: str,
     ) -> Path:
         """Generate DFT input files.
@@ -887,9 +883,9 @@ class SLURMWorkflowRunner:
     def _generate_slurm_script(
         self,
         workflow_id: str,
-        workflow_type: "WorkflowType",
+        workflow_type: WorkflowType,
         code: str,
-        resources: Optional["ResourceRequirements"] = None,
+        resources: ResourceRequirements | None = None,
     ) -> str:
         """Generate SLURM batch script.
 
@@ -996,9 +992,9 @@ class SLURMWorkflowRunner:
 
     def _generate_yambo_slurm_commands(
         self,
-        workflow_type: "WorkflowType",
-        resources: Optional["ResourceRequirements"] = None,
-    ) -> List[str]:
+        workflow_type: WorkflowType,
+        resources: ResourceRequirements | None = None,
+    ) -> list[str]:
         """Generate SLURM commands for standard YAMBO calculations.
 
         Supports GW, BSE, and other many-body perturbation theory calculations.
@@ -1054,9 +1050,9 @@ class SLURMWorkflowRunner:
 
     def _generate_yambo_nl_slurm_commands(
         self,
-        workflow_type: "WorkflowType",
-        resources: Optional["ResourceRequirements"] = None,
-    ) -> List[str]:
+        workflow_type: WorkflowType,
+        resources: ResourceRequirements | None = None,
+    ) -> list[str]:
         """Generate SLURM commands for YAMBO nonlinear optics (yambo_nl).
 
         Supports SHG, THG, and other nonlinear optical calculations using
@@ -1120,14 +1116,14 @@ class SLURMWorkflowRunner:
 
     def submit_composite(
         self,
-        steps: Sequence["WorkflowStep"],
+        steps: Sequence[WorkflowStep],
         structure: Any,
         **kwargs: Any,
-    ) -> "WorkflowResult":
+    ) -> WorkflowResult:
         """Sync entry point for submit_composite. Use submit_composite_async() in async contexts."""
         return self._run_sync(self.submit_composite_async(steps, structure, **kwargs))
 
-    async def get_status_async(self, workflow_id: str) -> "WorkflowState":
+    async def get_status_async(self, workflow_id: str) -> WorkflowState:
         """
         Get current state of a workflow (async).
 
@@ -1164,7 +1160,7 @@ class SLURMWorkflowRunner:
 
         return state_map.get(job_info.state, "running")
 
-    def get_status(self, workflow_id: str) -> "WorkflowState":
+    def get_status(self, workflow_id: str) -> WorkflowState:
         """Sync entry point for get_status. Use get_status_async() in async contexts."""
         return self._run_sync(self.get_status_async(workflow_id))
 
@@ -1198,7 +1194,7 @@ class SLURMWorkflowRunner:
                 result = await conn.run(cmd, check=False)
                 return result.stdout.strip() or "UNKNOWN"
 
-    async def get_result_async(self, workflow_id: str) -> "WorkflowResult":
+    async def get_result_async(self, workflow_id: str) -> WorkflowResult:
         """
         Get complete result of a finished workflow (async).
 
@@ -1257,11 +1253,11 @@ class SLURMWorkflowRunner:
                 errors=[str(e)],
             )
 
-    def get_result(self, workflow_id: str) -> "WorkflowResult":
+    def get_result(self, workflow_id: str) -> WorkflowResult:
         """Sync entry point for get_result. Use get_result_async() in async contexts."""
         return self._run_sync(self.get_result_async(workflow_id))
 
-    async def _retrieve_results(self, job_info: SLURMJobInfo) -> Dict[str, Any]:
+    async def _retrieve_results(self, job_info: SLURMJobInfo) -> dict[str, Any]:
         """Retrieve results from completed job.
 
         Args:
@@ -1272,7 +1268,7 @@ class SLURMWorkflowRunner:
         """
         await self._ensure_connection()
 
-        outputs: Dict[str, Any] = {}
+        outputs: dict[str, Any] = {}
 
         # Download key output files based on code
         if job_info.code == "vasp":
@@ -1299,21 +1295,23 @@ class SLURMWorkflowRunner:
             if self._connection_manager == "asyncssh":
                 import asyncssh
 
-                async with asyncssh.connect(
-                    host=self._config.cluster_host,
-                    port=self._config.cluster_port,
-                    username=self._config.username,
-                    known_hosts=self._get_known_hosts(),
-                ) as conn:
-                    async with conn.start_sftp_client() as sftp:
-                        for filename in files_to_get:
-                            remote_path = f"{job_info.remote_dir}/{filename}"
-                            local_path = local_dir / filename
-                            try:
-                                await sftp.get(remote_path, str(local_path))
-                                outputs[f"file_{filename}"] = str(local_path)
-                            except Exception:
-                                pass  # File may not exist
+                async with (
+                    asyncssh.connect(
+                        host=self._config.cluster_host,
+                        port=self._config.cluster_port,
+                        username=self._config.username,
+                        known_hosts=self._get_known_hosts(),
+                    ) as conn,
+                    conn.start_sftp_client() as sftp,
+                ):
+                    for filename in files_to_get:
+                        remote_path = f"{job_info.remote_dir}/{filename}"
+                        local_path = local_dir / filename
+                        try:
+                            await sftp.get(remote_path, str(local_path))
+                            outputs[f"file_{filename}"] = str(local_path)
+                        except Exception:
+                            pass  # File may not exist
             else:
                 async with self._connection_manager.get_connection(1) as conn:
                     async with await conn.start_sftp_client() as sftp:
@@ -1343,7 +1341,7 @@ class SLURMWorkflowRunner:
 
         return outputs
 
-    def _parse_yambo_shg_output(self, output_dir: Path) -> Dict[str, Any]:
+    def _parse_yambo_shg_output(self, output_dir: Path) -> dict[str, Any]:
         """Parse YAMBO SHG output files.
 
         Args:
@@ -1352,9 +1350,8 @@ class SLURMWorkflowRunner:
         Returns:
             Dictionary with parsed χ² susceptibility data
         """
-        import math
 
-        results: Dict[str, Any] = {}
+        results: dict[str, Any] = {}
 
         # Parse each polarization component
         for component in ["x", "y", "z"]:
@@ -1460,9 +1457,9 @@ class SLURMWorkflowRunner:
 
     async def list_workflows_async(
         self,
-        state: Optional["WorkflowState"] = None,
+        state: WorkflowState | None = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         List workflows with optional state filter (async).
 
@@ -1496,9 +1493,9 @@ class SLURMWorkflowRunner:
 
     def list_workflows(
         self,
-        state: Optional["WorkflowState"] = None,
+        state: WorkflowState | None = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Sync entry point for list_workflows. Use list_workflows_async() in async contexts."""
         return self._run_sync(self.list_workflows_async(state, limit))
 

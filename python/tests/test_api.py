@@ -9,14 +9,11 @@ These tests verify:
 """
 
 import json
-from datetime import datetime
 
 import pytest
-
 from crystalmath.api import CrystalController, create_controller
 from crystalmath.backends import create_backend
-from crystalmath.models import DftCode, JobState, JobStatus, JobDetails
-
+from crystalmath.models import DftCode, JobDetails, JobState, JobStatus
 
 SAMPLE_POSCAR = """NaCl structure
 5.64

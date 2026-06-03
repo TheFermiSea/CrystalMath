@@ -7,8 +7,9 @@ All tests use mocks -- no real DFT deps needed.
 from __future__ import annotations
 
 import json
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 
 class TestBridgeSubmitAndRetrieve:
@@ -245,7 +246,6 @@ class TestHighThroughputAPI:
     def test_determine_workflow_steps_with_deps(self):
         """bands auto-adds scf dependency."""
         from crystalmath.high_level.api import HighThroughput
-        from crystalmath.protocols import WorkflowType
 
         steps = HighThroughput._determine_workflow_steps(["bands"], None)
         step_names = [s[0] for s in steps]
@@ -377,7 +377,7 @@ class TestWorkflowBuilder:
 
     def test_build_returns_workflow(self):
         """Build returns Workflow instance."""
-        from crystalmath.high_level.builder import WorkflowBuilder, Workflow
+        from crystalmath.high_level.builder import Workflow, WorkflowBuilder
 
         builder = WorkflowBuilder().from_file("test.cif").scf()
         workflow = builder.build()
@@ -386,7 +386,7 @@ class TestWorkflowBuilder:
 
     def test_build_with_multiple_steps(self):
         """Build with chained steps preserves order."""
-        from crystalmath.high_level.builder import WorkflowBuilder, Workflow
+        from crystalmath.high_level.builder import WorkflowBuilder
 
         builder = WorkflowBuilder().from_file("test.cif").relax().then_bands().then_dos()
         workflow = builder.build()

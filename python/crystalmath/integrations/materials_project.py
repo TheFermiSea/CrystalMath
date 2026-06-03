@@ -120,7 +120,7 @@ class MPMaterial:
 
     mp_id: str
     formula: str
-    structure: "Structure"
+    structure: Structure
     energy_above_hull: float
     band_gap: float | None
     is_stable: bool
@@ -248,7 +248,7 @@ class MPClient:
         self._mpr: Any = None
 
         # Simple in-memory cache: mp_id -> Structure
-        self._structure_cache: dict[str, "Structure"] = {}
+        self._structure_cache: dict[str, Structure] = {}
 
     def _get_mpr(self) -> Any:
         """Get or create MPRester instance.
@@ -328,7 +328,7 @@ class MPClient:
         # Should not reach here, but just in case
         raise MPClientError(str(last_error)) from last_error
 
-    def get_structure(self, mp_id: str) -> "Structure":
+    def get_structure(self, mp_id: str) -> Structure:
         """Get structure by Materials Project ID.
 
         Args:
@@ -542,7 +542,7 @@ class MPClient:
             symmetry=symmetry_data,
         )
 
-    def get_similar_structures(self, structure: "Structure", limit: int = 5) -> list[MPMaterial]:
+    def get_similar_structures(self, structure: Structure, limit: int = 5) -> list[MPMaterial]:
         """Find similar structures in MP database.
 
         Uses the structure's composition to find materials with the same
@@ -586,7 +586,7 @@ class MPClient:
 
 
 @lru_cache(maxsize=128)
-def _get_cached_structure(mp_id: str, api_key: str | None = None) -> "Structure":
+def _get_cached_structure(mp_id: str, api_key: str | None = None) -> Structure:
     """Internal cached structure retrieval.
 
     Uses functools.lru_cache for module-level caching.
@@ -595,7 +595,7 @@ def _get_cached_structure(mp_id: str, api_key: str | None = None) -> "Structure"
     return client.get_structure(mp_id)
 
 
-def mp_id_to_structure(mp_id: str, api_key: str | None = None) -> "Structure":
+def mp_id_to_structure(mp_id: str, api_key: str | None = None) -> Structure:
     """Convenience function to get structure from MP ID.
 
     This is the simplest way to retrieve a structure from the Materials

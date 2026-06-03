@@ -14,15 +14,12 @@ Tests are designed to verify API behavior without running actual calculations.
 from __future__ import annotations
 
 import json
-import pytest
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
-from dataclasses import dataclass
-from datetime import datetime
+from typing import Any
+from unittest.mock import Mock
 
+import pytest
 from crystalmath.protocols import WorkflowType
-
 
 # Check if optional dependencies are available
 try:
@@ -270,7 +267,7 @@ class TestValidateProperties:
             ["scf", "gw", "bse"],
         ],
     )
-    def test_valid_combinations(self, properties: List[str]) -> None:
+    def test_valid_combinations(self, properties: list[str]) -> None:
         """Test validation of valid property combinations."""
         from crystalmath.high_level.api import HighThroughput
 
@@ -798,8 +795,8 @@ class TestAPIIntegration:
     def test_property_info_matches_definitions(self) -> None:
         """Test that property info matches definitions."""
         from crystalmath.high_level.api import (
-            HighThroughput,
             PROPERTY_DEFINITIONS,
+            HighThroughput,
         )
 
         for prop_name in PROPERTY_DEFINITIONS:
@@ -909,7 +906,7 @@ def _make_runnerless_analysis() -> Any:
     from crystalmath.protocols import ResourceRequirements, WorkflowStep, WorkflowType
 
     class _RunnerlessAnalysis(BaseAnalysisRunner):
-        def _build_workflow_steps(self) -> List[Any]:
+        def _build_workflow_steps(self) -> list[Any]:
             return [
                 WorkflowStep(
                     name="scf",

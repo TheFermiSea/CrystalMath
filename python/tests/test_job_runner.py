@@ -9,23 +9,19 @@ Tests cover:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Any, Dict, Optional
-import tempfile
 
 import pytest
-
 from crystalmath.quacc.potcar import (
+    get_potcar_info,
     get_potcar_path,
     validate_potcars,
-    get_potcar_info,
 )
 from crystalmath.quacc.runner import (
     JobRunner,
     JobState,
-    get_runner,
     get_or_create_runner,
+    get_runner,
 )
 
 

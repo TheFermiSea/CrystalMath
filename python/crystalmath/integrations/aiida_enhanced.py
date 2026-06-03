@@ -65,16 +65,16 @@ See Also:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
 # Check if AiiDA is available
 AIIDA_AVAILABLE = False
-_AIIDA_IMPORT_ERROR: Optional[str] = None
+_AIIDA_IMPORT_ERROR: str | None = None
 
 try:
     import aiida  # noqa: F401
@@ -84,8 +84,7 @@ except ImportError as e:
     _AIIDA_IMPORT_ERROR = str(e)
 
 if TYPE_CHECKING:
-    from aiida.engine import ProcessState
-    from aiida.orm import Computer, Node, ProcessNode, Profile
+    from aiida.orm import ProcessNode, Profile
 
 
 # =============================================================================
@@ -126,10 +125,10 @@ class ProfileInfo:
     process_control_backend: str
     is_default: bool
     repository_path: Path
-    database_uri: Optional[str] = None
+    database_uri: str | None = None
 
     @classmethod
-    def from_aiida_profile(cls, profile: "Profile") -> "ProfileInfo":
+    def from_aiida_profile(cls, profile: Profile) -> ProfileInfo:
         """
         Create ProfileInfo from an AiiDA Profile object.
 
@@ -195,15 +194,15 @@ class CalculationInfo:
     uuid: str
     process_label: str
     process_state: str
-    exit_status: Optional[int]
+    exit_status: int | None
     ctime: datetime
     mtime: datetime
-    computer: Optional[str] = None
-    description: Optional[str] = None
-    label: Optional[str] = None
+    computer: str | None = None
+    description: str | None = None
+    label: str | None = None
 
     @classmethod
-    def from_aiida_node(cls, node: "ProcessNode") -> "CalculationInfo":
+    def from_aiida_node(cls, node: ProcessNode) -> CalculationInfo:
         """
         Create CalculationInfo from an AiiDA ProcessNode.
 
@@ -267,10 +266,10 @@ class AiiDAProfileManager:
         >>> print(f"Loaded: {info.name}, default: {info.is_default}")
     """
 
-    _loaded_profile: Optional[str] = None
+    _loaded_profile: str | None = None
 
     @classmethod
-    def get_default_profile(cls) -> Optional[str]:
+    def get_default_profile(cls) -> str | None:
         """
         Get the default AiiDA profile name.
 
@@ -311,7 +310,7 @@ class AiiDAProfileManager:
             return False
 
     @classmethod
-    def list_profiles(cls) -> List[str]:
+    def list_profiles(cls) -> list[str]:
         """
         List all available AiiDA profiles.
 
@@ -330,7 +329,7 @@ class AiiDAProfileManager:
             return []
 
     @classmethod
-    def load_profile(cls, name: Optional[str] = None) -> None:
+    def load_profile(cls, name: str | None = None) -> None:
         """
         Load an AiiDA profile.
 
@@ -347,7 +346,6 @@ class AiiDAProfileManager:
         _check_aiida_available()
 
         from aiida import load_profile
-        from aiida.manage.configuration import get_config
 
         profile_name = name
         if profile_name is None:
@@ -369,7 +367,7 @@ class AiiDAProfileManager:
             raise RuntimeError(f"Failed to load profile '{profile_name}': {e}") from e
 
     @classmethod
-    def get_loaded_profile(cls) -> Optional[str]:
+    def get_loaded_profile(cls) -> str | None:
         """
         Get the currently loaded profile name.
 
@@ -387,7 +385,7 @@ class AiiDAProfileManager:
             return cls._loaded_profile
 
     @classmethod
-    def get_profile_info(cls, name: Optional[str] = None) -> ProfileInfo:
+    def get_profile_info(cls, name: str | None = None) -> ProfileInfo:
         """
         Get information about an AiiDA profile.
 
@@ -487,16 +485,16 @@ class AiiDAQueryHelper:
 
     def query_calculations(
         self,
-        process_label: Optional[str] = None,
-        state: Optional[str] = None,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
-        computer: Optional[str] = None,
+        process_label: str | None = None,
+        state: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        computer: str | None = None,
         limit: int = 100,
         offset: int = 0,
         order_by: str = "ctime",
         order_dir: str = "desc",
-    ) -> List[CalculationInfo]:
+    ) -> list[CalculationInfo]:
         """
         Query calculations with filters.
 
@@ -536,7 +534,7 @@ class AiiDAQueryHelper:
         )
 
         # Apply filters
-        filters: Dict[str, Any] = {}
+        filters: dict[str, Any] = {}
 
         if process_label:
             filters["attributes.process_label"] = {"==": process_label}
@@ -576,7 +574,7 @@ class AiiDAQueryHelper:
             qb.offset(offset)
 
         # Build results
-        results: List[CalculationInfo] = []
+        results: list[CalculationInfo] = []
         for row in qb.all():
             pk, uuid, proc_label, proc_state, exit_status, ctime, mtime, label, desc = row
 
@@ -596,7 +594,7 @@ class AiiDAQueryHelper:
 
         return results
 
-    def get_calculation_by_pk(self, pk: int) -> Optional[CalculationInfo]:
+    def get_calculation_by_pk(self, pk: int) -> CalculationInfo | None:
         """
         Get calculation info by primary key.
 
@@ -626,7 +624,7 @@ class AiiDAQueryHelper:
             logger.warning(f"Error loading node {pk}: {e}")
             return None
 
-    def get_calculation_by_uuid(self, uuid: str) -> Optional[CalculationInfo]:
+    def get_calculation_by_uuid(self, uuid: str) -> CalculationInfo | None:
         """
         Get calculation info by UUID.
 
@@ -653,7 +651,7 @@ class AiiDAQueryHelper:
             logger.warning(f"Error loading node by uuid {uuid}: {e}")
             return None
 
-    def get_outputs(self, pk: int) -> Dict[str, Any]:
+    def get_outputs(self, pk: int) -> dict[str, Any]:
         """
         Get outputs of a calculation.
 
@@ -676,7 +674,7 @@ class AiiDAQueryHelper:
             logger.warning(f"Error loading node {pk}: {e}")
             return {}
 
-        outputs: Dict[str, Any] = {}
+        outputs: dict[str, Any] = {}
 
         if not hasattr(node, "outputs"):
             return outputs
@@ -708,7 +706,7 @@ class AiiDAQueryHelper:
 
         return outputs
 
-    def get_inputs(self, pk: int) -> Dict[str, Any]:
+    def get_inputs(self, pk: int) -> dict[str, Any]:
         """
         Get inputs of a calculation.
 
@@ -730,7 +728,7 @@ class AiiDAQueryHelper:
             logger.warning(f"Error loading node {pk}: {e}")
             return {}
 
-        inputs: Dict[str, Any] = {}
+        inputs: dict[str, Any] = {}
 
         if not hasattr(node, "inputs"):
             return inputs
@@ -756,8 +754,8 @@ class AiiDAQueryHelper:
 
     def count_calculations(
         self,
-        process_label: Optional[str] = None,
-        state: Optional[str] = None,
+        process_label: str | None = None,
+        state: str | None = None,
     ) -> int:
         """
         Count calculations matching filters.
@@ -774,7 +772,7 @@ class AiiDAQueryHelper:
         qb = QueryBuilder()
         qb.append((CalcJobNode, WorkChainNode), tag="process")
 
-        filters: Dict[str, Any] = {}
+        filters: dict[str, Any] = {}
 
         if process_label:
             filters["attributes.process_label"] = {"==": process_label}
@@ -794,7 +792,7 @@ class AiiDAQueryHelper:
 # =============================================================================
 
 
-def aiida_to_atomate2_job(node: "ProcessNode") -> Dict[str, Any]:
+def aiida_to_atomate2_job(node: ProcessNode) -> dict[str, Any]:
     """
     Convert AiiDA calculation to atomate2-compatible job dict.
 
@@ -844,7 +842,7 @@ def aiida_to_atomate2_job(node: "ProcessNode") -> Dict[str, Any]:
         job_state = "failed"
 
     # Extract inputs
-    inputs: Dict[str, Any] = {}
+    inputs: dict[str, Any] = {}
     if hasattr(node, "inputs"):
         for link_label in node.inputs:
             try:
@@ -859,7 +857,7 @@ def aiida_to_atomate2_job(node: "ProcessNode") -> Dict[str, Any]:
                 pass
 
     # Extract outputs
-    outputs: Dict[str, Any] = {}
+    outputs: dict[str, Any] = {}
     if hasattr(node, "outputs"):
         for link_label in node.outputs:
             try:
@@ -874,7 +872,7 @@ def aiida_to_atomate2_job(node: "ProcessNode") -> Dict[str, Any]:
                 pass
 
     # Build metadata
-    metadata: Dict[str, Any] = {
+    metadata: dict[str, Any] = {
         "aiida_pk": node.pk,
         "aiida_uuid": str(node.uuid),
         "process_label": node.process_label,
@@ -902,7 +900,7 @@ def aiida_to_atomate2_job(node: "ProcessNode") -> Dict[str, Any]:
     }
 
 
-def atomate2_to_aiida_inputs(job_dict: Dict[str, Any]) -> Dict[str, Any]:
+def atomate2_to_aiida_inputs(job_dict: dict[str, Any]) -> dict[str, Any]:
     """
     Convert atomate2 job dict to AiiDA input dict.
 
@@ -929,7 +927,7 @@ def atomate2_to_aiida_inputs(job_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
     _check_aiida_available()
 
-    aiida_inputs: Dict[str, Any] = {
+    aiida_inputs: dict[str, Any] = {
         "code": None,
         "inputs": {},
         "metadata": {
@@ -950,7 +948,7 @@ def atomate2_to_aiida_inputs(job_dict: Dict[str, Any]) -> Dict[str, Any]:
     # Extract resources
     resources = config.get("resources", {}) or {}
     if resources:
-        aiida_resources: Dict[str, Any] = {}
+        aiida_resources: dict[str, Any] = {}
         if "num_nodes" in resources:
             aiida_resources["num_machines"] = resources["num_nodes"]
         if "num_mpi_ranks" in resources:
@@ -991,7 +989,7 @@ def atomate2_to_aiida_inputs(job_dict: Dict[str, Any]) -> Dict[str, Any]:
     return aiida_inputs
 
 
-def workflow_result_from_aiida(node: "ProcessNode") -> "WorkflowResult":
+def workflow_result_from_aiida(node: ProcessNode) -> WorkflowResult:
     """
     Create a CrystalMath WorkflowResult from an AiiDA ProcessNode.
 
@@ -1010,7 +1008,7 @@ def workflow_result_from_aiida(node: "ProcessNode") -> "WorkflowResult":
     success = process_state == "finished" and node.exit_status == 0
 
     # Collect outputs
-    outputs: Dict[str, Any] = {}
+    outputs: dict[str, Any] = {}
     if hasattr(node, "outputs"):
         for link_label in node.outputs:
             try:
@@ -1023,7 +1021,7 @@ def workflow_result_from_aiida(node: "ProcessNode") -> "WorkflowResult":
                 pass
 
     # Collect errors
-    errors: List[str] = []
+    errors: list[str] = []
     if not success:
         if node.exit_message:
             errors.append(node.exit_message)
@@ -1035,7 +1033,7 @@ def workflow_result_from_aiida(node: "ProcessNode") -> "WorkflowResult":
             errors.append(f"Exit status: {node.exit_status}")
 
     # Build metadata
-    metadata: Dict[str, Any] = {
+    metadata: dict[str, Any] = {
         "source": "aiida",
         "aiida_pk": node.pk,
         "aiida_uuid": str(node.uuid),

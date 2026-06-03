@@ -1,8 +1,9 @@
 """Tests for JSON-RPC 2.0 dispatch method."""
 
 import json
+
 import pytest
-from crystalmath.api import CrystalController, JSONRPC_METHOD_NOT_FOUND, JSONRPC_PARSE_ERROR
+from crystalmath.api import JSONRPC_METHOD_NOT_FOUND, JSONRPC_PARSE_ERROR, CrystalController
 
 
 @pytest.fixture

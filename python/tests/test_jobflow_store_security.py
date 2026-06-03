@@ -8,7 +8,6 @@ validates the identifier against a strict allowlist, rejecting injection attempt
 from __future__ import annotations
 
 import pytest
-
 from crystalmath.integrations.jobflow_store import SQLiteJobStore, _validate_column
 
 

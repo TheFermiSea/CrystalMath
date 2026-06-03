@@ -11,14 +11,14 @@ Security features:
 - Path validation prevents directory traversal
 """
 
-import re
 import logging
-from pathlib import Path
-from typing import Optional, Dict, Any, List
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
-from ..core.templates import TemplateManager, Template
 from ..core.codes import DFTCode, get_code_config
+from ..core.templates import Template, TemplateManager
 
 logger = logging.getLogger(__name__)
 
@@ -43,23 +43,23 @@ class SLURMTemplateParams:
     ntasks: int = 1
     cpus_per_task: int = 4
     time_limit: str = "24:00:00"
-    partition: Optional[str] = None
-    memory: Optional[str] = None
-    account: Optional[str] = None
-    qos: Optional[str] = None
-    email: Optional[str] = None
-    email_type: Optional[str] = None
-    constraint: Optional[str] = None
+    partition: str | None = None
+    memory: str | None = None
+    account: str | None = None
+    qos: str | None = None
+    email: str | None = None
+    email_type: str | None = None
+    constraint: str | None = None
     exclusive: bool = False
-    dependencies: List[str] = field(default_factory=list)
-    array: Optional[str] = None
-    modules: List[str] = field(default_factory=lambda: ["crystal23"])
+    dependencies: list[str] = field(default_factory=list)
+    array: str | None = None
+    modules: list[str] = field(default_factory=lambda: ["crystal23"])
     environment_setup: str = ""
     input_file: str = "input.d12"
     output_file: str = "output.out"
     use_mpi: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for template rendering."""
         return {
             "job_name": self.job_name,
@@ -119,7 +119,7 @@ class SLURMTemplateGenerator:
     _SAFE_ENV_COMMANDS = ("export ", "source ", ". ")
     _DANGEROUS_PATTERNS = (";", "|", "&", ">", "<", "$(", "`")
 
-    def __init__(self, template_dir: Optional[Path] = None, dft_code: DFTCode = DFTCode.CRYSTAL):
+    def __init__(self, template_dir: Path | None = None, dft_code: DFTCode = DFTCode.CRYSTAL):
         """
         Initialize the SLURM template generator.
 
@@ -136,7 +136,7 @@ class SLURMTemplateGenerator:
         self.code_config = get_code_config(dft_code)
 
         # Load the appropriate template
-        self._template: Optional[Template] = None
+        self._template: Template | None = None
         self._load_template()
 
     def _load_template(self) -> None:
@@ -284,7 +284,7 @@ class SLURMTemplateGenerator:
         if errors:
             raise SLURMTemplateValidationError("\n".join(errors))
 
-    def _validate_environment_setup(self, env_setup: str) -> List[str]:
+    def _validate_environment_setup(self, env_setup: str) -> list[str]:
         """
         Validate environment setup commands for security.
 

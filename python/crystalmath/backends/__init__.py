@@ -57,7 +57,7 @@ def _platform_data_dir():
     return Path(xdg) if xdg else home / ".local" / "share"
 
 
-def find_database_path() -> Optional[str]:
+def find_database_path() -> str | None:
     """Resolve the shared crystal_tui database path.
 
     Mirrors the Rust resolver in ``src/bridge.rs::find_database_path`` so the
@@ -148,7 +148,7 @@ class Backend(ABC):
         ...
 
     @abstractmethod
-    def get_jobs(self, limit: int = 100) -> List[JobStatus]:
+    def get_jobs(self, limit: int = 100) -> list[JobStatus]:
         """
         Get list of jobs.
 
@@ -161,7 +161,7 @@ class Backend(ABC):
         ...
 
     @abstractmethod
-    def get_job_details(self, pk: int) -> Optional[JobDetails]:
+    def get_job_details(self, pk: int) -> JobDetails | None:
         """
         Get detailed information for a specific job.
 
@@ -203,7 +203,7 @@ class Backend(ABC):
         ...
 
     @abstractmethod
-    def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
+    def get_job_log(self, pk: int, tail_lines: int = 100) -> dict[str, list[str]]:
         """
         Get job stdout/stderr logs.
 
@@ -219,7 +219,7 @@ class Backend(ABC):
 
 def create_backend(
     use_aiida: bool = False,
-    db_path: Optional[str] = None,
+    db_path: str | None = None,
     profile_name: str = "default",
     backend_preference: str = "auto",
 ) -> Backend:

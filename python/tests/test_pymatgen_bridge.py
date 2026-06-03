@@ -13,13 +13,13 @@ Tests cover:
 
 from __future__ import annotations
 
-import pytest
+import sys
+import tempfile
 import types
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
-import tempfile
-import sys
+from unittest.mock import Mock, patch
+
+import pytest
 
 # Import the module under test
 from crystalmath.integrations import pymatgen_bridge
@@ -27,7 +27,7 @@ from crystalmath.integrations import pymatgen_bridge
 # Check if optional dependencies are available
 try:
     import pymatgen
-    from pymatgen.core import Structure, Lattice
+    from pymatgen.core import Lattice, Structure
 
     HAS_PYMATGEN = True
 except ImportError:
@@ -123,8 +123,8 @@ class TestDataClasses:
     def test_symmetry_info_creation(self) -> None:
         """Test SymmetryInfo dataclass creation."""
         from crystalmath.integrations.pymatgen_bridge import (
-            SymmetryInfo,
             CrystalSystem,
+            SymmetryInfo,
         )
 
         info = SymmetryInfo(
@@ -142,8 +142,8 @@ class TestDataClasses:
     def test_symmetry_info_defaults(self) -> None:
         """Test SymmetryInfo default values."""
         from crystalmath.integrations.pymatgen_bridge import (
-            SymmetryInfo,
             CrystalSystem,
+            SymmetryInfo,
         )
 
         info = SymmetryInfo(
@@ -162,8 +162,8 @@ class TestDataClasses:
     def test_symmetry_info_to_dict(self) -> None:
         """Test SymmetryInfo to_dict method."""
         from crystalmath.integrations.pymatgen_bridge import (
-            SymmetryInfo,
             CrystalSystem,
+            SymmetryInfo,
         )
 
         info = SymmetryInfo(
@@ -282,8 +282,8 @@ class TestStructureFromCIF:
     def test_structure_from_cif_file_not_found(self, tmp_path: Path) -> None:
         """Test error handling for missing CIF file."""
         from crystalmath.integrations.pymatgen_bridge import (
-            structure_from_cif,
             StructureLoadError,
+            structure_from_cif,
         )
 
         nonexistent = tmp_path / "nonexistent.cif"
@@ -305,8 +305,8 @@ class TestStructureFromCIF:
             pytest.skip("pymatgen is installed, cannot test missing dependency")
 
         from crystalmath.integrations.pymatgen_bridge import (
-            structure_from_cif,
             DependencyError,
+            structure_from_cif,
         )
 
         cif_path = tmp_path / "test.cif"
@@ -327,8 +327,8 @@ class TestStructureFromPOSCAR:
     def test_structure_from_poscar_file_not_found(self, tmp_path: Path) -> None:
         """Test error handling for missing POSCAR file."""
         from crystalmath.integrations.pymatgen_bridge import (
-            structure_from_poscar,
             StructureLoadError,
+            structure_from_poscar,
         )
 
         nonexistent = tmp_path / "POSCAR_MISSING"
@@ -350,8 +350,8 @@ class TestStructureFromPOSCAR:
             pytest.skip("pymatgen is installed, cannot test missing dependency")
 
         from crystalmath.integrations.pymatgen_bridge import (
-            structure_from_poscar,
             DependencyError,
+            structure_from_poscar,
         )
 
         poscar_path = tmp_path / "POSCAR"
@@ -372,8 +372,8 @@ class TestStructureFromFile:
     def test_structure_from_file_not_found(self, tmp_path: Path) -> None:
         """Test error handling for missing file."""
         from crystalmath.integrations.pymatgen_bridge import (
-            structure_from_file,
             StructureLoadError,
+            structure_from_file,
         )
 
         nonexistent = tmp_path / "missing.xyz"
@@ -394,8 +394,8 @@ class TestStructureFromFile:
             pytest.skip("pymatgen is installed, cannot test missing dependency")
 
         from crystalmath.integrations.pymatgen_bridge import (
-            structure_from_file,
             DependencyError,
+            structure_from_file,
         )
 
         file_path = tmp_path / "test.xyz"
@@ -515,9 +515,9 @@ class TestAiiDAConversion:
                 "_check_aiida",
                 side_effect=pymatgen_bridge.DependencyError("aiida not installed"),
             ),
+            pytest.raises(pymatgen_bridge.DependencyError),
         ):
-            with pytest.raises(pymatgen_bridge.DependencyError):
-                pymatgen_bridge.to_aiida_structure(mock_structure)
+            pymatgen_bridge.to_aiida_structure(mock_structure)
 
     def test_from_aiida_structure_raises_on_missing_dep(self) -> None:
         """Test that from_aiida_structure raises DependencyError if AiiDA missing."""
@@ -534,9 +534,9 @@ class TestAiiDAConversion:
                 "_check_aiida",
                 side_effect=pymatgen_bridge.DependencyError("aiida not installed"),
             ),
+            pytest.raises(pymatgen_bridge.DependencyError),
         ):
-            with pytest.raises(pymatgen_bridge.DependencyError):
-                pymatgen_bridge.from_aiida_structure(mock_node)
+            pymatgen_bridge.from_aiida_structure(mock_node)
 
 
 # =============================================================================
@@ -567,9 +567,9 @@ class TestASEConversion:
                 "_check_ase",
                 side_effect=pymatgen_bridge.DependencyError("ASE not installed"),
             ),
+            pytest.raises(pymatgen_bridge.DependencyError),
         ):
-            with pytest.raises(pymatgen_bridge.DependencyError):
-                pymatgen_bridge.to_ase_atoms(mock_structure)
+            pymatgen_bridge.to_ase_atoms(mock_structure)
 
     def test_from_ase_atoms_raises_on_missing_dep(self) -> None:
         """Test that from_ase_atoms raises DependencyError if ASE missing."""
@@ -586,9 +586,9 @@ class TestASEConversion:
                 "_check_ase",
                 side_effect=pymatgen_bridge.DependencyError("ASE not installed"),
             ),
+            pytest.raises(pymatgen_bridge.DependencyError),
         ):
-            with pytest.raises(pymatgen_bridge.DependencyError):
-                pymatgen_bridge.from_ase_atoms(mock_atoms)
+            pymatgen_bridge.from_ase_atoms(mock_atoms)
 
 
 # =============================================================================
@@ -639,8 +639,8 @@ class TestSymmetryAnalysis:
     def test_get_symmetry_info_returns_dataclass(self) -> None:
         """Test that get_symmetry_info returns SymmetryInfo dataclass."""
         from crystalmath.integrations.pymatgen_bridge import (
-            get_symmetry_info,
             SymmetryInfo,
+            get_symmetry_info,
         )
 
         # Create a simple cubic structure
@@ -773,8 +773,8 @@ class TestStructureMetadata:
     def test_get_structure_metadata(self) -> None:
         """Test metadata extraction from structure."""
         from crystalmath.integrations.pymatgen_bridge import (
-            get_structure_metadata,
             StructureMetadata,
+            get_structure_metadata,
         )
 
         lattice = Lattice.cubic(5.64)
@@ -894,10 +894,10 @@ class TestPymatgenIntegration:
     def test_full_workflow_cif_to_validation(self, cif_file: Path) -> None:
         """Test full workflow from CIF file to validation."""
         from crystalmath.integrations.pymatgen_bridge import (
-            structure_from_cif,
-            get_symmetry_info,
-            validate_for_dft,
             get_structure_metadata,
+            get_symmetry_info,
+            structure_from_cif,
+            validate_for_dft,
         )
 
         # Load structure

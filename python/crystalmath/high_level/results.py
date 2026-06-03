@@ -29,11 +29,6 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Union,
 )
 
 if TYPE_CHECKING:
@@ -58,8 +53,8 @@ class BandStructureData:
 
     energies: Any  # numpy array
     kpoints: Any  # numpy array
-    kpoint_labels: List[str] = field(default_factory=list)
-    kpoint_positions: List[int] = field(default_factory=list)
+    kpoint_labels: list[str] = field(default_factory=list)
+    kpoint_positions: list[int] = field(default_factory=list)
     fermi_energy: float = 0.0
     is_spin_polarized: bool = False
 
@@ -77,7 +72,7 @@ class DOSData:
 
     energies: Any  # numpy array
     total_dos: Any  # numpy array
-    projected_dos: Optional[Dict[str, Any]] = None
+    projected_dos: dict[str, Any] | None = None
     fermi_energy: float = 0.0
 
 
@@ -94,8 +89,8 @@ class PhononData:
 
     frequencies: Any  # numpy array
     qpoints: Any  # numpy array
-    qpoint_labels: List[str] = field(default_factory=list)
-    qpoint_positions: List[int] = field(default_factory=list)
+    qpoint_labels: list[str] = field(default_factory=list)
+    qpoint_positions: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -108,7 +103,7 @@ class ElasticTensor:
     """
 
     voigt: Any  # numpy array [6, 6]
-    compliance: Optional[Any] = None
+    compliance: Any | None = None
 
 
 @dataclass
@@ -122,8 +117,8 @@ class DielectricTensor:
     """
 
     static: Any  # numpy array [3, 3]
-    high_freq: Optional[Any] = None
-    born_charges: Optional[Any] = None
+    high_freq: Any | None = None
+    born_charges: Any | None = None
 
 
 @dataclass
@@ -172,56 +167,56 @@ class AnalysisResults:
 
     # Structure info
     formula: str = ""
-    structure: Optional["Structure"] = None
+    structure: Structure | None = None
     space_group: str = ""
 
     # Electronic properties
-    band_gap_ev: Optional[float] = None
-    is_direct_gap: Optional[bool] = None
-    fermi_energy_ev: Optional[float] = None
+    band_gap_ev: float | None = None
+    is_direct_gap: bool | None = None
+    fermi_energy_ev: float | None = None
     is_metal: bool = False
 
     # Band structure data
-    band_structure: Optional[BandStructureData] = None
-    dos: Optional[DOSData] = None
+    band_structure: BandStructureData | None = None
+    dos: DOSData | None = None
 
     # GW/BSE results
-    gw_gap_ev: Optional[float] = None
-    gw_corrections: Optional[Dict[str, float]] = None
-    optical_gap_ev: Optional[float] = None
-    exciton_binding_ev: Optional[float] = None
+    gw_gap_ev: float | None = None
+    gw_corrections: dict[str, float] | None = None
+    optical_gap_ev: float | None = None
+    exciton_binding_ev: float | None = None
 
     # Mechanical properties
-    elastic_tensor: Optional[ElasticTensor] = None
-    bulk_modulus_gpa: Optional[float] = None
-    shear_modulus_gpa: Optional[float] = None
-    youngs_modulus_gpa: Optional[float] = None
-    poisson_ratio: Optional[float] = None
+    elastic_tensor: ElasticTensor | None = None
+    bulk_modulus_gpa: float | None = None
+    shear_modulus_gpa: float | None = None
+    youngs_modulus_gpa: float | None = None
+    poisson_ratio: float | None = None
 
     # Phonon properties
-    phonon_dispersion: Optional[PhononData] = None
-    has_imaginary_modes: Optional[bool] = None
+    phonon_dispersion: PhononData | None = None
+    has_imaginary_modes: bool | None = None
 
     # Dielectric properties
-    dielectric_tensor: Optional[DielectricTensor] = None
-    static_dielectric: Optional[float] = None
-    high_freq_dielectric: Optional[float] = None
+    dielectric_tensor: DielectricTensor | None = None
+    static_dielectric: float | None = None
+    high_freq_dielectric: float | None = None
 
     # Transport properties
-    seebeck_coefficient: Optional[float] = None
-    electrical_conductivity: Optional[float] = None
-    thermal_conductivity: Optional[float] = None
+    seebeck_coefficient: float | None = None
+    electrical_conductivity: float | None = None
+    thermal_conductivity: float | None = None
 
     # Workflow metadata
-    workflow_id: Optional[str] = None
-    completed_at: Optional[datetime] = None
-    total_cpu_hours: Optional[float] = None
+    workflow_id: str | None = None
+    completed_at: datetime | None = None
+    total_cpu_hours: float | None = None
 
     # =========================================================================
     # DataFrame Export
     # =========================================================================
 
-    def to_dataframe(self) -> "pd.DataFrame":
+    def to_dataframe(self) -> pd.DataFrame:
         """Export scalar properties to pandas DataFrame.
 
         Creates a single-row DataFrame with all scalar properties.
@@ -257,7 +252,7 @@ class AnalysisResults:
         }
         return pd.DataFrame([data])
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Export all data to dictionary.
 
         Returns nested dictionary including array data (band structure,
@@ -301,7 +296,7 @@ class AnalysisResults:
         }
         return result
 
-    def to_json(self, path: Optional[Union[str, Path]] = None) -> str:
+    def to_json(self, path: str | Path | None = None) -> str:
         """Export results to JSON.
 
         Args:
@@ -332,11 +327,11 @@ class AnalysisResults:
 
     def plot_bands(
         self,
-        ax: Optional["plt.Axes"] = None,
+        ax: plt.Axes | None = None,
         color: str = "blue",
         linewidth: float = 1.0,
         **kwargs: Any,
-    ) -> "plt.Figure":
+    ) -> plt.Figure:
         """Plot band structure.
 
         Args:
@@ -372,10 +367,10 @@ class AnalysisResults:
 
     def plot_dos(
         self,
-        ax: Optional["plt.Axes"] = None,
+        ax: plt.Axes | None = None,
         projected: bool = False,
         **kwargs: Any,
-    ) -> "plt.Figure":
+    ) -> plt.Figure:
         """Plot density of states.
 
         Args:
@@ -408,9 +403,9 @@ class AnalysisResults:
 
     def plot_bands_dos(
         self,
-        figsize: Tuple[float, float] = (10, 6),
+        figsize: tuple[float, float] = (10, 6),
         **kwargs: Any,
-    ) -> "plt.Figure":
+    ) -> plt.Figure:
         """Plot combined band structure and DOS.
 
         Creates a side-by-side plot with band structure on the left
@@ -447,9 +442,9 @@ class AnalysisResults:
 
     def plot_phonons(
         self,
-        ax: Optional["plt.Axes"] = None,
+        ax: plt.Axes | None = None,
         **kwargs: Any,
-    ) -> "plt.Figure":
+    ) -> plt.Figure:
         """Plot phonon dispersion.
 
         Args:
@@ -482,10 +477,10 @@ class AnalysisResults:
 
     def plot_optical(
         self,
-        ax: Optional["plt.Axes"] = None,
+        ax: plt.Axes | None = None,
         component: str = "xx",
         **kwargs: Any,
-    ) -> "plt.Figure":
+    ) -> plt.Figure:
         """Plot optical absorption spectrum.
 
         Args:
@@ -513,7 +508,7 @@ class AnalysisResults:
     # Interactive Plotting (Plotly)
     # =========================================================================
 
-    def iplot_bands(self, **kwargs: Any) -> "go.Figure":
+    def iplot_bands(self, **kwargs: Any) -> go.Figure:
         """Interactive band structure plot using Plotly.
 
         Creates an interactive plot suitable for Jupyter notebooks
@@ -543,7 +538,7 @@ class AnalysisResults:
 
         return fig
 
-    def iplot_dos(self, **kwargs: Any) -> "go.Figure":
+    def iplot_dos(self, **kwargs: Any) -> go.Figure:
         """Interactive DOS plot using Plotly.
 
         Args:
@@ -572,8 +567,8 @@ class AnalysisResults:
 
     def to_latex_table(
         self,
-        path: Optional[Union[str, Path]] = None,
-        properties: Optional[List[str]] = None,
+        path: str | Path | None = None,
+        properties: list[str] | None = None,
         format_spec: str = "booktabs",
     ) -> str:
         """Export properties as LaTeX table.
@@ -656,7 +651,7 @@ class AnalysisResults:
 
     def to_latex_si_table(
         self,
-        path: Optional[Union[str, Path]] = None,
+        path: str | Path | None = None,
     ) -> str:
         """Export as LaTeX SI table with proper units.
 

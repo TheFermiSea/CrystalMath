@@ -13,10 +13,9 @@ import asyncio
 import logging
 import time
 import warnings
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Tuple
-from contextlib import asynccontextmanager
 
 import asyncssh
 
@@ -40,7 +39,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # In-memory fallback storage (not persisted - only for headless environments)
-_FALLBACK_PASSWORDS: Dict[str, str] = {}
+_FALLBACK_PASSWORDS: dict[str, str] = {}
 
 
 @dataclass
@@ -49,12 +48,12 @@ class ConnectionConfig:
 
     host: str
     port: int = 22
-    username: Optional[str] = None
-    key_file: Optional[Path] = None
+    username: str | None = None
+    key_file: Path | None = None
     use_agent: bool = True
     timeout: int = 30
     keepalive_interval: int = 60
-    known_hosts_file: Optional[Path] = None
+    known_hosts_file: Path | None = None
     strict_host_key_checking: bool = True
 
 
@@ -106,10 +105,10 @@ class ConnectionManager:
             pool_size: Maximum number of connections per cluster
         """
         self.pool_size = pool_size
-        self._pools: Dict[int, List[PooledConnection]] = {}
-        self._configs: Dict[int, ConnectionConfig] = {}
+        self._pools: dict[int, list[PooledConnection]] = {}
+        self._configs: dict[int, ConnectionConfig] = {}
         self._lock = asyncio.Lock()
-        self._health_check_task: Optional[asyncio.Task] = None
+        self._health_check_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Start the connection manager and background tasks."""
@@ -138,10 +137,10 @@ class ConnectionManager:
         cluster_id: int,
         host: str,
         port: int = 22,
-        username: Optional[str] = None,
-        key_file: Optional[Path] = None,
+        username: str | None = None,
+        key_file: Path | None = None,
         use_agent: bool = True,
-        known_hosts_file: Optional[Path] = None,
+        known_hosts_file: Path | None = None,
         strict_host_key_checking: bool = True,
     ) -> None:
         """
@@ -215,7 +214,7 @@ class ConnectionManager:
         _FALLBACK_PASSWORDS[key] = password
         logger.info(f"Stored password for cluster {cluster_id} in memory (not persisted)")
 
-    def get_password(self, cluster_id: int) -> Optional[str]:
+    def get_password(self, cluster_id: int) -> str | None:
         """
         Retrieve password for a cluster from system keyring.
 
@@ -332,7 +331,7 @@ class ConnectionManager:
             connect_kwargs["password"] = password
 
         # Create connection with timeout and retry logic
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         retry_delay = self.INITIAL_RETRY_DELAY
 
         for attempt in range(self.MAX_CONNECT_RETRIES):
@@ -387,7 +386,7 @@ class ConnectionManager:
         raise asyncssh.Error(f"Connection failed for cluster {cluster_id} after retries")
 
     @staticmethod
-    def _get_known_hosts_file(config: ConnectionConfig) -> Union[str, Tuple[()], None]:
+    def _get_known_hosts_file(config: ConnectionConfig) -> str | tuple[()] | None:
         """
         Determine the ``known_hosts`` value to pass to ``asyncssh.connect``.
 
@@ -493,7 +492,7 @@ class ConnectionManager:
             logger.error(f"Connection test failed for cluster {cluster_id}: {e}")
             return False
 
-    async def get_connection_metrics(self, cluster_id: int) -> Dict[str, any]:
+    async def get_connection_metrics(self, cluster_id: int) -> dict[str, any]:
         """
         Get metrics for connections to a cluster.
 
