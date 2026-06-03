@@ -51,12 +51,14 @@ See Also:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import math
 import os
 import shlex
 import tempfile
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import (
@@ -213,6 +215,38 @@ class SLURMJobInfo:
     outputs: Dict[str, Any] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
 
+    # datetime fields that must be (de)serialized to/from ISO-8601 strings.
+    _DATETIME_FIELDS = ("submitted_at", "started_at", "completed_at")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-compatible dict (datetimes -> ISO-8601 strings)."""
+        data: Dict[str, Any] = {}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, datetime):
+                value = value.isoformat()
+            data[f.name] = value
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SLURMJobInfo":
+        """Deserialize from a dict produced by :meth:`to_dict`.
+
+        Unknown keys are ignored and missing keys fall back to dataclass
+        defaults so the format can evolve without breaking older state files.
+        ISO-8601 strings in datetime fields are parsed back to ``datetime``.
+        """
+        known = {f.name for f in fields(cls)}
+        kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
+        for name in cls._DATETIME_FIELDS:
+            raw = kwargs.get(name)
+            if isinstance(raw, str):
+                try:
+                    kwargs[name] = datetime.fromisoformat(raw)
+                except ValueError:
+                    kwargs[name] = None
+        return cls(**kwargs)
+
 
 # =============================================================================
 # SLURM Workflow Runner
@@ -260,12 +294,17 @@ class SLURMWorkflowRunner:
         self,
         config: SLURMConfig,
         default_code: str = "vasp",
+        state_file: Optional[Union[str, Path]] = None,
     ) -> None:
         """Initialize SLURM workflow runner.
 
         Args:
             config: SLURM configuration
             default_code: Default DFT code to use (vasp, quantum_espresso, etc.)
+            state_file: Optional path to the JSON file used to persist the
+                ``_jobs`` map across server restarts. When ``None`` a stable
+                per-user default is derived (see :meth:`_default_state_file`).
+                Pass an explicit path (e.g. ``tmp_path / "jobs.json"``) in tests.
         """
         self._config = config
         self._default_code = default_code
@@ -274,13 +313,23 @@ class SLURMWorkflowRunner:
         # Track submitted jobs: workflow_id -> SLURMJobInfo
         self._jobs: Dict[str, SLURMJobInfo] = {}
 
+        # Resolve the persistence location. This must never fail construction.
+        self._state_file: Path = (
+            Path(state_file).expanduser() if state_file is not None else self._default_state_file()
+        )
+
         # Connection manager (lazy loaded)
         self._connection_manager: Optional[Any] = None
         self._slurm_runner: Optional[Any] = None
 
+        # Reload any previously-persisted in-progress jobs so that
+        # get_status/get_result/cancel keep working across a server restart.
+        self._load_state()
+
         logger.info(
             f"Initialized SLURMWorkflowRunner for {config.cluster_host}, "
-            f"default_code={default_code}"
+            f"default_code={default_code}, state_file={self._state_file} "
+            f"({len(self._jobs)} job(s) reloaded)"
         )
 
     @classmethod
@@ -288,18 +337,125 @@ class SLURMWorkflowRunner:
         cls,
         profile: "ClusterProfile",
         default_code: str = "vasp",
+        state_file: Optional[Union[str, Path]] = None,
     ) -> "SLURMWorkflowRunner":
         """Create SLURMWorkflowRunner from a ClusterProfile.
 
         Args:
             profile: ClusterProfile with cluster configuration
             default_code: Default DFT code
+            state_file: Optional override for the persisted job state file.
 
         Returns:
             Configured SLURMWorkflowRunner
         """
         config = SLURMConfig.from_cluster_profile(profile)
-        return cls(config=config, default_code=default_code)
+        return cls(config=config, default_code=default_code, state_file=state_file)
+
+    # =========================================================================
+    # Job-state persistence (survives an IPC-server restart)
+    # =========================================================================
+
+    def _default_state_file(self) -> Path:
+        """Derive a stable default location for the persisted job state file.
+
+        Preference order:
+          1. ``$CRYSTALMATH_SLURM_STATE_FILE`` (explicit operator override).
+          2. ``$CRYSTALMATH_STATE_DIR/slurm_jobs.json`` if that env var is set.
+          3. An XDG-style per-user data dir:
+             ``$XDG_DATA_HOME/crystalmath/slurm_jobs.json`` or
+             ``~/.local/share/crystalmath/slurm_jobs.json``.
+
+        The path is namespaced by ``cluster_host`` so multiple runners pointed
+        at different clusters do not clobber each other's state.
+        """
+        override = os.getenv("CRYSTALMATH_SLURM_STATE_FILE")
+        if override:
+            return Path(override).expanduser()
+
+        state_dir_env = os.getenv("CRYSTALMATH_STATE_DIR")
+        if state_dir_env:
+            base = Path(state_dir_env).expanduser()
+        else:
+            xdg = os.getenv("XDG_DATA_HOME")
+            base = Path(xdg).expanduser() if xdg else (Path.home() / ".local" / "share")
+            base = base / "crystalmath"
+
+        # Namespace by host so distinct clusters keep independent state files.
+        safe_host = "".join(
+            c if (c.isalnum() or c in "-_.") else "_" for c in self._config.cluster_host
+        )
+        return base / "slurm_jobs" / f"{safe_host}.json"
+
+    def _load_state(self) -> None:
+        """Reload persisted jobs into ``self._jobs``.
+
+        Defensive by design: a missing or corrupt state file must never crash
+        construction. On any error we log and start with an empty job map.
+        """
+        path = self._state_file
+        try:
+            if not path.exists():
+                return
+            raw = path.read_text(encoding="utf-8")
+            if not raw.strip():
+                return
+            data = json.loads(raw)
+        except (OSError, ValueError) as e:
+            logger.warning(
+                "Could not read SLURM state file %s (%s); starting with no tracked jobs.",
+                path,
+                e,
+            )
+            return
+
+        records = data.get("jobs") if isinstance(data, dict) else data
+        if not isinstance(records, list):
+            logger.warning("SLURM state file %s has unexpected structure; ignoring.", path)
+            return
+
+        reloaded = 0
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            try:
+                job = SLURMJobInfo.from_dict(record)
+            except (TypeError, ValueError) as e:
+                logger.warning("Skipping malformed SLURM job record (%s): %r", e, record)
+                continue
+            if not job.workflow_id:
+                continue
+            self._jobs[job.workflow_id] = job
+            reloaded += 1
+
+        if reloaded:
+            logger.info("Reloaded %d SLURM job(s) from %s", reloaded, path)
+
+    def _save_state(self) -> None:
+        """Persist the current ``_jobs`` map to the JSON state file.
+
+        Writes atomically (temp file + ``os.replace``) so a crash mid-write
+        cannot corrupt the existing state. Failures are logged but never
+        propagated — persistence is best-effort and must not break a live
+        submit/status/cancel call.
+        """
+        path = self._state_file
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "cluster_host": self._config.cluster_host,
+                "jobs": [job.to_dict() for job in self._jobs.values()],
+            }
+            tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+            # default=str so a non-JSON-serializable value in job.outputs (e.g. a
+            # numpy scalar from result parsing) degrades to a string instead of
+            # raising — this runs inside get_result_async's try-block, where an
+            # uncaught error would wrongly flip a successful result to failed.
+            tmp.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+            os.replace(tmp, path)
+        except (OSError, TypeError, ValueError) as e:
+            logger.warning("Failed to persist SLURM state to %s: %s", path, e)
 
     @staticmethod
     def _run_sync(coro):
@@ -423,6 +579,7 @@ class SLURMWorkflowRunner:
                 submitted_at=datetime.now(),
             )
             self._jobs[workflow_id] = job_info
+            self._save_state()
 
             logger.info(f"Submitted SLURM job {slurm_job_id} for workflow {workflow_id[:8]}")
 
@@ -769,11 +926,98 @@ class SLURMWorkflowRunner:
         kpoints = Kpoints.automatic_density(structure, kpoint_density * 1000)
         kpoints.write_file(work_dir / "KPOINTS")
 
-        # Note: POTCAR must be provided separately (not generated here)
-        # Write a placeholder for the runner to handle
-        (work_dir / "POTCAR_NEEDED").write_text("# POTCAR must be generated on the cluster\n")
+        # POTCAR: build a real pseudopotential file from VASP_PP_PATH and stage
+        # it alongside the other inputs. Fails fast (no placeholder) if the
+        # pseudopotential library is not configured/available.
+        self._stage_vasp_potcar(work_dir, structure, parameters)
 
         return work_dir / "INCAR"
+
+    def _stage_vasp_potcar(
+        self,
+        work_dir: Path,
+        structure: Any,
+        parameters: Dict[str, Any],
+    ) -> Path:
+        """Build a real VASP POTCAR for ``structure`` and write it to ``work_dir``.
+
+        The pseudopotential library is resolved from ``VASP_PP_PATH`` (via
+        :func:`crystalmath.quacc.potcar.get_potcar_path`). When the library is
+        not configured or is missing POTCARs for one or more elements, this
+        raises :class:`SLURMWorkflowError` with an actionable message *before*
+        the job is ever submitted -- VASP aborts on a missing POTCAR, so failing
+        fast here surfaces the real problem instead of a downstream job crash.
+
+        No ``POTCAR_NEEDED`` placeholder is ever written: the POTCAR is staged
+        locally and uploaded with the rest of the inputs.
+
+        Args:
+            work_dir: Directory to write the POTCAR into.
+            structure: pymatgen ``Structure`` for the job.
+            parameters: Calculation parameters (``potcar_functional`` optional,
+                defaults to ``"PBE"``).
+
+        Returns:
+            Path to the staged POTCAR file.
+
+        Raises:
+            SLURMWorkflowError: If ``VASP_PP_PATH`` is unset/invalid or POTCARs
+                are missing for any element in the structure.
+        """
+        from crystalmath.quacc.potcar import get_potcar_path, validate_potcars
+
+        # Derive POTCAR symbols the same way VaspInputGenerator does: one entry
+        # per distinct species, in first-seen order.
+        seen: set[str] = set()
+        potcar_symbols: List[str] = []
+        for site_species in structure.species:
+            symbol = str(site_species)
+            if symbol not in seen:
+                seen.add(symbol)
+                potcar_symbols.append(symbol)
+
+        # Fail fast when the pseudopotential library is not usable. This covers
+        # an unset/missing VASP_PP_PATH and any element without a POTCAR.
+        potcar_path = get_potcar_path()
+        if potcar_path is None:
+            raise SLURMWorkflowError(
+                "Cannot generate VASP POTCAR: VASP_PP_PATH is not configured. "
+                "Set the VASP_PP_PATH environment variable (or configure it in "
+                "~/.quacc.yaml) to point at your VASP pseudopotential library "
+                f"before submitting VASP jobs. Required elements: "
+                f"{', '.join(potcar_symbols)}."
+            )
+
+        valid, error = validate_potcars(set(potcar_symbols))
+        if not valid:
+            raise SLURMWorkflowError(
+                f"Cannot generate VASP POTCAR (VASP_PP_PATH={potcar_path}): {error}"
+            )
+
+        functional = parameters.get("potcar_functional", "PBE")
+
+        try:
+            from pymatgen.io.vasp import Potcar
+        except ImportError as exc:  # pragma: no cover - exercised via fail-fast msg
+            raise SLURMWorkflowError(
+                "Cannot generate VASP POTCAR: pymatgen is required to build "
+                "POTCAR files but is not installed. Install pymatgen to submit "
+                "VASP jobs."
+            ) from exc
+
+        try:
+            potcar = Potcar(symbols=potcar_symbols, functional=functional)
+        except Exception as exc:
+            raise SLURMWorkflowError(
+                "Cannot generate VASP POTCAR for elements "
+                f"{', '.join(potcar_symbols)} (functional={functional}, "
+                f"VASP_PP_PATH={potcar_path}): {exc}. Verify the pseudopotential "
+                "library is complete and VASP_PP_PATH is set correctly."
+            ) from exc
+
+        potcar_file = work_dir / "POTCAR"
+        potcar.write_file(str(potcar_file))
+        return potcar_file
 
     def _generate_qe_inputs(
         self,
@@ -829,44 +1073,128 @@ class SLURMWorkflowRunner:
         structure: Any,
         parameters: Dict[str, Any],
     ) -> Path:
-        """Generate CRYSTAL23 input file."""
-        # Simple CRYSTAL input generation
-        lines = ["CRYSTAL", "0 0 0"]
+        """Generate a valid CRYSTAL23 ``.d12`` input deck.
 
-        # Space group (simplified)
-        lines.append("1")  # P1 for simplicity
+        This delegates to the real, symmetry-aware CRYSTAL23 generator
+        (:class:`CrystalD12Generator`) instead of emitting a hardcoded P1 deck
+        with no basis set. The previous implementation always wrote space group
+        ``1`` (ignoring the structure's symmetry), omitted the mandatory
+        ``BASISSET`` section (which ``crystalOMP`` rejects outright), and wrote a
+        zero/negative ``TOLDEE``. The generator fixes all three:
 
-        # Lattice parameters
-        lattice = structure.lattice
-        lines.append(
-            f"{lattice.a:.6f} {lattice.b:.6f} {lattice.c:.6f} "
-            f"{lattice.alpha:.2f} {lattice.beta:.2f} {lattice.gamma:.2f}"
-        )
+        - **Space group** is detected from the structure via pymatgen's
+          ``SpacegroupAnalyzer`` (so symmetric crystals get their true group,
+          not P1).
+        - **Basis set** is emitted as a ``BASISSET`` block using an internal
+          CRYSTAL23 library (default ``POB-TZVP-REV2``).
+        - **TOLDEE** is a valid positive exponent (10^-N Hartree), derived from
+          the runner's ``energy_convergence`` parameter.
 
-        # Atoms
-        lines.append(str(len(structure)))
-        for site in structure:
-            atomic_number = site.specie.Z
-            coords = site.frac_coords
-            lines.append(f"{atomic_number} {coords[0]:.6f} {coords[1]:.6f} {coords[2]:.6f}")
+        The runner's existing config (structure, k-points, tolerances,
+        functional) is mapped onto the generator's parameters.
 
-        # Basis set and options
-        lines.extend(
-            [
-                "END",
-                "DFT",
-                "PBE",
-                "END",
-                "SHRINK",
-                "8 8",
-                "TOLDEE",
-                f"{-int(abs(parameters.get('energy_convergence', 1e-7)) >= 1e-7)}",
-                "END",
-            ]
+        Args:
+            work_dir: Directory to write the ``.d12`` deck into.
+            workflow_type: Type of calculation (``relax`` enables OPTGEOM).
+            structure: pymatgen ``Structure`` for the job.
+            parameters: Calculation parameters (``functional``, ``shrink`` /
+                ``kpoints``, ``energy_convergence``, ``tolinteg`` -- all
+                optional, sensible defaults are used).
+
+        Returns:
+            Path to the written ``INPUT`` deck (consumed by ``Pcrystal``).
+
+        Raises:
+            SLURMWorkflowError: If pymatgen is unavailable (a correct deck
+                requires symmetry analysis -- we fail fast rather than write a
+                broken P1/no-basis deck that ``crystalOMP`` will reject).
+        """
+        try:
+            from crystalmath._vendor.core.materials_api.transforms.crystal_d12 import (
+                CrystalD12Generator,
+                OptimizationConfig,
+            )
+        except ImportError as exc:  # pragma: no cover - defensive
+            raise SLURMWorkflowError(
+                "Cannot generate CRYSTAL23 input: the vendored CrystalD12 "
+                "generator could not be imported. This indicates a broken "
+                "installation of crystalmath."
+            ) from exc
+
+        # The real generator relies on pymatgen for symmetry detection
+        # (SpacegroupAnalyzer) and basis-set element enumeration. Without it we
+        # cannot determine the correct space group, so fail fast with an
+        # actionable message instead of falling back to the old, broken
+        # hardcoded-P1/no-basis deck that crystalOMP rejects.
+        try:
+            import pymatgen  # noqa: F401
+        except ImportError as exc:
+            raise SLURMWorkflowError(
+                "Cannot generate CRYSTAL23 input: pymatgen is required for "
+                "symmetry detection (SpacegroupAnalyzer) and basis-set "
+                "generation. Install pymatgen before submitting CRYSTAL23 jobs."
+            ) from exc
+
+        # --- Map runner parameters onto the generator's API ---------------
+        functional = parameters.get("functional", "PBE")
+
+        # k-point mesh -> SHRINK (IS, ISP). Accept an explicit (IS, ISP) pair,
+        # a single int, or fall back to the generator's sensible default.
+        shrink_param = parameters.get("shrink", parameters.get("kpoints"))
+        if shrink_param is None:
+            shrink = (8, 8)
+        elif isinstance(shrink_param, (int, float)):
+            is_ = int(shrink_param)
+            shrink = (is_, is_)
+        else:
+            is_, isp = shrink_param[0], shrink_param[-1]
+            shrink = (int(is_), int(isp))
+
+        # Energy convergence -> positive TOLDEE exponent (10^-N Hartree).
+        # e.g. energy_convergence=1e-7 -> TOLDEE 7. Always positive and >= 1.
+        energy_convergence = parameters.get("energy_convergence", 1e-7)
+        try:
+            toldee = int(round(-math.log10(abs(float(energy_convergence)))))
+        except (ValueError, ZeroDivisionError):
+            toldee = 7
+        if toldee < 1:
+            toldee = 7
+
+        # Integration tolerances (TOLINTEG). Accept an explicit 5-tuple or use
+        # the generator's default.
+        tolinteg_param = parameters.get("tolinteg")
+        tolinteg = tuple(tolinteg_param) if tolinteg_param else (7, 7, 7, 7, 14)
+
+        # Basis set library (BASISSET section). Defaults to POB-TZVP-REV2.
+        basis_set = parameters.get("basis_set", "POB-TZVP-REV2")
+
+        # Geometry optimization for relax-type workflows.
+        optimization = None
+        if getattr(workflow_type, "value", None) == "relax":
+            optimization = OptimizationConfig(enabled=True, opt_type="FULLOPTG")
+
+        title = parameters.get("title", "crystalmath SLURM job")
+
+        # NOTE: generate_full_input accepts a ``toldee`` argument but only emits
+        # it inside an OPTGEOM block; for a plain SCF deck it never writes a
+        # TOLDEE line, leaving CRYSTAL to use its (looser) default. To guarantee
+        # a valid, positive SCF energy-convergence threshold in *every* deck, we
+        # also inject TOLDEE explicitly into the Hamiltonian block via
+        # ``extra_keywords`` (placed before the final END).
+        d12 = CrystalD12Generator.generate_full_input(
+            structure,
+            title=title,
+            basis_set=basis_set,
+            functional=functional,
+            shrink=shrink,
+            tolinteg=tolinteg,
+            toldee=toldee,
+            optimization=optimization,
+            extra_keywords=["TOLDEE", str(toldee)],
         )
 
         input_path = work_dir / "INPUT"
-        input_path.write_text("\n".join(lines))
+        input_path.write_text(d12)
 
         return input_path
 
@@ -936,9 +1264,12 @@ class SLURMWorkflowRunner:
                     "module load intel/2024.2",
                     "module load vasp/6.4.3",
                     "",
-                    "# Generate POTCAR if needed",
-                    "if [ -f POTCAR_NEEDED ]; then",
-                    "    /opt/vasp/scripts/generate_potcar.sh",
+                    "# POTCAR is staged locally with the other inputs; verify it",
+                    "# exists before launching VASP (VASP aborts without it).",
+                    "if [ ! -s POTCAR ]; then",
+                    '    echo "ERROR: POTCAR missing or empty. It must be staged'
+                    ' with the job inputs (VASP_PP_PATH on the submit host)." >&2',
+                    "    exit 1",
                     "fi",
                     "",
                     "# Run VASP",
@@ -1258,7 +1589,10 @@ class SLURMWorkflowRunner:
         # Query SLURM for current state
         try:
             state = await self._get_slurm_status(job_info.slurm_job_id)
-            job_info.state = state
+            if state != job_info.state:
+                job_info.state = state
+                # Persist the observed transition so a restart sees fresh state.
+                self._save_state()
         except Exception as e:
             logger.warning(f"Failed to get SLURM status: {e}")
 
@@ -1347,6 +1681,8 @@ class SLURMWorkflowRunner:
             outputs = await self._retrieve_results(job_info)
             job_info.outputs = outputs
             job_info.completed_at = datetime.now()
+            # Persist completion metadata (outputs path refs + completed_at).
+            self._save_state()
 
             return WorkflowResult(
                 success=state == "completed",
@@ -1535,6 +1871,7 @@ class SLURMWorkflowRunner:
         try:
             await self._cancel_slurm_job(job_info.slurm_job_id)
             job_info.state = "CANCELLED"
+            self._save_state()
             return True
 
         except Exception as e:

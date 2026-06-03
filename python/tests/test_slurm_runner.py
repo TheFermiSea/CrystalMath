@@ -48,11 +48,19 @@ def slurm_config():
 
 
 @pytest.fixture
-def slurm_runner(slurm_config):
-    """Create a SLURMWorkflowRunner for testing."""
+def slurm_runner(slurm_config, tmp_path):
+    """Create a SLURMWorkflowRunner for testing.
+
+    Points persistence at a tmp state file so tests never touch the real
+    per-user state directory (~/.local/share/crystalmath).
+    """
     from crystalmath.integrations.slurm_runner import SLURMWorkflowRunner
 
-    return SLURMWorkflowRunner(config=slurm_config, default_code="vasp")
+    return SLURMWorkflowRunner(
+        config=slurm_config,
+        default_code="vasp",
+        state_file=tmp_path / "slurm_jobs.json",
+    )
 
 
 # =============================================================================
@@ -532,3 +540,520 @@ class TestFactoryFunctions:
 
         with pytest.raises(KeyError):
             create_slurm_runner(cluster_name="nonexistent", default_code="vasp")
+
+
+# =============================================================================
+# Job-State Persistence Tests (crystalmath-z46)
+# =============================================================================
+
+
+def _make_runner(slurm_config, state_file):
+    """Helper: build a runner pointed at a specific state file."""
+    from crystalmath.integrations.slurm_runner import SLURMWorkflowRunner
+
+    return SLURMWorkflowRunner(
+        config=slurm_config,
+        default_code="vasp",
+        state_file=state_file,
+    )
+
+
+def _register_job(runner, workflow_id="wf-persist-1", slurm_job_id="99999", state="PENDING"):
+    """Helper: register and persist a SLURMJobInfo directly, mirroring submit."""
+    from crystalmath.integrations.slurm_runner import SLURMJobInfo
+
+    job = SLURMJobInfo(
+        workflow_id=workflow_id,
+        slurm_job_id=slurm_job_id,
+        state=state,
+        remote_dir=f"/scratch/crystalmath/{workflow_id}",
+        code="vasp",
+        submitted_at=datetime(2026, 6, 3, 12, 0, 0),
+    )
+    runner._jobs[workflow_id] = job
+    runner._save_state()
+    return job
+
+
+class TestSLURMJobInfoSerialization:
+    """Tests for SLURMJobInfo (de)serialization."""
+
+    def test_to_dict_serializes_datetimes_to_iso(self):
+        from crystalmath.integrations.slurm_runner import SLURMJobInfo
+
+        job = SLURMJobInfo(
+            workflow_id="wf-1",
+            slurm_job_id="123",
+            submitted_at=datetime(2026, 6, 3, 9, 30, 0),
+        )
+        data = job.to_dict()
+
+        assert data["workflow_id"] == "wf-1"
+        assert data["slurm_job_id"] == "123"
+        assert data["submitted_at"] == "2026-06-03T09:30:00"
+        assert data["started_at"] is None
+
+    def test_round_trip_preserves_fields(self):
+        from crystalmath.integrations.slurm_runner import SLURMJobInfo
+
+        job = SLURMJobInfo(
+            workflow_id="wf-2",
+            slurm_job_id="456",
+            state="RUNNING",
+            remote_dir="/scratch/x",
+            code="crystal23",
+            submitted_at=datetime(2026, 6, 3, 9, 30, 0),
+            completed_at=datetime(2026, 6, 3, 10, 0, 0),
+            outputs={"energy": -1.23},
+            errors=["warn"],
+        )
+        restored = SLURMJobInfo.from_dict(job.to_dict())
+
+        assert restored == job
+        assert isinstance(restored.submitted_at, datetime)
+        assert isinstance(restored.completed_at, datetime)
+
+    def test_from_dict_ignores_unknown_keys_and_bad_datetime(self):
+        from crystalmath.integrations.slurm_runner import SLURMJobInfo
+
+        restored = SLURMJobInfo.from_dict(
+            {
+                "workflow_id": "wf-3",
+                "slurm_job_id": "789",
+                "submitted_at": "not-a-date",
+                "bogus_future_field": 42,
+            }
+        )
+
+        assert restored.workflow_id == "wf-3"
+        assert restored.slurm_job_id == "789"
+        # Unparseable datetime falls back to None rather than crashing.
+        assert restored.submitted_at is None
+
+
+class TestSLURMJobPersistence:
+    """Tests that submitted jobs survive a runner (server) restart."""
+
+    def test_save_then_reload_recovers_job(self, slurm_config, tmp_path):
+        state_file = tmp_path / "slurm_jobs.json"
+
+        runner = _make_runner(slurm_config, state_file)
+        _register_job(runner, workflow_id="wf-reload")
+
+        assert state_file.exists()
+
+        # Simulate IPC-server restart: brand new runner, same state file.
+        runner2 = _make_runner(slurm_config, state_file)
+
+        assert "wf-reload" in runner2._jobs
+        reloaded = runner2._jobs["wf-reload"]
+        assert reloaded.slurm_job_id == "99999"
+        assert reloaded.remote_dir == "/scratch/crystalmath/wf-reload"
+        assert reloaded.submitted_at == datetime(2026, 6, 3, 12, 0, 0)
+
+    def test_reloaded_job_status_not_failed(self, slurm_config, tmp_path):
+        """After reload, get_status must no longer treat the job as unknown."""
+        from unittest.mock import patch
+
+        state_file = tmp_path / "slurm_jobs.json"
+        runner = _make_runner(slurm_config, state_file)
+        _register_job(runner, workflow_id="wf-status", state="PENDING")
+
+        runner2 = _make_runner(slurm_config, state_file)
+
+        # Sanity: an unknown id still maps to "failed" (baseline behavior).
+        assert runner2.get_status("does-not-exist") == "failed"
+
+        # The reloaded job is found; stub the remote squeue query so we don't
+        # require a live cluster. PENDING -> "submitted".
+        with patch.object(runner2, "_get_slurm_status", new=AsyncMock(return_value="PENDING")):
+            status = runner2.get_status("wf-status")
+
+        assert status != "failed"
+        assert status == "submitted"
+
+    def test_reloaded_job_can_be_cancelled(self, slurm_config, tmp_path):
+        """cancel() must locate a job that only exists via persisted state."""
+        from unittest.mock import patch
+
+        state_file = tmp_path / "slurm_jobs.json"
+        runner = _make_runner(slurm_config, state_file)
+        _register_job(runner, workflow_id="wf-cancel", slurm_job_id="55555")
+
+        runner2 = _make_runner(slurm_config, state_file)
+
+        # Unknown id cannot be cancelled.
+        assert runner2.cancel("missing") is False
+
+        with patch.object(
+            runner2, "_cancel_slurm_job", new=AsyncMock(return_value=None)
+        ) as mock_cancel:
+            result = runner2.cancel("wf-cancel")
+
+        assert result is True
+        mock_cancel.assert_awaited_once_with("55555")
+        # Cancellation transition is persisted.
+        assert runner2._jobs["wf-cancel"].state == "CANCELLED"
+        runner3 = _make_runner(slurm_config, state_file)
+        assert runner3._jobs["wf-cancel"].state == "CANCELLED"
+
+    def test_missing_state_file_starts_empty(self, slurm_config, tmp_path):
+        """A non-existent state file must not crash construction."""
+        runner = _make_runner(slurm_config, tmp_path / "nope" / "missing.json")
+        assert runner._jobs == {}
+
+    def test_corrupt_state_file_starts_empty(self, slurm_config, tmp_path):
+        """A corrupt state file must be tolerated (log + start empty)."""
+        state_file = tmp_path / "corrupt.json"
+        state_file.write_text("{ this is not valid json ]]]")
+
+        runner = _make_runner(slurm_config, state_file)
+        assert runner._jobs == {}
+
+    def test_state_file_malformed_records_skipped(self, slurm_config, tmp_path):
+        """Malformed individual records are skipped; valid ones still load."""
+        import json
+
+        state_file = tmp_path / "partial.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "jobs": [
+                        "not-a-dict",
+                        {"slurm_job_id": "1"},  # missing workflow_id -> skipped
+                        {"workflow_id": "good", "slurm_job_id": "2"},
+                    ],
+                }
+            )
+        )
+
+        runner = _make_runner(slurm_config, state_file)
+        assert list(runner._jobs.keys()) == ["good"]
+
+    def test_default_state_file_is_namespaced_by_host(self, slurm_config, monkeypatch, tmp_path):
+        """Default path lands under the per-user data dir, namespaced by host."""
+        from crystalmath.integrations.slurm_runner import SLURMWorkflowRunner
+
+        monkeypatch.delenv("CRYSTALMATH_SLURM_STATE_FILE", raising=False)
+        monkeypatch.delenv("CRYSTALMATH_STATE_DIR", raising=False)
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+        runner = SLURMWorkflowRunner(config=slurm_config, default_code="vasp")
+        path = runner._state_file
+
+        assert path.parent == tmp_path / "xdg" / "crystalmath" / "slurm_jobs"
+        assert path.name == "10.0.0.20.json"
+
+    def test_state_file_env_override(self, slurm_config, monkeypatch, tmp_path):
+        """CRYSTALMATH_SLURM_STATE_FILE overrides the default location."""
+        from crystalmath.integrations.slurm_runner import SLURMWorkflowRunner
+
+        override = tmp_path / "operator" / "jobs.json"
+        monkeypatch.setenv("CRYSTALMATH_SLURM_STATE_FILE", str(override))
+
+        runner = SLURMWorkflowRunner(config=slurm_config, default_code="vasp")
+        assert runner._state_file == override
+
+
+# =============================================================================
+# VASP POTCAR Staging Tests (crystalmath-d4l)
+# =============================================================================
+
+
+def _simple_structure():
+    """Build a tiny 2-element pymatgen Structure for POTCAR tests.
+
+    Requires pymatgen; callers must guard with importorskip("pymatgen").
+    """
+    from pymatgen.core import Lattice, Structure
+
+    lattice = Lattice.cubic(5.0)
+    return Structure(lattice, ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]])
+
+
+class TestVaspPotcarStaging:
+    """Tests for real POTCAR staging in the VASP submission path."""
+
+    def test_vasp_inputs_fail_fast_without_pp_path(self, slurm_runner, tmp_path, monkeypatch):
+        """With VASP_PP_PATH unset, VASP input generation must fail fast.
+
+        No POTCAR_NEEDED placeholder may be written.
+        """
+        pytest.importorskip("pymatgen")
+        from crystalmath.integrations.slurm_runner import SLURMWorkflowError
+        from crystalmath.protocols import WorkflowType
+
+        # Ensure the pseudopotential library is unavailable.
+        monkeypatch.delenv("VASP_PP_PATH", raising=False)
+        # get_potcar_path() may also consult quacc SETTINGS; force it to None so
+        # the test is deterministic regardless of any ambient quacc config.
+        monkeypatch.setattr(
+            "crystalmath.quacc.potcar.get_potcar_path",
+            lambda: None,
+        )
+
+        structure = _simple_structure()
+
+        with pytest.raises(SLURMWorkflowError) as exc_info:
+            slurm_runner._generate_vasp_inputs(
+                tmp_path,
+                WorkflowType.RELAX,
+                structure,
+                {},
+            )
+
+        # Error must be actionable and mention VASP_PP_PATH.
+        assert "VASP_PP_PATH" in str(exc_info.value)
+        # And the deprecated placeholder must NOT exist.
+        assert not (tmp_path / "POTCAR_NEEDED").exists()
+
+    def test_vasp_inputs_fail_fast_when_potcars_missing(self, slurm_runner, tmp_path, monkeypatch):
+        """A configured-but-incomplete library must also fail fast (no placeholder)."""
+        pytest.importorskip("pymatgen")
+        from crystalmath.integrations.slurm_runner import SLURMWorkflowError
+        from crystalmath.protocols import WorkflowType
+
+        # Point at an existing but empty directory: path resolves, validation fails.
+        empty_pp = tmp_path / "pp_library"
+        empty_pp.mkdir()
+        monkeypatch.setenv("VASP_PP_PATH", str(empty_pp))
+
+        structure = _simple_structure()
+
+        with pytest.raises(SLURMWorkflowError) as exc_info:
+            slurm_runner._generate_vasp_inputs(
+                tmp_path,
+                WorkflowType.RELAX,
+                structure,
+                {},
+            )
+
+        assert "POTCAR" in str(exc_info.value)
+        assert not (tmp_path / "POTCAR_NEEDED").exists()
+
+    def test_vasp_inputs_stage_real_potcar(self, slurm_runner, tmp_path, monkeypatch):
+        """When pseudopotentials are available, a real POTCAR is staged.
+
+        pymatgen's Potcar is mocked so the test does not require an actual
+        pseudopotential library.
+        """
+        pytest.importorskip("pymatgen")
+        from crystalmath.protocols import WorkflowType
+
+        structure = _simple_structure()
+
+        # Make validation pass without a real library.
+        monkeypatch.setenv("VASP_PP_PATH", str(tmp_path / "pp_library"))
+        monkeypatch.setattr(
+            "crystalmath.quacc.potcar.get_potcar_path",
+            lambda: tmp_path / "pp_library",
+        )
+        monkeypatch.setattr(
+            "crystalmath.quacc.potcar.validate_potcars",
+            lambda elements: (True, None),
+        )
+
+        # Mock pymatgen Potcar to capture the symbols and write a real file.
+        captured = {}
+
+        class FakePotcar:
+            def __init__(self, symbols, functional="PBE"):
+                captured["symbols"] = list(symbols)
+                captured["functional"] = functional
+
+            def write_file(self, filename):
+                Path(filename).write_text("PAW_PBE Si\nPAW_PBE O\n")
+
+        monkeypatch.setattr("pymatgen.io.vasp.Potcar", FakePotcar)
+
+        result = slurm_runner._generate_vasp_inputs(
+            tmp_path,
+            WorkflowType.RELAX,
+            structure,
+            {},
+        )
+
+        # INCAR path returned, POTCAR staged, no placeholder written.
+        assert result == tmp_path / "INCAR"
+        potcar_file = tmp_path / "POTCAR"
+        assert potcar_file.exists()
+        assert potcar_file.read_text().startswith("PAW_PBE")
+        assert not (tmp_path / "POTCAR_NEEDED").exists()
+
+        # Symbols derived from species, deduped, in first-seen order.
+        assert captured["symbols"] == ["Si", "O"]
+        assert captured["functional"] == "PBE"
+
+    def test_vasp_slurm_script_has_no_hardcoded_potcar_generator(self, slurm_runner):
+        """The SLURM script must not call the old hardcoded generate_potcar.sh."""
+        from crystalmath.protocols import WorkflowType
+
+        script = slurm_runner._generate_slurm_script(
+            workflow_id="test-123",
+            workflow_type=WorkflowType.RELAX,
+            code="vasp",
+        )
+
+        assert "generate_potcar.sh" not in script
+        assert "POTCAR_NEEDED" not in script
+        # It should instead verify the locally staged POTCAR exists.
+        assert "POTCAR" in script
+
+
+# =============================================================================
+# CRYSTAL23 .d12 Generation Tests (crystalmath-drm)
+# =============================================================================
+
+
+def _rocksalt_mgo():
+    """Build a symmetric rocksalt MgO structure (space group Fm-3m, #225).
+
+    Requires pymatgen; callers must guard with importorskip("pymatgen").
+    """
+    from pymatgen.core import Lattice, Structure
+
+    # Generate the full FCC rocksalt cell from the Wyckoff positions (Mg at 4a
+    # (0,0,0), O at 4b (1/2,1/2,1/2)): from_spacegroup applies the Fm-3m symmetry
+    # ops -> the conventional 4 Mg + 4 O cell (SG 225). NOTE: the same two
+    # coordinates on a bare cubic lattice give the 2-atom CsCl cell (Pm-3m, 221),
+    # not rocksalt — so from_spacegroup is required to get a true #225 structure.
+    lattice = Lattice.cubic(4.21)
+    return Structure.from_spacegroup(225, lattice, ["Mg", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]])
+
+
+class TestCrystalD12Generation:
+    """Tests for the real (symmetry-aware) CRYSTAL23 .d12 generator."""
+
+    def test_crystal_inputs_use_real_generator_for_symmetric_structure(
+        self, slurm_runner, tmp_path
+    ):
+        """A symmetric structure must yield a valid, non-P1 .d12 with a basis set.
+
+        Regression guard for crystalmath-drm: the old implementation hardcoded
+        space group 1 (P1), emitted no BASISSET section (crystalOMP rejects the
+        deck), and wrote a zero/negative TOLDEE.
+        """
+        pytest.importorskip("pymatgen")
+        from crystalmath.protocols import WorkflowType
+
+        structure = _rocksalt_mgo()
+
+        input_path = slurm_runner._generate_crystal_inputs(
+            tmp_path,
+            WorkflowType.SCF,
+            structure,
+            {},
+        )
+
+        assert input_path == tmp_path / "INPUT"
+        deck = input_path.read_text()
+        lines = deck.splitlines()
+
+        # (a) Space group must be detected as the real group, not P1.
+        # Geometry block: title, "CRYSTAL", "0 0 0", then the space-group number.
+        assert "CRYSTAL" in lines
+        crystal_idx = lines.index("CRYSTAL")
+        # Layout is: CRYSTAL / convention ("0 0 0") / space-group number.
+        space_group = int(lines[crystal_idx + 2].strip())
+        assert space_group != 1, f"Expected real space group, got P1 (deck:\n{deck})"
+        assert space_group == 225, f"Expected Fm-3m (225) for rocksalt MgO, got {space_group}"
+
+        # (b) A BASISSET section must be present (default POB-TZVP-REV2 library).
+        assert "BASISSET" in deck
+        assert "POB-TZVP-REV2" in deck
+
+        # (c) TOLDEE must be present and positive (10^-N Hartree).
+        assert "TOLDEE" in deck
+        toldee_idx = lines.index("TOLDEE")
+        toldee_value = int(lines[toldee_idx + 1].strip())
+        assert toldee_value > 0, f"TOLDEE must be positive, got {toldee_value}"
+
+        # SHRINK / TOLINTEG must also be present (valid SCF controls).
+        assert "SHRINK" in deck
+        assert "TOLINTEG" in deck
+
+        # And it must NOT be the old hardcoded broken deck: that deck had no
+        # BASISSET section and a non-positive TOLDEE. A space group of 225 (not
+        # 1) plus a positive TOLDEE above already prove this, but assert the
+        # specific broken patterns are absent for an unambiguous regression guard.
+        assert "TOLDEE\n0\n" not in deck  # old zero TOLDEE
+        assert "TOLDEE\n-" not in deck  # old negative TOLDEE
+
+    def test_crystal_inputs_map_runner_parameters(self, slurm_runner, tmp_path):
+        """Runner config (functional, k-points, tolerances) maps onto the deck."""
+        pytest.importorskip("pymatgen")
+        from crystalmath.protocols import WorkflowType
+
+        structure = _rocksalt_mgo()
+
+        input_path = slurm_runner._generate_crystal_inputs(
+            tmp_path,
+            WorkflowType.SCF,
+            structure,
+            {
+                "functional": "B3LYP",
+                "shrink": (12, 24),
+                "energy_convergence": 1e-9,
+            },
+        )
+
+        deck = input_path.read_text()
+        lines = deck.splitlines()
+
+        assert "B3LYP" in deck
+
+        shrink_idx = lines.index("SHRINK")
+        assert lines[shrink_idx + 1].strip() == "12 24"
+
+        toldee_idx = lines.index("TOLDEE")
+        assert int(lines[toldee_idx + 1].strip()) == 9
+
+    def test_crystal_inputs_relax_enables_optgeom(self, slurm_runner, tmp_path):
+        """A relax workflow must enable geometry optimization (OPTGEOM)."""
+        pytest.importorskip("pymatgen")
+        from crystalmath.protocols import WorkflowType
+
+        structure = _rocksalt_mgo()
+
+        input_path = slurm_runner._generate_crystal_inputs(
+            tmp_path,
+            WorkflowType.RELAX,
+            structure,
+            {},
+        )
+
+        deck = input_path.read_text()
+        assert "OPTGEOM" in deck
+
+    def test_crystal_inputs_fail_fast_without_pymatgen(self, slurm_runner, tmp_path, monkeypatch):
+        """Without pymatgen, CRYSTAL input generation must fail fast.
+
+        No broken P1/no-basis deck may be written.
+        """
+        from crystalmath.integrations.slurm_runner import SLURMWorkflowError
+        from crystalmath.protocols import WorkflowType
+
+        # Simulate pymatgen being unavailable inside _generate_crystal_inputs.
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pymatgen" or name.startswith("pymatgen."):
+                raise ImportError("pymatgen is not installed")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        with pytest.raises(SLURMWorkflowError) as exc_info:
+            slurm_runner._generate_crystal_inputs(
+                tmp_path,
+                WorkflowType.SCF,
+                object(),  # structure never reached
+                {},
+            )
+
+        assert "pymatgen" in str(exc_info.value)
+        # No deck written on the fail-fast path.
+        assert not (tmp_path / "INPUT").exists()
