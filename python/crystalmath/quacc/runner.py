@@ -11,6 +11,32 @@ from enum import Enum
 from typing import Any, Dict, Optional
 import uuid
 
+# Recipes are imported dynamically via ``__import__`` (see _import_recipe). A
+# job-submission request carries a caller-supplied recipe name, so the importable
+# namespace MUST be restricted to quacc's recipe package — otherwise a request
+# could trigger import of (and import-time side effects in) an arbitrary module
+# such as ``os`` or a local script. See crystalmath-6l8.
+ALLOWED_RECIPE_PREFIX = "quacc.recipes."
+
+
+def is_allowed_recipe(recipe_fullname: Any) -> bool:
+    """Return True iff ``recipe_fullname`` is a safe, importable quacc recipe path.
+
+    The name must be a plain dotted identifier path under ``quacc.recipes.`` —
+    no relative imports, whitespace, path separators, or dunder traversal. This
+    is the allowlist that guards the dynamic import in :meth:`JobRunner._import_recipe`.
+    """
+    if not recipe_fullname or not isinstance(recipe_fullname, str):
+        return False
+    if not recipe_fullname.startswith(ALLOWED_RECIPE_PREFIX):
+        return False
+    # Require a clean dotted path (each segment a valid Python identifier) and at
+    # least one segment beyond the prefix (the function name).
+    parts = recipe_fullname.split(".")
+    if len(parts) <= ALLOWED_RECIPE_PREFIX.count("."):
+        return False
+    return all(part.isidentifier() for part in parts)
+
 
 class JobState(str, Enum):
     """Job execution states."""
@@ -125,6 +151,13 @@ class JobRunner(ABC):
         Raises:
             ValueError: If recipe cannot be imported
         """
+        # Allowlist BEFORE any dynamic import: only quacc recipe paths may be
+        # imported, so a caller cannot trigger import of an arbitrary module.
+        if not is_allowed_recipe(recipe_fullname):
+            raise ValueError(
+                f"Recipe {recipe_fullname!r} is not permitted; recipes must be a "
+                f"dotted path under {ALLOWED_RECIPE_PREFIX!r}"
+            )
         try:
             parts = recipe_fullname.rsplit(".", 1)
             if len(parts) != 2:

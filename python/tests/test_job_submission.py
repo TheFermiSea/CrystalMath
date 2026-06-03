@@ -308,6 +308,67 @@ class TestJobsSubmitHandler:
         assert result["status"] == "error"
         assert "structure" in result["error"].lower()
 
+    @pytest.mark.asyncio
+    async def test_submit_rejects_disallowed_recipe(self):
+        """A recipe outside quacc.recipes.* is refused before any import/parse.
+
+        Security regression test for crystalmath-6l8: the recipe string flows into
+        a dynamic __import__, so an IPC client must not be able to import arbitrary
+        modules (e.g. ``os.system``).
+        """
+        from crystalmath.server.handlers.jobs import handle_jobs_submit
+
+        for malicious in [
+            "os.system",
+            "subprocess.run",
+            "builtins.__import__",
+            "crystalmath.server.handlers.jobs.handle_jobs_submit",
+        ]:
+            with patch(
+                "crystalmath.quacc.engines.get_workflow_engine",
+                return_value="parsl",
+            ):
+                result = await handle_jobs_submit(
+                    None,
+                    {"recipe": malicious, "structure": "Si\n1.0\n..."},
+                )
+
+            assert result["job_id"] is None, malicious
+            assert result["status"] == "error", malicious
+            assert "Invalid recipe" in result["error"], malicious
+
+
+class TestRecipeAllowlist:
+    """Security: dynamic recipe import is restricted to the quacc.recipes namespace."""
+
+    def test_is_allowed_recipe_accepts_quacc_recipes(self):
+        from crystalmath.quacc.runner import is_allowed_recipe
+
+        assert is_allowed_recipe("quacc.recipes.vasp.core.relax_job")
+        assert is_allowed_recipe("quacc.recipes.emt.core.relax_job")
+
+    def test_is_allowed_recipe_rejects_arbitrary_modules(self):
+        from crystalmath.quacc.runner import is_allowed_recipe
+
+        for bad in [
+            "os.system",
+            "subprocess.run",
+            "builtins.__import__",
+            "quacc.recipes",  # no function segment
+            "quacc.recipesX.evil",  # prefix not terminated by a dot
+            "quacc.recipes.vasp; os.system('x')",  # injection attempt
+            "",
+            None,
+            123,
+        ]:
+            assert not is_allowed_recipe(bad), bad
+
+    def test_import_recipe_rejects_arbitrary_module(self):
+        """_import_recipe (inherited by every runner) enforces the allowlist."""
+        runner = MockRunner()
+        with pytest.raises(ValueError, match="not permitted"):
+            runner._import_recipe("os.system")
+
     @requires_ase
     @pytest.mark.asyncio
     async def test_submit_invalid_structure(self):

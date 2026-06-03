@@ -90,7 +90,11 @@ async def handle_jobs_submit(
         }
     """
     from crystalmath.quacc.engines import get_workflow_engine
-    from crystalmath.quacc.runner import get_or_create_runner
+    from crystalmath.quacc.runner import (
+        ALLOWED_RECIPE_PREFIX,
+        get_or_create_runner,
+        is_allowed_recipe,
+    )
     from crystalmath.quacc.potcar import validate_potcars
     from crystalmath.quacc.store import JobStatus, JobMetadata, JobStore
 
@@ -113,6 +117,20 @@ async def handle_jobs_submit(
             "job_id": None,
             "status": "error",
             "error": "recipe parameter is required",
+        }
+
+    # Allowlist the recipe before it ever reaches the dynamic import in the
+    # runner: an IPC client must not be able to import arbitrary modules. See
+    # crystalmath-6l8.
+    if not is_allowed_recipe(recipe):
+        logger.warning("Rejected disallowed recipe in jobs.submit: %r", recipe)
+        return {
+            "job_id": None,
+            "status": "error",
+            "error": (
+                f"Invalid recipe {recipe!r}: must be a quacc recipe under "
+                f"'{ALLOWED_RECIPE_PREFIX}'."
+            ),
         }
 
     structure_data = params.get("structure")

@@ -248,11 +248,18 @@ class TestJobRunnerABC:
 
         runner = TestRunner()
 
-        with pytest.raises(ValueError, match="Invalid recipe path"):
+        # Disallowed namespaces are rejected by the security allowlist before any
+        # dynamic import is attempted (crystalmath-6l8).
+        with pytest.raises(ValueError, match="not permitted"):
             runner._import_recipe("invalid")
 
-        with pytest.raises(ValueError, match="Cannot import recipe"):
+        with pytest.raises(ValueError, match="not permitted"):
             runner._import_recipe("nonexistent.module.function")
+
+        # An allowed namespace whose module/function does not exist still fails
+        # cleanly with an import error.
+        with pytest.raises(ValueError, match="Cannot import recipe"):
+            runner._import_recipe("quacc.recipes.nonexistent.function")
 
 
 class TestGetRunner:
