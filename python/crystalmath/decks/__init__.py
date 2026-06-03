@@ -10,7 +10,12 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+
+class DeckStagingError(Exception):
+    """Raised when an InputDeck cannot be staged (e.g. POTCAR library missing)."""
 
 
 def _workflow_value(workflow_type: Any) -> str:
@@ -149,3 +154,51 @@ def get_deck_generator(code: str) -> CodeDeckGenerator:
             f"No deck generator for code {code!r}. Known codes: {sorted(_REGISTRY)}"
         ) from None
     return factory()
+
+
+def stage(deck: InputDeck, work_dir: Any) -> None:
+    """Write ``deck`` to ``work_dir`` — the only I/O step in deck generation.
+
+    For VASP decks the POTCAR is assembled from the pseudopotential library
+    (``VASP_PP_PATH``); a missing library fails fast (no placeholder is written).
+    """
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    for name, content in deck.files.items():
+        (work_dir / name).write_text(content)
+    if deck.code == "vasp" and deck.potcar_symbols:
+        _stage_vasp_potcar(deck, work_dir)
+
+
+def _stage_vasp_potcar(deck: InputDeck, work_dir: Path) -> None:
+    """Assemble a real VASP POTCAR for ``deck.potcar_symbols`` from VASP_PP_PATH.
+
+    Fails fast (``DeckStagingError``) when the library is unset/incomplete — VASP
+    aborts on a missing POTCAR, so we surface it before the job is ever submitted.
+    """
+    from crystalmath.quacc.potcar import get_potcar_path, validate_potcars
+
+    symbols = list(deck.potcar_symbols)
+    potcar_path = get_potcar_path()
+    if potcar_path is None:
+        raise DeckStagingError(
+            "Cannot stage VASP POTCAR: VASP_PP_PATH is not configured. Set the "
+            "VASP_PP_PATH environment variable (or configure it in ~/.quacc.yaml) "
+            f"before submitting VASP jobs. Required elements: {', '.join(symbols)}."
+        )
+    valid, error = validate_potcars(set(symbols))
+    if not valid:
+        raise DeckStagingError(f"Cannot stage VASP POTCAR (VASP_PP_PATH={potcar_path}): {error}")
+
+    try:
+        from pymatgen.io.vasp import Potcar
+    except ImportError as exc:  # pragma: no cover - defensive
+        raise DeckStagingError(
+            "Cannot stage VASP POTCAR: pymatgen is required to build POTCAR files."
+        ) from exc
+
+    functional = deck.metadata.get("potcar_functional", "PBE")
+    try:
+        Potcar(symbols=symbols, functional=functional).write_file(str(work_dir / "POTCAR"))
+    except Exception as exc:
+        raise DeckStagingError(f"Failed to build VASP POTCAR for {symbols}: {exc}") from exc

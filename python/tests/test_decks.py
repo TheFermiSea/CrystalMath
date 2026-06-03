@@ -6,6 +6,8 @@ directory, no cluster. pymatgen-guarded (the VASP adapter needs it).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("pymatgen", reason="deck generation needs pymatgen")
@@ -44,6 +46,63 @@ def test_vasp_relax_adds_ionic_relaxation_keywords_absent_from_scf():
     assert "IBRION" in relax_incar
     assert "NSW" in relax_incar
     assert "NSW" not in scf_incar
+
+
+def test_stage_writes_deck_files_to_work_dir(tmp_path):
+    from crystalmath.decks import InputDeck, stage
+
+    deck = InputDeck(code="crystal23", files={"INPUT": "TITLE\nCRYSTAL\nEND\n"})
+    stage(deck, tmp_path)
+
+    assert (tmp_path / "INPUT").read_text() == "TITLE\nCRYSTAL\nEND\n"
+
+
+def test_stage_vasp_fails_fast_without_pp_path(tmp_path, monkeypatch):
+    """No VASP_PP_PATH -> a clear error before submission, and NO placeholder file."""
+    from crystalmath.decks import DeckStagingError, InputDeck, stage
+
+    monkeypatch.delenv("VASP_PP_PATH", raising=False)
+    deck = InputDeck(
+        code="vasp",
+        files={"POSCAR": "p", "INCAR": "i", "KPOINTS": "k"},
+        potcar_symbols=["Mg", "O"],
+    )
+    with pytest.raises(DeckStagingError, match="VASP_PP_PATH"):
+        stage(deck, tmp_path)
+    assert not (tmp_path / "POTCAR_NEEDED").exists()
+
+
+def test_stage_vasp_assembles_potcar_when_library_available(tmp_path, monkeypatch):
+    """With a usable library, a real POTCAR is staged for the deck's symbols."""
+    from crystalmath.decks import InputDeck, stage
+
+    monkeypatch.setattr("crystalmath.quacc.potcar.get_potcar_path", lambda: tmp_path)
+    monkeypatch.setattr("crystalmath.quacc.potcar.validate_potcars", lambda elems: (True, None))
+
+    captured = {}
+
+    class _FakePotcar:
+        def __init__(self, symbols, functional):
+            captured["symbols"] = symbols
+            captured["functional"] = functional
+
+        def write_file(self, path):
+            Path(path).write_text("POTCAR-CONTENT")
+
+    import pymatgen.io.vasp as vasp_io
+
+    monkeypatch.setattr(vasp_io, "Potcar", _FakePotcar)
+
+    deck = InputDeck(
+        code="vasp",
+        files={"POSCAR": "p", "INCAR": "i", "KPOINTS": "k"},
+        potcar_symbols=["Mg", "O"],
+        metadata={"potcar_functional": "PBE"},
+    )
+    stage(deck, tmp_path)
+
+    assert (tmp_path / "POTCAR").read_text() == "POTCAR-CONTENT"
+    assert captured == {"symbols": ["Mg", "O"], "functional": "PBE"}
 
 
 def _rocksalt_mgo():
