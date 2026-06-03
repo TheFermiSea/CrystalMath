@@ -129,6 +129,31 @@ def test_crystal_deck_generator_produces_valid_d12():
     assert space_group == 225  # not the old hardcoded P1
 
 
+def test_qe_deck_generator_produces_pw_in():
+    """QeDeckGenerator emits a pw.in carrying the QE namelists."""
+    from crystalmath.decks import get_deck_generator
+
+    deck = get_deck_generator("quantum_espresso").generate(_mgo(), "scf", {})
+
+    assert deck.code == "quantum_espresso"
+    pw = deck.files["pw.in"]
+    assert "calculation" in pw
+    assert "ecutwfc" in pw
+
+
+def test_yambo_deck_generator_maps_workflow_to_response():
+    """YAMBO post-processes a prior run, so it takes no structure; the workflow
+    type selects the nonlinear response (SHG/THG)."""
+    from crystalmath.decks import get_deck_generator
+
+    gen = get_deck_generator("yambo")
+    shg = gen.generate(None, "shg", {}).files["yambo_nl.in"]
+    thg = gen.generate(None, "thg", {}).files["yambo_nl.in"]
+
+    assert 'NL_Response = "SHG"' in shg
+    assert 'NL_Response = "THG"' in thg
+
+
 def test_registry_resolves_code_and_rejects_unknown():
     """The registry is the seam: callers ask for a deck generator by DFT code."""
     from crystalmath.decks import get_deck_generator
