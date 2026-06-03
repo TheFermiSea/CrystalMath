@@ -44,6 +44,7 @@ Example:
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -149,9 +150,16 @@ class NodeConfig:
         return code in self.available_codes
 
     def get_ssh_connection_string(self) -> str:
-        """Get SSH connection string for this node."""
+        """Build an SSH connection string for this node.
+
+        Prefers key-based authentication. When a password is configured (always
+        sourced from the environment, never hardcoded), uses ``sshpass -e`` so
+        the secret is read from the ``SSHPASS`` environment variable instead of
+        appearing on the command line / in the process table. Callers using the
+        password path must export ``SSHPASS`` (e.g. ``SSHPASS=$VASP_NODE_SSH_PASSWORD``).
+        """
         if self.ssh_password:
-            return f"sshpass -p '{self.ssh_password}' ssh {self.ssh_user}@{self.ip_address}"
+            return f"sshpass -e ssh {self.ssh_user}@{self.ip_address}"
         return f"ssh {self.ssh_user}@{self.ip_address}"
 
 
@@ -239,6 +247,14 @@ class CodeConfig:
 # Beefcake2 Node Definitions
 # =============================================================================
 
+# VASP node SSH credentials are sourced from the environment, never hardcoded.
+# Set VASP_NODE_SSH_USER / VASP_NODE_SSH_PASSWORD, or (preferred) configure
+# key-based auth and leave VASP_NODE_SSH_PASSWORD unset so password auth is
+# disabled entirely. When the password is set, also export SSHPASS to the same
+# value so ``sshpass -e`` can read it without exposing it in the process table.
+_VASP_SSH_USER = os.getenv("VASP_NODE_SSH_USER", "root")
+_VASP_SSH_PASSWORD = os.getenv("VASP_NODE_SSH_PASSWORD")  # None -> key-based auth
+
 # VASP nodes (10.0.0.20-22)
 BEEFCAKE2_NODES: Dict[str, NodeConfig] = {
     "vasp-01": NodeConfig(
@@ -254,8 +270,8 @@ BEEFCAKE2_NODES: Dict[str, NodeConfig] = {
         node_type=NodeType.VASP,
         available_codes=["vasp", "crystal23"],
         numa_nodes=4,
-        ssh_user="root",
-        ssh_password="adminadmin",
+        ssh_user=_VASP_SSH_USER,
+        ssh_password=_VASP_SSH_PASSWORD,
         work_directory="/home/calculations",
         scratch_directory="/scratch",
     ),
@@ -272,8 +288,8 @@ BEEFCAKE2_NODES: Dict[str, NodeConfig] = {
         node_type=NodeType.VASP,
         available_codes=["vasp", "crystal23"],
         numa_nodes=4,
-        ssh_user="root",
-        ssh_password="adminadmin",
+        ssh_user=_VASP_SSH_USER,
+        ssh_password=_VASP_SSH_PASSWORD,
         work_directory="/home/calculations",
         scratch_directory="/scratch",
     ),
@@ -290,8 +306,8 @@ BEEFCAKE2_NODES: Dict[str, NodeConfig] = {
         node_type=NodeType.VASP,
         available_codes=["vasp", "crystal23"],
         numa_nodes=4,
-        ssh_user="root",
-        ssh_password="adminadmin",
+        ssh_user=_VASP_SSH_USER,
+        ssh_password=_VASP_SSH_PASSWORD,
         work_directory="/home/calculations",
         scratch_directory="/scratch",
     ),

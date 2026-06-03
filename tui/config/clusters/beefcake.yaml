@@ -14,8 +14,9 @@ connection:
   username: root
   # SSH key authentication (recommended)
   key_file: ~/.ssh/id_ed25519
-  # Password fallback (not recommended for production)
-  # password: adminadmin
+  # Password fallback (not recommended for production). Never hardcode the
+  # secret here; export VASP_NODE_SSH_PASSWORD (and SSHPASS) in the environment.
+  # password: ${VASP_NODE_SSH_PASSWORD}
 
 # SLURM scheduler settings
 slurm:
