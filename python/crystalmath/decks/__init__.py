@@ -100,6 +100,10 @@ class CrystalDeckGenerator(CodeDeckGenerator):
         shrink_param = parameters.get("shrink", parameters.get("kpoints"))
         if shrink_param is None:
             shrink = (8, 8)
+        elif isinstance(shrink_param, bool):
+            # bool is an int subclass; coercing it to a 1x1x1 (Gamma-only) mesh
+            # would silently destroy k-point sampling. Reject it.
+            raise TypeError(f"shrink must be an int or (IS, ISP) pair, not bool: {shrink_param!r}")
         elif isinstance(shrink_param, (int, float)):
             shrink = (int(shrink_param), int(shrink_param))
         else:
@@ -115,7 +119,16 @@ class CrystalDeckGenerator(CodeDeckGenerator):
             toldee = 7
 
         tolinteg_param = parameters.get("tolinteg")
-        tolinteg = tuple(tolinteg_param) if tolinteg_param else (7, 7, 7, 7, 14)
+        if tolinteg_param:
+            tolinteg = tuple(tolinteg_param)
+            # CRYSTAL's TOLINTEG keyword takes EXACTLY 5 integers (ITOL1..ITOL5);
+            # a wrong-length tuple writes a deck CRYSTAL mis-parses. Fail fast.
+            if len(tolinteg) != 5:
+                raise ValueError(
+                    f"TOLINTEG requires exactly 5 integers, got {len(tolinteg)}: {tolinteg!r}"
+                )
+        else:
+            tolinteg = (7, 7, 7, 7, 14)
         basis_set = parameters.get("basis_set", "POB-TZVP-REV2")
 
         optimization = None
@@ -169,15 +182,19 @@ class QeDeckGenerator(CodeDeckGenerator):
         return InputDeck(code=self.code, files={"pw.in": str(pwinput)})
 
 
-class YamboDeckGenerator(CodeDeckGenerator):
-    """``CodeDeckGenerator`` for YAMBO nonlinear optics.
+class YamboNlDeckGenerator(CodeDeckGenerator):
+    """``CodeDeckGenerator`` for YAMBO nonlinear optics (``yambo_nl``).
 
     YAMBO post-processes a prior DFT run, so it takes no structure (the argument
     is accepted for interface uniformity and ignored); the workflow type selects
-    the nonlinear response.
+    the nonlinear response (SHG/THG/SHIFT).
+
+    The staged filename is ``yambo_nl.in`` to match the ``yambo_nl`` SLURM
+    command (``mpirun yambo_nl -F yambo_nl.in``).
     """
 
-    code = "yambo"
+    code = "yambo_nl"
+    input_filename = "yambo_nl.in"
 
     def generate(self, structure, workflow_type, parameters) -> InputDeck:
         wf = _workflow_value(workflow_type)
@@ -220,7 +237,31 @@ class YamboDeckGenerator(CodeDeckGenerator):
             f'NL_EnRange = "{energy_range[0]} {energy_range[1]} eV"',
             f"NL_EnSteps = {energy_steps}",
         ]
-        return InputDeck(code=self.code, files={"yambo_nl.in": "\n".join(input_lines)})
+        return InputDeck(code=self.code, files={self.input_filename: "\n".join(input_lines)})
+
+
+class YamboDeckGenerator(CodeDeckGenerator):
+    """``CodeDeckGenerator`` for standard (linear) YAMBO — GW/BSE.
+
+    The standard ``yambo`` SLURM command runs ``mpirun yambo -F yambo.in``, so a
+    standard job MUST stage ``yambo.in`` (not ``yambo_nl.in``). Generating correct
+    linear GW/BSE input content is not yet implemented here; rather than silently
+    stage a nonlinear deck under the wrong filename (which the executable would
+    mis-run), we fail fast so the gap is visible at submission time.
+
+    For nonlinear optics use the ``yambo_nl`` code (:class:`YamboNlDeckGenerator`).
+    """
+
+    code = "yambo"
+
+    def generate(self, structure, workflow_type, parameters) -> InputDeck:
+        raise NotImplementedError(
+            "Standard (linear) 'yambo' GW/BSE input generation is not implemented. "
+            "The 'yambo' SLURM script runs `yambo -F yambo.in`, which requires a "
+            "linear yambo input deck that this generator does not yet produce. "
+            "For nonlinear optics (SHG/THG/SHIFT) use code='yambo_nl', which stages "
+            "yambo_nl.in for `yambo_nl -F yambo_nl.in`."
+        )
 
 
 # DFT code -> deck generator. The seam: callers resolve a generator by code.
@@ -229,7 +270,7 @@ _REGISTRY: dict[str, type[CodeDeckGenerator]] = {
     "crystal23": CrystalDeckGenerator,
     "quantum_espresso": QeDeckGenerator,
     "yambo": YamboDeckGenerator,
-    "yambo_nl": YamboDeckGenerator,
+    "yambo_nl": YamboNlDeckGenerator,
 }
 
 

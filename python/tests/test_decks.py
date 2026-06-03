@@ -184,6 +184,30 @@ def test_crystal_deck_relax_enables_optgeom():
 
 
 @requires_pymatgen
+def test_crystal_deck_rejects_wrong_length_tolinteg():
+    """CRYSTAL's TOLINTEG keyword takes EXACTLY 5 integers. A wrong-length tuple
+    must fail fast — silently writing a 4- or 6-value TOLINTEG line produces a deck
+    CRYSTAL mis-parses (silent wrong science), so reject it at generation time."""
+    from crystalmath.decks import get_deck_generator
+
+    gen = get_deck_generator("crystal23")
+    for bad in [(6, 6, 6, 6), (7, 7, 7, 7, 14, 14)]:
+        with pytest.raises(ValueError, match="TOLINTEG"):
+            gen.generate(_rocksalt_mgo(), "scf", {"tolinteg": bad})
+
+
+@requires_pymatgen
+def test_crystal_deck_rejects_bool_shrink():
+    """A bool must not be silently coerced to a 1x1x1 (Gamma-only) k-mesh. ``True``
+    is not a valid SHRINK and would degrade sampling silently, so reject it."""
+    from crystalmath.decks import get_deck_generator
+
+    gen = get_deck_generator("crystal23")
+    with pytest.raises((TypeError, ValueError)):
+        gen.generate(_rocksalt_mgo(), "scf", {"shrink": True})
+
+
+@requires_pymatgen
 def test_qe_deck_generator_produces_pw_in():
     """QeDeckGenerator emits a pw.in carrying the QE namelists."""
     from crystalmath.decks import get_deck_generator
@@ -196,17 +220,42 @@ def test_qe_deck_generator_produces_pw_in():
     assert "ecutwfc" in pw
 
 
-def test_yambo_deck_generator_maps_workflow_to_response():
-    """YAMBO post-processes a prior run, so it takes no structure; the workflow
+def test_yambo_nl_deck_generator_maps_workflow_to_response():
+    """yambo_nl post-processes a prior run, so it takes no structure; the workflow
     type selects the nonlinear response (SHG/THG)."""
     from crystalmath.decks import get_deck_generator
 
-    gen = get_deck_generator("yambo")
+    gen = get_deck_generator("yambo_nl")
     shg = gen.generate(None, "shg", {}).files["yambo_nl.in"]
     thg = gen.generate(None, "thg", {}).files["yambo_nl.in"]
 
     assert 'NL_Response = "SHG"' in shg
     assert 'NL_Response = "THG"' in thg
+
+
+def test_yambo_nl_deck_stages_yambo_nl_in_and_is_tagged_yambo_nl():
+    """The nonlinear code stages ``yambo_nl.in`` (matches `yambo_nl -F yambo_nl.in`)
+    and tags the deck with code ``yambo_nl`` (not the old shared ``yambo``)."""
+    from crystalmath.decks import get_deck_generator
+
+    deck = get_deck_generator("yambo_nl").generate(None, "shg", {})
+
+    assert deck.code == "yambo_nl"
+    assert set(deck.files) == {"yambo_nl.in"}
+
+
+def test_standard_yambo_deck_filename_matches_slurm_command():
+    """Regression (Finding #3): a standard 'yambo' deck must NOT stage 'yambo_nl.in'.
+
+    The standard 'yambo' SLURM script runs `yambo -F yambo.in`. Generating linear
+    yambo content is not implemented, so the generator must fail fast rather than
+    silently stage a nonlinear deck under a filename the executable won't run.
+    """
+    from crystalmath.decks import get_deck_generator
+
+    gen = get_deck_generator("yambo")
+    with pytest.raises(NotImplementedError, match="yambo.in"):
+        gen.generate(None, "gw", {})
 
 
 @requires_pymatgen
