@@ -497,10 +497,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
                             handle_batch_submission_input(app, key);
                         }
                     } else {
-                        if app.current_tab == app::AppTab::Jobs && app.workflow_list.active {
-                            if handle_workflow_dashboard_input(app, key) {
-                                continue;
-                            }
+                        if app.current_tab == app::AppTab::Jobs
+                            && app.workflow_list.active
+                            && handle_workflow_dashboard_input(app, key)
+                        {
+                            continue;
                         }
                         // Global key handlers
                         match (key.code, key.modifiers) {
@@ -941,11 +942,9 @@ fn handle_workflow_dashboard_input(app: &mut App, key: event::KeyEvent) -> bool 
 fn handle_workflow_results_input(app: &mut App, key: event::KeyEvent) {
     match key.code {
         KeyCode::Esc => app.close_workflow_results(),
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.workflow_results.scroll > 0 {
-                app.workflow_results.scroll -= 1;
-                app.mark_dirty();
-            }
+        KeyCode::Up | KeyCode::Char('k') if app.workflow_results.scroll > 0 => {
+            app.workflow_results.scroll -= 1;
+            app.mark_dirty();
         }
         KeyCode::Down | KeyCode::Char('j') => {
             app.workflow_results.scroll = app.workflow_results.scroll.saturating_add(1);
@@ -984,10 +983,8 @@ fn handle_new_job_modal_input(app: &mut App, key: event::KeyEvent) {
         }
 
         // Submit job
-        KeyCode::Enter => {
-            if app.new_job.can_submit() {
-                app.submit_new_job();
-            }
+        KeyCode::Enter if app.new_job.can_submit() => {
+            app.submit_new_job();
         }
 
         // Navigate fields
@@ -1074,17 +1071,15 @@ fn handle_new_job_modal_input(app: &mut App, key: event::KeyEvent) {
 
         KeyCode::Char(c) => {
             match app.new_job.focused_field {
-                NewJobField::Name => {
+                NewJobField::Name
                     // Only allow valid characters
-                    if c.is_alphanumeric() || c == '-' || c == '_' {
+                    if (c.is_alphanumeric() || c == '-' || c == '_') => {
                         app.new_job.job_name.push(c);
                     }
-                }
-                NewJobField::MpiRanks => {
-                    if c.is_ascii_digit() {
+                NewJobField::MpiRanks
+                    if c.is_ascii_digit() => {
                         app.new_job.mpi_ranks.push(c);
                     }
-                }
                 NewJobField::Walltime => {
                     app.new_job.walltime.push(c);
                 }
@@ -1192,17 +1187,13 @@ fn handle_cluster_manager_modal_input(app: &mut App, key: event::KeyEvent) {
                     app.cluster_manager.start_add();
                     app.mark_dirty();
                 }
-                KeyCode::Char('e') => {
-                    if app.cluster_manager.selected_index.is_some() {
-                        app.cluster_manager.start_edit();
-                        app.mark_dirty();
-                    }
+                KeyCode::Char('e') if app.cluster_manager.selected_index.is_some() => {
+                    app.cluster_manager.start_edit();
+                    app.mark_dirty();
                 }
-                KeyCode::Char('d') => {
-                    if app.cluster_manager.selected_index.is_some() {
-                        app.cluster_manager.start_delete();
-                        app.mark_dirty();
-                    }
+                KeyCode::Char('d') if app.cluster_manager.selected_index.is_some() => {
+                    app.cluster_manager.start_delete();
+                    app.mark_dirty();
                 }
                 KeyCode::Char('t') => {
                     app.test_selected_cluster_connection();
@@ -1383,25 +1374,23 @@ fn handle_slurm_queue_modal_input(app: &mut App, key: event::KeyEvent) {
         }
 
         // Adopt selected job
-        KeyCode::Char('a') => {
+        KeyCode::Char('a')
             if app
                 .slurm_queue_state
                 .selected_entry(&app.slurm_queue)
-                .is_some()
-            {
-                app.adopt_selected_slurm_job();
-            }
+                .is_some() =>
+        {
+            app.adopt_selected_slurm_job();
         }
 
         // Cancel selected job
-        KeyCode::Char('c') => {
+        KeyCode::Char('c')
             if app
                 .slurm_queue_state
                 .selected_entry(&app.slurm_queue)
-                .is_some()
-            {
-                app.cancel_selected_slurm_job_from_modal();
-            }
+                .is_some() =>
+        {
+            app.cancel_selected_slurm_job_from_modal();
         }
 
         _ => {}
@@ -1716,85 +1705,53 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
             }
 
             match focused {
-                WorkflowConfigField::ConvergenceValues => {
-                    if allow_values(c) {
-                        app.workflow_config.convergence.values.push(c);
-                    }
+                WorkflowConfigField::ConvergenceValues if allow_values(c) => {
+                    app.workflow_config.convergence.values.push(c);
                 }
-                WorkflowConfigField::BandSourceJob => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.band_structure.source_job_pk.push(c);
-                    }
+                WorkflowConfigField::BandSourceJob if c.is_ascii_digit() => {
+                    app.workflow_config.band_structure.source_job_pk.push(c);
                 }
-                WorkflowConfigField::BandCustomPath => {
-                    if !c.is_control() {
-                        app.workflow_config.band_structure.custom_path.push(c);
-                    }
+                WorkflowConfigField::BandCustomPath if !c.is_control() => {
+                    app.workflow_config.band_structure.custom_path.push(c);
                 }
-                WorkflowConfigField::PhononSourceJob => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.phonon.source_job_pk.push(c);
-                    }
+                WorkflowConfigField::PhononSourceJob if c.is_ascii_digit() => {
+                    app.workflow_config.phonon.source_job_pk.push(c);
                 }
-                WorkflowConfigField::PhononSupercellA => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.phonon.supercell_a.push(c);
-                    }
+                WorkflowConfigField::PhononSupercellA if c.is_ascii_digit() => {
+                    app.workflow_config.phonon.supercell_a.push(c);
                 }
-                WorkflowConfigField::PhononSupercellB => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.phonon.supercell_b.push(c);
-                    }
+                WorkflowConfigField::PhononSupercellB if c.is_ascii_digit() => {
+                    app.workflow_config.phonon.supercell_b.push(c);
                 }
-                WorkflowConfigField::PhononSupercellC => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.phonon.supercell_c.push(c);
-                    }
+                WorkflowConfigField::PhononSupercellC if c.is_ascii_digit() => {
+                    app.workflow_config.phonon.supercell_c.push(c);
                 }
-                WorkflowConfigField::PhononDisplacement => {
-                    if allow_float(c) {
-                        app.workflow_config.phonon.displacement.push(c);
-                    }
+                WorkflowConfigField::PhononDisplacement if allow_float(c) => {
+                    app.workflow_config.phonon.displacement.push(c);
                 }
-                WorkflowConfigField::EosSourceJob => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.eos.source_job_pk.push(c);
-                    }
+                WorkflowConfigField::EosSourceJob if c.is_ascii_digit() => {
+                    app.workflow_config.eos.source_job_pk.push(c);
                 }
-                WorkflowConfigField::EosStrainMin => {
-                    if allow_float(c) {
-                        app.workflow_config.eos.strain_min.push(c);
-                    }
+                WorkflowConfigField::EosStrainMin if allow_float(c) => {
+                    app.workflow_config.eos.strain_min.push(c);
                 }
-                WorkflowConfigField::EosStrainMax => {
-                    if allow_float(c) {
-                        app.workflow_config.eos.strain_max.push(c);
-                    }
+                WorkflowConfigField::EosStrainMax if allow_float(c) => {
+                    app.workflow_config.eos.strain_max.push(c);
                 }
-                WorkflowConfigField::EosStrainSteps => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.eos.strain_steps.push(c);
-                    }
+                WorkflowConfigField::EosStrainSteps if c.is_ascii_digit() => {
+                    app.workflow_config.eos.strain_steps.push(c);
                 }
-                WorkflowConfigField::GeomStructurePk => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.geometry_opt.structure_pk.push(c);
-                    }
+                WorkflowConfigField::GeomStructurePk if c.is_ascii_digit() => {
+                    app.workflow_config.geometry_opt.structure_pk.push(c);
                 }
-                WorkflowConfigField::GeomCodeLabel => {
-                    if !c.is_control() {
-                        app.workflow_config.geometry_opt.code_label.push(c);
-                    }
+                WorkflowConfigField::GeomCodeLabel if !c.is_control() => {
+                    app.workflow_config.geometry_opt.code_label.push(c);
                 }
-                WorkflowConfigField::GeomFmax => {
-                    if allow_float(c) {
-                        app.workflow_config.geometry_opt.fmax.push(c);
-                    }
+                WorkflowConfigField::GeomFmax if allow_float(c) => {
+                    app.workflow_config.geometry_opt.fmax.push(c);
                 }
-                WorkflowConfigField::GeomMaxSteps => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.geometry_opt.max_steps.push(c);
-                    }
+                WorkflowConfigField::GeomMaxSteps if c.is_ascii_digit() => {
+                    app.workflow_config.geometry_opt.max_steps.push(c);
                 }
                 _ => {}
             }
@@ -1803,10 +1760,10 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
             app.mark_dirty();
         }
         _ => {
-            if focused == WorkflowConfigField::ConvergenceBaseInput {
-                if app.workflow_config.convergence.base_input.input(key) {
-                    app.mark_dirty();
-                }
+            if focused == WorkflowConfigField::ConvergenceBaseInput
+                && app.workflow_config.convergence.base_input.input(key)
+            {
+                app.mark_dirty();
             }
         }
     }

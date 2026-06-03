@@ -349,7 +349,7 @@ fn highlight_line(line: &str, file_type: OutputFileType) -> Vec<Span<'static>> {
 
     // Check for any keyword match
     for keyword in keywords {
-        if line_upper.contains(&(*keyword).to_uppercase().as_str()) {
+        if line_upper.contains((*keyword).to_uppercase().as_str()) {
             return vec![Span::styled(
                 line.to_string(),
                 Style::default().fg(Color::Cyan),
@@ -370,11 +370,7 @@ fn render_scroll_indicator(
     visible_height: usize,
 ) {
     let max_scroll = total_lines.saturating_sub(visible_height);
-    let scroll_pct = if max_scroll > 0 {
-        (scroll_offset * 100) / max_scroll
-    } else {
-        100
-    };
+    let scroll_pct = (scroll_offset * 100).checked_div(max_scroll).unwrap_or(100);
 
     // Calculate scrollbar position
     let scrollbar_height = area.height.saturating_sub(2) as usize;
@@ -419,11 +415,7 @@ fn render_status_bar(frame: &mut Frame, state: &OutputViewerState, area: Rect) {
     // Scroll percentage
     let scroll_pct = if total_lines > visible_height {
         let max_scroll = total_lines.saturating_sub(visible_height);
-        if max_scroll > 0 {
-            (state.scroll * 100) / max_scroll
-        } else {
-            100
-        }
+        (state.scroll * 100).checked_div(max_scroll).unwrap_or(100)
     } else {
         100
     };
@@ -431,7 +423,7 @@ fn render_status_bar(frame: &mut Frame, state: &OutputViewerState, area: Rect) {
     let pct_str = format!(" {}% ", scroll_pct.min(100));
 
     // Keybindings
-    let hints = vec![
+    let hints = [
         ("j/k", "scroll"),
         ("PgUp/PgDn", "page"),
         ("g/G", "top/bottom"),

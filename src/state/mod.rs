@@ -71,6 +71,7 @@ impl OutputFileType {
 }
 
 /// State for the output file viewer modal.
+#[derive(Default)]
 pub struct OutputViewerState {
     /// Whether the modal is active.
     pub active: bool,
@@ -94,24 +95,6 @@ pub struct OutputViewerState {
     pub job_pk: Option<i32>,
     /// Job name being viewed (for title display).
     pub job_name: Option<String>,
-}
-
-impl Default for OutputViewerState {
-    fn default() -> Self {
-        Self {
-            active: false,
-            file_type: OutputFileType::default(),
-            content: Vec::new(),
-            scroll: 0,
-            error: None,
-            loading: false,
-            request_id: 0,
-            effect: None,
-            closing: false,
-            job_pk: None,
-            job_name: None,
-        }
-    }
 }
 
 impl std::fmt::Debug for OutputViewerState {
@@ -940,6 +923,7 @@ impl NewJobState {
 // =============================================================================
 
 /// State for the calculation template browser modal.
+#[derive(Default)]
 pub struct TemplateBrowserState {
     /// Whether the modal is currently active/visible.
     pub active: bool,
@@ -964,21 +948,6 @@ pub struct TemplateBrowserState {
 
     /// Whether the modal is closing.
     pub closing: bool,
-}
-
-impl Default for TemplateBrowserState {
-    fn default() -> Self {
-        Self {
-            active: false,
-            templates: Vec::new(),
-            selected_index: None,
-            loading: false,
-            error: None,
-            request_id: 0,
-            effect: None,
-            closing: false,
-        }
-    }
 }
 
 impl std::fmt::Debug for TemplateBrowserState {
@@ -1128,8 +1097,9 @@ impl ConvergenceParameter {
 }
 
 /// Band structure k-path presets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BandPathPreset {
+    #[default]
     Auto,
     Cubic,
     Fcc,
@@ -1177,12 +1147,6 @@ impl BandPathPreset {
             Self::Tetragonal => Self::Hexagonal,
             Self::Custom => Self::Tetragonal,
         }
-    }
-}
-
-impl Default for BandPathPreset {
-    fn default() -> Self {
-        Self::Auto
     }
 }
 

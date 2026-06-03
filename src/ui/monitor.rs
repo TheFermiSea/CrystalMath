@@ -247,7 +247,7 @@ fn render_node_health(frame: &mut Frame, app: &App, area: Rect) {
     let node_count = app.monitor.node_metrics.len();
 
     // 2x2 grid (or fewer if less than 4 nodes)
-    let rows_n = ((node_count + 1) / 2).max(1);
+    let rows_n = node_count.div_ceil(2).max(1);
     let row_constraints: Vec<Constraint> = (0..rows_n).map(|_| Constraint::Min(7)).collect();
     let row_areas = Layout::default()
         .direction(Direction::Vertical)

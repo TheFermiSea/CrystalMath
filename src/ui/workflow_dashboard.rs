@@ -130,7 +130,7 @@ fn render_workflow_jobs(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .map(|job| {
             let status_style = Style::default().fg(job.state.color());
-            let status_text = format!("{}", job.state.as_str());
+            let status_text = job.state.as_str().to_string();
             let status_cell = Cell::from(status_text).style(status_style);
 
             let info_text = if job.state == JobState::Running {
