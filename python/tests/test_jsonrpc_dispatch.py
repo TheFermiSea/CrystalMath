@@ -16,12 +16,14 @@ class TestJsonRpcDispatch:
 
     def test_dispatch_fetch_jobs(self, controller):
         """Test dispatch routes fetch_jobs correctly."""
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "fetch_jobs",
-            "params": {"limit": 10},
-            "id": 1,
-        })
+        request = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "fetch_jobs",
+                "params": {"limit": 10},
+                "id": 1,
+            }
+        )
 
         response_str = controller.dispatch(request)
         response = json.loads(response_str)
@@ -35,12 +37,14 @@ class TestJsonRpcDispatch:
 
     def test_dispatch_method_not_found(self, controller):
         """Test dispatch returns error for unknown method."""
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "unknown_method",
-            "params": {},
-            "id": 2,
-        })
+        request = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "unknown_method",
+                "params": {},
+                "id": 2,
+            }
+        )
 
         response_str = controller.dispatch(request)
         response = json.loads(response_str)
@@ -62,11 +66,13 @@ class TestJsonRpcDispatch:
 
     def test_dispatch_missing_jsonrpc_version(self, controller):
         """Test dispatch validates jsonrpc version field."""
-        request = json.dumps({
-            "method": "fetch_jobs",
-            "params": {},
-            "id": 3,
-        })
+        request = json.dumps(
+            {
+                "method": "fetch_jobs",
+                "params": {},
+                "id": 3,
+            }
+        )
 
         response_str = controller.dispatch(request)
         response = json.loads(response_str)
@@ -76,12 +82,14 @@ class TestJsonRpcDispatch:
 
     def test_dispatch_with_positional_params(self, controller):
         """Test dispatch handles positional parameters."""
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "fetch_jobs",
-            "params": [5],  # limit=5 as positional
-            "id": 4,
-        })
+        request = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "fetch_jobs",
+                "params": [5],  # limit=5 as positional
+                "id": 4,
+            }
+        )
 
         response_str = controller.dispatch(request)
         response = json.loads(response_str)
@@ -92,12 +100,14 @@ class TestJsonRpcDispatch:
 
     def test_dispatch_check_workflows_available(self, controller):
         """Test dispatch routes check_workflows_available."""
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "check_workflows_available",
-            "params": {},
-            "id": 5,
-        })
+        request = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "check_workflows_available",
+                "params": {},
+                "id": 5,
+            }
+        )
 
         response_str = controller.dispatch(request)
         response = json.loads(response_str)
@@ -111,12 +121,14 @@ class TestJsonRpcDispatch:
 
     def test_dispatch_list_templates(self, controller):
         """Test dispatch routes list_templates."""
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "list_templates",
-            "params": {},
-            "id": 6,
-        })
+        request = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "list_templates",
+                "params": {},
+                "id": 6,
+            }
+        )
 
         response_str = controller.dispatch(request)
         response = json.loads(response_str)
@@ -128,12 +140,14 @@ class TestJsonRpcDispatch:
     def test_registry_security(self, controller):
         """Test that only registered methods can be called."""
         # Private method should not be callable
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "_init_aiida",  # Private method
-            "params": {"profile_name": "test"},
-            "id": 7,
-        })
+        request = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "_init_aiida",  # Private method
+                "params": {"profile_name": "test"},
+                "id": 7,
+            }
+        )
 
         response_str = controller.dispatch(request)
         response = json.loads(response_str)
@@ -143,12 +157,14 @@ class TestJsonRpcDispatch:
 
     def test_dispatch_null_id_notification(self, controller):
         """Test dispatch handles null id (notification style)."""
-        request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "fetch_jobs",
-            "params": {},
-            "id": None,
-        })
+        request = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "fetch_jobs",
+                "params": {},
+                "id": None,
+            }
+        )
 
         response_str = controller.dispatch(request)
         response = json.loads(response_str)

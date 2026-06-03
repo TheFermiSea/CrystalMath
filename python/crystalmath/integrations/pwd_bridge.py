@@ -518,9 +518,7 @@ class PWDConverter:
                 dependency_map[target_id] = []
 
             # Get source node name
-            source_func_node = next(
-                (n for n in function_nodes if n.id == source_id), None
-            )
+            source_func_node = next((n for n in function_nodes if n.id == source_id), None)
             if source_func_node:
                 dep_name = source_func_node.name or self._extract_name_from_value(
                     source_func_node.value
@@ -755,9 +753,7 @@ class PWDConverter:
                         step.resources = ResourceRequirements(
                             num_nodes=ext.resources.get("num_nodes", 1),
                             num_mpi_ranks=ext.resources.get("num_mpi_ranks", 1),
-                            num_threads_per_rank=ext.resources.get(
-                                "num_threads_per_rank", 1
-                            ),
+                            num_threads_per_rank=ext.resources.get("num_threads_per_rank", 1),
                             memory_gb=ext.resources.get("memory_gb", 4.0),
                             walltime_hours=ext.resources.get("walltime_hours", 24.0),
                             gpus=ext.resources.get("gpus", 0),
@@ -788,9 +784,7 @@ class PWDConverter:
         )
         return f"{self._function_prefix}.{workflow_type}"
 
-    def _find_leaf_steps(
-        self, steps: Sequence["WorkflowStep"]
-    ) -> List["WorkflowStep"]:
+    def _find_leaf_steps(self, steps: Sequence["WorkflowStep"]) -> List["WorkflowStep"]:
         """Find steps that have no dependents (leaf nodes)."""
         all_names = {step.name for step in steps}
         depended_on: set[str] = set()
@@ -818,9 +812,7 @@ class PWDConverter:
             if "type" not in node:
                 raise PWDValidationError(f"Node {node.get('id')} missing 'type' field")
             if node["type"] not in ("input", "function", "output"):
-                raise PWDValidationError(
-                    f"Node {node['id']} has invalid type: {node['type']}"
-                )
+                raise PWDValidationError(f"Node {node['id']} has invalid type: {node['type']}")
 
         for edge in pwd_json["edges"]:
             if "source" not in edge:
@@ -836,9 +828,7 @@ class PWDConverter:
         parts = value.split(".")
         return parts[-1] if parts else "unknown"
 
-    def _parse_function_path(
-        self, value: Optional[str]
-    ) -> Tuple["WorkflowType", "DFTCode"]:
+    def _parse_function_path(self, value: Optional[str]) -> Tuple["WorkflowType", "DFTCode"]:
         """Parse workflow type and code from function path."""
         from crystalmath.protocols import WorkflowType
 

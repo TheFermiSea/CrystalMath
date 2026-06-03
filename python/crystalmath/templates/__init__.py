@@ -103,10 +103,11 @@ def list_templates(
     templates_dir = get_template_dir()
 
     # Categories to search
-    categories = [category] if category else [
-        d.name for d in templates_dir.iterdir()
-        if d.is_dir() and not d.name.startswith("_")
-    ]
+    categories = (
+        [category]
+        if category
+        else [d.name for d in templates_dir.iterdir() if d.is_dir() and not d.name.startswith("_")]
+    )
 
     # Map category names to default DFT codes
     category_code_map = {"vasp": "vasp", "qe": "qe"}

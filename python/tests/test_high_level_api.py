@@ -286,9 +286,7 @@ class TestValidateProperties:
 class TestHighThroughputEntryPoints:
     """Tests for HighThroughput entry point methods."""
 
-    def test_run_standard_analysis_returns_results(
-        self, mock_structure: Mock
-    ) -> None:
+    def test_run_standard_analysis_returns_results(self, mock_structure: Mock) -> None:
         """Test that run_standard_analysis returns AnalysisResults."""
         from crystalmath.high_level.api import HighThroughput
         from crystalmath.high_level.results import AnalysisResults

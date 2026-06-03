@@ -393,15 +393,9 @@ class FlowMakerRegistry:
                 maker_class=None,
                 default_kwargs={"supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]]},
                 protocol_mapping={
-                    ProtocolLevel.FAST: {
-                        "supercell_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-                    },
-                    ProtocolLevel.MODERATE: {
-                        "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]]
-                    },
-                    ProtocolLevel.PRECISE: {
-                        "supercell_matrix": [[3, 0, 0], [0, 3, 0], [0, 0, 3]]
-                    },
+                    ProtocolLevel.FAST: {"supercell_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+                    ProtocolLevel.MODERATE: {"supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]]},
+                    ProtocolLevel.PRECISE: {"supercell_matrix": [[3, 0, 0], [0, 3, 0], [0, 0, 3]]},
                 },
                 requires_gpu=True,
                 supported_codes=["vasp"],
@@ -433,9 +427,7 @@ class FlowMakerRegistry:
             ... )
         """
         type_key = (
-            workflow_type.value
-            if hasattr(workflow_type, "value")
-            else str(workflow_type)
+            workflow_type.value if hasattr(workflow_type, "value") else str(workflow_type)
         ).lower()
 
         if type_key not in self._registry:
@@ -471,9 +463,7 @@ class FlowMakerRegistry:
             >>> flow = maker.make(structure)
         """
         type_key = (
-            workflow_type.value
-            if hasattr(workflow_type, "value")
-            else str(workflow_type)
+            workflow_type.value if hasattr(workflow_type, "value") else str(workflow_type)
         ).lower()
         code_key = code.lower()
 
@@ -541,9 +531,7 @@ class FlowMakerRegistry:
 
         key = (workflow_type, code)
         if key not in import_map:
-            raise MakerNotFoundError(
-                f"No import path defined for {workflow_type}/{code}"
-            )
+            raise MakerNotFoundError(f"No import path defined for {workflow_type}/{code}")
 
         module_path, class_name = import_map[key]
 
@@ -565,9 +553,7 @@ class FlowMakerRegistry:
         Returns:
             Dict mapping workflow types to available codes
         """
-        return {
-            wf_type: list(codes.keys()) for wf_type, codes in self._registry.items()
-        }
+        return {wf_type: list(codes.keys()) for wf_type, codes in self._registry.items()}
 
 
 # =============================================================================
@@ -902,9 +888,7 @@ class Atomate2Bridge:
             workflow_id = str(uuid.uuid4())
 
             wf_type_str = (
-                workflow_type.value
-                if hasattr(workflow_type, "value")
-                else str(workflow_type)
+                workflow_type.value if hasattr(workflow_type, "value") else str(workflow_type)
             )
 
             self._active_flows[workflow_id] = {
@@ -1207,12 +1191,8 @@ class MultiCodeFlowBuilder:
             self for method chaining
         """
         # Find source and target codes
-        source_code = next(
-            (s["code"] for s in self._steps if s["name"] == source_step), "unknown"
-        )
-        target_code = next(
-            (s["code"] for s in self._steps if s["name"] == target_step), "unknown"
-        )
+        source_code = next((s["code"] for s in self._steps if s["name"] == source_step), "unknown")
+        target_code = next((s["code"] for s in self._steps if s["name"] == target_step), "unknown")
 
         self._handoffs.append(
             CodeHandoff(
@@ -1263,9 +1243,7 @@ class MultiCodeFlowBuilder:
         for step in self._steps:
             for dep in step["depends_on"]:
                 if dep not in step_names:
-                    issues.append(
-                        f"Step '{step['name']}' depends on unknown step '{dep}'"
-                    )
+                    issues.append(f"Step '{step['name']}' depends on unknown step '{dep}'")
 
         # Check for circular dependencies (simple check)
         # Full implementation would do topological sort

@@ -44,24 +44,18 @@ class PropertyCalculator:
         "relax": ["vasp", "crystal23", "quantum_espresso"],
         "bands": ["vasp", "crystal23", "quantum_espresso"],
         "dos": ["vasp", "crystal23", "quantum_espresso"],
-
         # Mechanical properties
         "elastic": ["vasp"],
         "phonon": ["vasp", "crystal23", "quantum_espresso"],
-
         # Electronic response
         "dielectric": ["vasp", "crystal23"],
-
         # Many-body perturbation theory
         "gw": ["yambo", "berkeleygw"],
         "bse": ["yambo", "berkeleygw"],
-
         # Transport
         "transport": ["vasp"],  # with boltztrap2 post-processing
-
         # Transition states
         "neb": ["vasp"],
-
         # Convergence and EOS
         "convergence": ["vasp", "crystal23", "quantum_espresso"],
         "eos": ["vasp", "crystal23", "quantum_espresso"],
@@ -76,7 +70,6 @@ class PropertyCalculator:
         ("crystal23", "yambo"): True,  # Via p2y converter
         ("vasp", "berkeleygw"): True,
         ("quantum_espresso", "berkeleygw"): True,
-
         # Same code (always compatible)
         ("vasp", "vasp"): True,
         ("crystal23", "crystal23"): True,
@@ -155,8 +148,7 @@ class PropertyCalculator:
         # Check compatibility with previous code
         if previous_code and defaults:
             compatible = [
-                c for c in defaults
-                if cls.CODE_COMPATIBILITY.get((previous_code, c), False)
+                c for c in defaults if cls.CODE_COMPATIBILITY.get((previous_code, c), False)
             ]
             if compatible:
                 defaults = compatible

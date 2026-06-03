@@ -430,10 +430,7 @@ class AnalysisResults:
         import matplotlib.pyplot as plt
 
         fig, (ax1, ax2) = plt.subplots(
-            1, 2,
-            figsize=figsize,
-            sharey=True,
-            gridspec_kw={"width_ratios": [3, 1]}
+            1, 2, figsize=figsize, sharey=True, gridspec_kw={"width_ratios": [3, 1]}
         )
 
         # Band structure
@@ -616,17 +613,27 @@ class AnalysisResults:
         # Add properties
         prop_lines = []
         if self.band_gap_ev is not None:
-            prop_lines.append(rf"Band gap (DFT) & \SI{{{self.band_gap_ev:.3f}}}{{\electronvolt}} \\")
+            prop_lines.append(
+                rf"Band gap (DFT) & \SI{{{self.band_gap_ev:.3f}}}{{\electronvolt}} \\"
+            )
         if self.gw_gap_ev is not None:
             prop_lines.append(rf"Band gap (GW) & \SI{{{self.gw_gap_ev:.3f}}}{{\electronvolt}} \\")
         if self.optical_gap_ev is not None:
-            prop_lines.append(rf"Optical gap (BSE) & \SI{{{self.optical_gap_ev:.3f}}}{{\electronvolt}} \\")
+            prop_lines.append(
+                rf"Optical gap (BSE) & \SI{{{self.optical_gap_ev:.3f}}}{{\electronvolt}} \\"
+            )
         if self.exciton_binding_ev is not None:
-            prop_lines.append(rf"Exciton binding & \SI{{{self.exciton_binding_ev:.3f}}}{{\electronvolt}} \\")
+            prop_lines.append(
+                rf"Exciton binding & \SI{{{self.exciton_binding_ev:.3f}}}{{\electronvolt}} \\"
+            )
         if self.bulk_modulus_gpa is not None:
-            prop_lines.append(rf"Bulk modulus & \SI{{{self.bulk_modulus_gpa:.1f}}}{{\giga\pascal}} \\")
+            prop_lines.append(
+                rf"Bulk modulus & \SI{{{self.bulk_modulus_gpa:.1f}}}{{\giga\pascal}} \\"
+            )
         if self.shear_modulus_gpa is not None:
-            prop_lines.append(rf"Shear modulus & \SI{{{self.shear_modulus_gpa:.1f}}}{{\giga\pascal}} \\")
+            prop_lines.append(
+                rf"Shear modulus & \SI{{{self.shear_modulus_gpa:.1f}}}{{\giga\pascal}} \\"
+            )
         if self.static_dielectric is not None:
             prop_lines.append(rf"Static dielectric & {self.static_dielectric:.2f} \\")
 

@@ -15,10 +15,10 @@ import uuid
 class JobState(str, Enum):
     """Job execution states."""
 
-    PENDING = "pending"      # Submitted, waiting to run
-    RUNNING = "running"      # Currently executing
+    PENDING = "pending"  # Submitted, waiting to run
+    RUNNING = "running"  # Currently executing
     COMPLETED = "completed"  # Finished successfully
-    FAILED = "failed"        # Finished with error
+    FAILED = "failed"  # Finished with error
     CANCELLED = "cancelled"  # User cancelled
 
     def is_terminal(self) -> bool:
@@ -164,14 +164,15 @@ def get_runner(engine: str) -> JobRunner:
 
     if engine_lower == "parsl":
         from crystalmath.quacc.parsl_runner import ParslRunner
+
         return ParslRunner()
     elif engine_lower == "covalent":
         from crystalmath.quacc.covalent_runner import CovalentRunner
+
         return CovalentRunner()
     else:
         raise ValueError(
-            f"Unsupported workflow engine: {engine}. "
-            "Supported engines: parsl, covalent"
+            f"Unsupported workflow engine: {engine}. Supported engines: parsl, covalent"
         )
 
 

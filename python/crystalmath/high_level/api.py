@@ -326,9 +326,7 @@ class HighThroughput:
         """
         structure = cls._load_structure_from_mp(material_id)
         if structure is None:
-            logger.warning(
-                f"Could not load structure for {material_id}, proceeding with None"
-            )
+            logger.warning(f"Could not load structure for {material_id}, proceeding with None")
         return cls.run_standard_analysis(
             structure=structure,
             properties=properties,
@@ -361,9 +359,7 @@ class HighThroughput:
             )
         """
         # Stub implementation
-        raise NotImplementedError(
-            "HighThroughput.from_poscar() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("HighThroughput.from_poscar() will be implemented in Phase 3.")
 
     @classmethod
     def from_structure(
@@ -398,9 +394,7 @@ class HighThroughput:
             )
         """
         # Stub implementation
-        raise NotImplementedError(
-            "HighThroughput.from_structure() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("HighThroughput.from_structure() will be implemented in Phase 3.")
 
     @classmethod
     def from_aiida(
@@ -433,9 +427,7 @@ class HighThroughput:
             )
         """
         # Stub implementation
-        raise NotImplementedError(
-            "HighThroughput.from_aiida() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("HighThroughput.from_aiida() will be implemented in Phase 3.")
 
     # =========================================================================
     # Internal Methods (for Phase 3 implementation)
@@ -654,8 +646,9 @@ class HighThroughput:
             KeyError: If property not found
         """
         if property_name not in PROPERTY_DEFINITIONS:
-            raise KeyError(f"Unknown property: {property_name}. "
-                          f"Supported: {cls.get_supported_properties()}")
+            raise KeyError(
+                f"Unknown property: {property_name}. Supported: {cls.get_supported_properties()}"
+            )
 
         wf_type, default_code, deps = PROPERTY_DEFINITIONS[property_name]
         return {

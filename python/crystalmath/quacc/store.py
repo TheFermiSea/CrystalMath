@@ -43,9 +43,7 @@ class JobMetadata(BaseModel):
     updated_at: datetime = Field(..., description="Last update timestamp")
     cluster: str | None = Field(default=None, description="Cluster name if remote")
     work_dir: Path | None = Field(default=None, description="Job working directory")
-    error_message: str | None = Field(
-        default=None, description="Error message if failed"
-    )
+    error_message: str | None = Field(default=None, description="Error message if failed")
     results_summary: dict[str, Any] | None = Field(
         default=None, description="Summary of job results"
     )
@@ -107,9 +105,7 @@ class JobStore:
             logger.error(f"Failed to write job store: {e}")
             raise
 
-    def list_jobs(
-        self, status: JobStatus | None = None, limit: int = 100
-    ) -> list[JobMetadata]:
+    def list_jobs(self, status: JobStatus | None = None, limit: int = 100) -> list[JobMetadata]:
         """
         List jobs, optionally filtered by status.
 

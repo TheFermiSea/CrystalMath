@@ -172,9 +172,7 @@ class JupyterProgressCallback(ProgressCallback):
             display(self._widget)
             self._initialized = True
         except ImportError:
-            logger.warning(
-                "ipywidgets not available, falling back to console progress"
-            )
+            logger.warning("ipywidgets not available, falling back to console progress")
 
     def on_started(self, workflow_id: str, workflow_type: WorkflowType) -> None:
         """Called when workflow starts."""
@@ -269,10 +267,7 @@ class LoggingProgressCallback(ProgressCallback):
 
     def on_started(self, workflow_id: str, workflow_type: WorkflowType) -> None:
         """Called when workflow starts."""
-        self._logger.log(
-            self._level,
-            f"Workflow started: {workflow_type.value} [{workflow_id}]"
-        )
+        self._logger.log(self._level, f"Workflow started: {workflow_type.value} [{workflow_id}]")
 
     def on_progress(
         self,

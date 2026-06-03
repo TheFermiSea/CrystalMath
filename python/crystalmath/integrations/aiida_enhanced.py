@@ -358,8 +358,7 @@ class AiiDAProfileManager:
         if not cls.profile_exists(profile_name):
             available = cls.list_profiles()
             raise ValueError(
-                f"Profile '{profile_name}' does not exist. "
-                f"Available profiles: {available}"
+                f"Profile '{profile_name}' does not exist. Available profiles: {available}"
             )
 
         try:
@@ -825,9 +824,7 @@ def aiida_to_atomate2_job(node: "ProcessNode") -> Dict[str, Any]:
     from aiida.orm import CalcJobNode, WorkChainNode
 
     if not isinstance(node, (CalcJobNode, WorkChainNode)):
-        raise TypeError(
-            f"Expected CalcJobNode or WorkChainNode, got {type(node).__name__}"
-        )
+        raise TypeError(f"Expected CalcJobNode or WorkChainNode, got {type(node).__name__}")
 
     # Map AiiDA process state to jobflow-style state
     state_map = {
@@ -957,9 +954,9 @@ def atomate2_to_aiida_inputs(job_dict: Dict[str, Any]) -> Dict[str, Any]:
         if "num_nodes" in resources:
             aiida_resources["num_machines"] = resources["num_nodes"]
         if "num_mpi_ranks" in resources:
-            aiida_resources["num_mpiprocs_per_machine"] = (
-                resources["num_mpi_ranks"] // resources.get("num_nodes", 1)
-            )
+            aiida_resources["num_mpiprocs_per_machine"] = resources[
+                "num_mpi_ranks"
+            ] // resources.get("num_nodes", 1)
         if "walltime_hours" in resources:
             aiida_inputs["metadata"]["options"]["max_wallclock_seconds"] = int(
                 resources["walltime_hours"] * 3600

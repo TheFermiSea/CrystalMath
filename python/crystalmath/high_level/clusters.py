@@ -368,10 +368,16 @@ _UCX_SETTINGS = {
 
 # Common OpenMPI settings
 _OPENMPI_ARGS = [
-    "--mca", "btl", "^openib",
-    "--mca", "pml", "ucx",
-    "-x", "UCX_TLS",
-    "-x", "UCX_NET_DEVICES",
+    "--mca",
+    "btl",
+    "^openib",
+    "--mca",
+    "pml",
+    "ucx",
+    "-x",
+    "UCX_TLS",
+    "-x",
+    "UCX_NET_DEVICES",
 ]
 
 # VASP prepend text (module loads and environment)
@@ -869,8 +875,7 @@ def get_cluster_profile(name: str) -> ClusterProfile:
     """
     if name not in CLUSTER_PROFILES:
         raise KeyError(
-            f"Unknown cluster profile: '{name}'. "
-            f"Available: {list(CLUSTER_PROFILES.keys())}"
+            f"Unknown cluster profile: '{name}'. Available: {list(CLUSTER_PROFILES.keys())}"
         )
     return CLUSTER_PROFILES[name]
 
@@ -929,8 +934,7 @@ def get_node_config(node_name: str) -> NodeConfig:
     """
     if node_name not in BEEFCAKE2_NODES:
         raise KeyError(
-            f"Unknown node: '{node_name}'. "
-            f"Available nodes: {list(BEEFCAKE2_NODES.keys())}"
+            f"Unknown node: '{node_name}'. Available nodes: {list(BEEFCAKE2_NODES.keys())}"
         )
     return BEEFCAKE2_NODES[node_name]
 
@@ -954,8 +958,7 @@ def get_code_config(code_key: str) -> CodeConfig:
     """
     if code_key not in BEEFCAKE2_CODES:
         raise KeyError(
-            f"Unknown code: '{code_key}'. "
-            f"Available codes: {list(BEEFCAKE2_CODES.keys())}"
+            f"Unknown code: '{code_key}'. Available codes: {list(BEEFCAKE2_CODES.keys())}"
         )
     return BEEFCAKE2_CODES[code_key]
 
@@ -1277,7 +1280,7 @@ def estimate_job_time(
     code_mult = code_multipliers.get(code, 1.0)
 
     # K-point scaling (sublinear for parallel execution)
-    kpoint_factor = num_kpoints ** 0.7
+    kpoint_factor = num_kpoints**0.7
 
     # Calculate estimate with safety margin (1.5x)
     estimate = system_size * base_time * code_mult * kpoint_factor * 1.5
@@ -1686,8 +1689,7 @@ def validate_cluster_config() -> Tuple[bool, List[str]]:
         memory_per_node = preset.memory_gb / preset.num_nodes
         if memory_per_node > max_memory:
             issues.append(
-                f"Preset {preset_name}: exceeds {max_memory}GB/node "
-                f"({memory_per_node:.0f}GB)"
+                f"Preset {preset_name}: exceeds {max_memory}GB/node ({memory_per_node:.0f}GB)"
             )
 
     return len(issues) == 0, issues

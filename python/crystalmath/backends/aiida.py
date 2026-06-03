@@ -145,9 +145,7 @@ class AiiDABackend(Backend):
             stdout_lines: List[str] = []
             if "retrieved" in node.outputs:
                 try:
-                    stdout = node.outputs.retrieved.get_object_content(
-                        "_scheduler-stdout.txt"
-                    )
+                    stdout = node.outputs.retrieved.get_object_content("_scheduler-stdout.txt")
                     stdout_lines = stdout.splitlines()[-50:]
                 except Exception:
                     pass
@@ -188,8 +186,7 @@ class AiiDABackend(Backend):
                 code = orm.load_code("crystal@localhost")
             except Exception:
                 raise RuntimeError(
-                    "CRYSTAL code not configured in AiiDA. "
-                    "Run 'verdi code setup' first."
+                    "CRYSTAL code not configured in AiiDA. Run 'verdi code setup' first."
                 )
 
             # Create a builder
@@ -238,16 +235,12 @@ class AiiDABackend(Backend):
 
             if "retrieved" in node.outputs:
                 try:
-                    stdout = node.outputs.retrieved.get_object_content(
-                        "_scheduler-stdout.txt"
-                    )
+                    stdout = node.outputs.retrieved.get_object_content("_scheduler-stdout.txt")
                     stdout_lines = stdout.splitlines()[-tail_lines:]
                 except Exception:
                     pass
                 try:
-                    stderr = node.outputs.retrieved.get_object_content(
-                        "_scheduler-stderr.txt"
-                    )
+                    stderr = node.outputs.retrieved.get_object_content("_scheduler-stderr.txt")
                     stderr_lines = stderr.splitlines()[-tail_lines:]
                 except Exception:
                     pass

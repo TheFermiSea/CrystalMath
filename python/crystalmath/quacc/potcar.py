@@ -28,6 +28,7 @@ def get_potcar_path() -> Optional[Path]:
     # Try quacc settings (may not be installed)
     try:
         from quacc import SETTINGS
+
         quacc_path = getattr(SETTINGS, "VASP_PP_PATH", None)
         if quacc_path:
             return Path(quacc_path)
@@ -78,9 +79,9 @@ def validate_potcars(elements: Set[str]) -> Tuple[bool, Optional[str]]:
 
     # Find PBE POTCAR directory (most common functional)
     pbe_dirs = (
-        list(potcar_path.glob("potpaw_PBE*")) +
-        list(potcar_path.glob("PBE*")) +
-        list(potcar_path.glob("pbe*"))
+        list(potcar_path.glob("potpaw_PBE*"))
+        + list(potcar_path.glob("PBE*"))
+        + list(potcar_path.glob("pbe*"))
     )
 
     if not pbe_dirs:
@@ -108,8 +109,7 @@ def validate_potcars(elements: Set[str]) -> Tuple[bool, Optional[str]]:
 
     if missing:
         return False, (
-            f"Missing POTCARs for elements: {', '.join(sorted(missing))}. "
-            f"Checked in: {potcar_base}"
+            f"Missing POTCARs for elements: {', '.join(sorted(missing))}. Checked in: {potcar_base}"
         )
 
     return True, None

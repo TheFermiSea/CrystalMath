@@ -32,15 +32,9 @@ class ParslClusterConfig(BaseModel):
     account: str | None = Field(default=None, description="SLURM account")
     nodes_per_block: int = Field(default=1, ge=1, description="Nodes per Parsl block")
     cores_per_node: int = Field(default=32, ge=1, description="CPU cores per node")
-    mem_per_node: int | None = Field(
-        default=None, ge=1, description="Memory per node in GB"
-    )
-    walltime: str = Field(
-        default="01:00:00", description="Walltime in HH:MM:SS format"
-    )
-    max_blocks: int = Field(
-        default=10, ge=1, description="Maximum Parsl blocks to scale to"
-    )
+    mem_per_node: int | None = Field(default=None, ge=1, description="Memory per node in GB")
+    walltime: str = Field(default="01:00:00", description="Walltime in HH:MM:SS format")
+    max_blocks: int = Field(default=10, ge=1, description="Maximum Parsl blocks to scale to")
     worker_init: str = Field(
         default="",
         description="Commands to run before worker starts (module loads, conda activate)",
@@ -55,9 +49,7 @@ class ParslClusterConfig(BaseModel):
     def validate_walltime(cls, v: str) -> str:
         """Validate walltime is in HH:MM:SS format."""
         if not WALLTIME_PATTERN.match(v):
-            raise ValueError(
-                f"Invalid walltime format: {v}. Expected HH:MM:SS or H:MM:SS"
-            )
+            raise ValueError(f"Invalid walltime format: {v}. Expected HH:MM:SS or H:MM:SS")
         return v
 
     model_config = {"extra": "forbid"}

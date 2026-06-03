@@ -206,9 +206,7 @@ class JsonRpcServer:
             raise ValueError(f"Invalid Content-Length: {content_length}")
 
         if content_length > MAX_MESSAGE_SIZE:
-            raise ValueError(
-                f"Message too large: {content_length} bytes (max {MAX_MESSAGE_SIZE})"
-            )
+            raise ValueError(f"Message too large: {content_length} bytes (max {MAX_MESSAGE_SIZE})")
 
         return content_length
 
@@ -399,13 +397,9 @@ class JsonRpcServer:
             if self._active_connections > 0:
                 continue
 
-            elapsed = (
-                datetime.now(timezone.utc) - self._last_activity
-            ).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - self._last_activity).total_seconds()
             if elapsed >= self.inactivity_timeout:
-                logger.info(
-                    f"Inactivity timeout ({self.inactivity_timeout}s) - shutting down"
-                )
+                logger.info(f"Inactivity timeout ({self.inactivity_timeout}s) - shutting down")
                 self._shutdown_event.set()
                 break
 
@@ -426,9 +420,7 @@ class JsonRpcServer:
             sock.settimeout(1.0)
             sock.connect(str(self.socket_path))
             sock.close()
-            raise RuntimeError(
-                f"Server already running at {self.socket_path}"
-            )
+            raise RuntimeError(f"Server already running at {self.socket_path}")
         except socket.error:
             # Connection failed - stale socket, safe to remove
             logger.info(f"Removing stale socket: {self.socket_path}")
@@ -529,7 +521,8 @@ def main() -> int:
         help="SQLite database path (default: $CRYSTAL_TUI_DB or controller default)",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable debug logging",
     )

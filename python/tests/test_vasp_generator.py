@@ -124,9 +124,7 @@ class TestVaspInputGenerator:
 
         # Create a simple structure
         lattice = Lattice.cubic(5.43)
-        structure = Structure(
-            lattice, ["Si", "Si"], [[0, 0, 0], [0.25, 0.25, 0.25]]
-        )
+        structure = Structure(lattice, ["Si", "Si"], [[0, 0, 0], [0.25, 0.25, 0.25]])
 
         generator = VaspInputGenerator(structure, preset=IncarPreset.STATIC)
         inputs = generator.generate()

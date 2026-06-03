@@ -206,9 +206,7 @@ class TestNodeConfig:
             ("qe-node3", "10.0.0.12", 40),
         ],
     )
-    def test_beefcake2_nodes(
-        self, hostname: str, ip: str, expected_cores: int
-    ) -> None:
+    def test_beefcake2_nodes(self, hostname: str, ip: str, expected_cores: int) -> None:
         """Test all beefcake2 node configurations."""
         from crystalmath.high_level.clusters import get_node_config
 

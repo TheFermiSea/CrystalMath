@@ -537,19 +537,28 @@ def _analyze_vasp_errors_fallback(content: str) -> list[dict[str, Any]]:
     seen_codes: set[str] = set()
 
     for line in content.split("\n"):
-        for pattern, code, severity, message, suggestions, incar_changes in _VASP_ERROR_PATTERNS_FALLBACK:
+        for (
+            pattern,
+            code,
+            severity,
+            message,
+            suggestions,
+            incar_changes,
+        ) in _VASP_ERROR_PATTERNS_FALLBACK:
             if code in seen_codes:
                 continue
             if re.search(pattern, line, re.IGNORECASE):
                 seen_codes.add(code)
-                errors.append({
-                    "code": code,
-                    "severity": severity,
-                    "message": message,
-                    "line_content": line.strip()[:100],
-                    "suggestions": suggestions,
-                    "incar_changes": incar_changes,
-                })
+                errors.append(
+                    {
+                        "code": code,
+                        "severity": severity,
+                        "message": message,
+                        "line_content": line.strip()[:100],
+                        "suggestions": suggestions,
+                        "incar_changes": incar_changes,
+                    }
+                )
                 break  # Only match first pattern per line
 
     return errors
@@ -818,9 +827,7 @@ async def handle_jobs_get_output_file(
 
     # Read file content in a thread to avoid blocking the event loop
     try:
-        result = await asyncio.to_thread(
-            _read_file_with_tail, str(file_path), tail_lines
-        )
+        result = await asyncio.to_thread(_read_file_with_tail, str(file_path), tail_lines)
         return {"ok": True, "data": result}
     except Exception as e:
         logger.exception("Failed to read file %s", file_path)
@@ -846,6 +853,7 @@ def _summarize_result(result: dict) -> dict:
     if "results" in result and "forces" in result["results"]:
         try:
             import numpy as np
+
             forces = np.array(result["results"]["forces"])
             summary["max_force_ev_ang"] = float(np.max(np.linalg.norm(forces, axis=1)))
         except Exception:

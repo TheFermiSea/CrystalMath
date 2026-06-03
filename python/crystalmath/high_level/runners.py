@@ -163,8 +163,7 @@ class RunnerConfig:
         valid_protocols = {"fast", "moderate", "precise"}
         if self.protocol not in valid_protocols:
             raise ValueError(
-                f"Invalid protocol: '{self.protocol}'. "
-                f"Valid options: {valid_protocols}"
+                f"Invalid protocol: '{self.protocol}'. Valid options: {valid_protocols}"
             )
         if self.output_dir:
             self.output_dir = Path(self.output_dir)
@@ -392,9 +391,7 @@ class BaseAnalysisRunner(ABC):
                 default_code=default_code,
             )
 
-            logger.info(
-                f"Auto-selected SLURMWorkflowRunner for cluster '{cluster.name}'"
-            )
+            logger.info(f"Auto-selected SLURMWorkflowRunner for cluster '{cluster.name}'")
             return runner
 
         except ImportError as e:
@@ -488,8 +485,7 @@ class BaseAnalysisRunner(ABC):
             from pymatgen.core import Structure
         except ImportError:
             raise StructureLoadError(
-                "pymatgen is required for structure loading. "
-                "Install with: pip install pymatgen"
+                "pymatgen is required for structure loading. Install with: pip install pymatgen"
             )
 
         # Already a Structure
@@ -514,9 +510,7 @@ class BaseAnalysisRunner(ABC):
             return self._load_from_file(path)
 
         # Try as MP ID without prefix
-        if source_str.isdigit() or (
-            len(source_str) < 10 and source_str.replace("-", "").isalnum()
-        ):
+        if source_str.isdigit() or (len(source_str) < 10 and source_str.replace("-", "").isalnum()):
             try:
                 return self._load_from_mp(f"mp-{source_str}")
             except Exception:
@@ -564,8 +558,7 @@ class BaseAnalysisRunner(ABC):
             from mp_api.client import MPRester
         except ImportError:
             raise StructureLoadError(
-                "mp-api is required for Materials Project access. "
-                "Install with: pip install mp-api"
+                "mp-api is required for Materials Project access. Install with: pip install mp-api"
             )
 
         try:
@@ -655,9 +648,25 @@ class BaseAnalysisRunner(ABC):
             True if structure contains magnetic elements
         """
         magnetic_elements = {
-            "Fe", "Co", "Ni", "Mn", "Cr", "V", "Ti",
-            "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb",
-            "Nd", "Sm", "Eu", "Ce", "Pr",
+            "Fe",
+            "Co",
+            "Ni",
+            "Mn",
+            "Cr",
+            "V",
+            "Ti",
+            "Gd",
+            "Tb",
+            "Dy",
+            "Ho",
+            "Er",
+            "Tm",
+            "Yb",
+            "Nd",
+            "Sm",
+            "Eu",
+            "Ce",
+            "Pr",
         }
         elements = {str(el) for el in structure.composition.elements}
         return bool(elements & magnetic_elements)
@@ -813,35 +822,43 @@ class BaseAnalysisRunner(ABC):
         params: Dict[str, Any] = {}
 
         if code == "vasp":
-            params.update({
-                "prec": "Accurate",
-                "algo": "Normal",
-                "ismear": 0,
-                "sigma": 0.05,
-            })
+            params.update(
+                {
+                    "prec": "Accurate",
+                    "algo": "Normal",
+                    "ismear": 0,
+                    "sigma": 0.05,
+                }
+            )
             if workflow_type == WorkflowType.RELAX:
                 params["ibrion"] = 2
                 params["isif"] = 3
                 params["nsw"] = 200
 
         elif code == "crystal23":
-            params.update({
-                "dft_type": "PBE",
-                "spinpol": "AUTO",
-            })
+            params.update(
+                {
+                    "dft_type": "PBE",
+                    "spinpol": "AUTO",
+                }
+            )
 
         elif code == "quantum_espresso":
-            params.update({
-                "calculation": "scf",
-                "ecutwfc": 60.0,  # Ry
-                "ecutrho": 480.0,  # Ry
-            })
+            params.update(
+                {
+                    "calculation": "scf",
+                    "ecutwfc": 60.0,  # Ry
+                    "ecutrho": 480.0,  # Ry
+                }
+            )
 
         elif code == "yambo":
-            params.update({
-                "gw_mode": "GW0",
-                "screening_bands": "auto",
-            })
+            params.update(
+                {
+                    "gw_mode": "GW0",
+                    "screening_bands": "auto",
+                }
+            )
 
         return params
 
@@ -884,9 +901,7 @@ class BaseAnalysisRunner(ABC):
         self._workflow_id = str(uuid.uuid4())
         self._started_at = datetime.now()
 
-        logger.info(
-            f"Starting {self.__class__.__name__} workflow [{self._workflow_id[:8]}...]"
-        )
+        logger.info(f"Starting {self.__class__.__name__} workflow [{self._workflow_id[:8]}...]")
 
         try:
             # Load structure
@@ -1005,9 +1020,7 @@ class BaseAnalysisRunner(ABC):
 
                 # Execute step (in thread pool for blocking operations)
                 try:
-                    step_result = await asyncio.to_thread(
-                        self._execute_step, step, **kwargs
-                    )
+                    step_result = await asyncio.to_thread(self._execute_step, step, **kwargs)
                     self._step_results.append(step_result)
 
                     # Yield progress for step completion
@@ -1086,9 +1099,7 @@ class BaseAnalysisRunner(ABC):
         for step in self._steps:
             for dep in step.depends_on:
                 if dep not in names:
-                    issues.append(
-                        f"Step '{step.name}' depends on unknown step '{dep}'"
-                    )
+                    issues.append(f"Step '{step.name}' depends on unknown step '{dep}'")
 
         # Check code compatibility
         is_valid, code_issues = PropertyCalculator.validate_workflow_codes(self._steps)
@@ -1105,11 +1116,7 @@ class BaseAnalysisRunner(ABC):
         if self._config.output_dir is None:
             # Create timestamped directory
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            formula = (
-                self._structure_info.formula
-                if self._structure_info
-                else "unknown"
-            )
+            formula = self._structure_info.formula if self._structure_info else "unknown"
             self._config.output_dir = Path(f"./results/{formula}_{timestamp}")
 
         self._config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1145,9 +1152,7 @@ class BaseAnalysisRunner(ABC):
             # Check for failure
             if not step_result.success:
                 if self._config.recovery_strategy == ErrorRecoveryStrategy.FAIL_FAST:
-                    raise WorkflowExecutionError(
-                        f"Step '{step.name}' failed: {step_result.errors}"
-                    )
+                    raise WorkflowExecutionError(f"Step '{step.name}' failed: {step_result.errors}")
                 elif self._config.recovery_strategy == ErrorRecoveryStrategy.ADAPTIVE:
                     # Try adaptive recovery
                     step_result = self._attempt_adaptive_recovery(step, step_result)
@@ -1176,9 +1181,7 @@ class BaseAnalysisRunner(ABC):
             # For now, return stub result
             if self._runner is None:
                 # Stub execution for development
-                logger.warning(
-                    f"No runner configured - step {step.name} will be simulated"
-                )
+                logger.warning(f"No runner configured - step {step.name} will be simulated")
                 return StepResult(
                     step_name=step.name,
                     success=True,
@@ -1301,9 +1304,9 @@ class BaseAnalysisRunner(ABC):
         # Convergence issues - relax parameters
         if "convergence" in error_text or "scf" in error_text:
             logger.info("Detected convergence issue - adjusting parameters")
-            step.parameters["energy_convergence"] = step.parameters.get(
-                "energy_convergence", 1e-5
-            ) * 10
+            step.parameters["energy_convergence"] = (
+                step.parameters.get("energy_convergence", 1e-5) * 10
+            )
 
         # Retry with adjusted parameters
         return self._execute_step(step)
@@ -1660,13 +1663,9 @@ class OpticalAnalysis(BaseAnalysisRunner):
         # Validate code availability
         if self._cluster:
             if dft_code not in self._cluster.available_codes:
-                raise CodeNotAvailableError(
-                    f"DFT code '{dft_code}' not available on cluster"
-                )
+                raise CodeNotAvailableError(f"DFT code '{dft_code}' not available on cluster")
             if gw_code not in self._cluster.available_codes:
-                raise CodeNotAvailableError(
-                    f"GW code '{gw_code}' not available on cluster"
-                )
+                raise CodeNotAvailableError(f"GW code '{gw_code}' not available on cluster")
 
     def _build_workflow_steps(self) -> List[WorkflowStep]:
         """Build GW/BSE workflow steps.
@@ -2264,8 +2263,7 @@ class NonlinearOpticsAnalysis(BaseAnalysisRunner):
         valid_responses = {"SHG", "THG", "SHIFT"}
         if self._response_type not in valid_responses:
             raise ValueError(
-                f"Invalid response_type: '{response_type}'. "
-                f"Valid options: {valid_responses}"
+                f"Invalid response_type: '{response_type}'. Valid options: {valid_responses}"
             )
 
         # Warn about exciton requirements

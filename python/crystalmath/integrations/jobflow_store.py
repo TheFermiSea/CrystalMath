@@ -147,12 +147,8 @@ class JobRecord:
             "uuid": self.uuid,
             "name": self.name,
             "state": self.state,
-            "created_at": (
-                self.created_at.isoformat() if self.created_at else None
-            ),
-            "completed_at": (
-                self.completed_at.isoformat() if self.completed_at else None
-            ),
+            "created_at": (self.created_at.isoformat() if self.created_at else None),
+            "completed_at": (self.completed_at.isoformat() if self.completed_at else None),
             "input": self.inputs,
             "output": self.outputs,
             "metadata": {
@@ -170,14 +166,10 @@ class JobRecord:
             name=doc.get("name", ""),
             state=doc.get("state", "created"),
             created_at=(
-                datetime.fromisoformat(doc["created_at"])
-                if doc.get("created_at")
-                else None
+                datetime.fromisoformat(doc["created_at"]) if doc.get("created_at") else None
             ),
             completed_at=(
-                datetime.fromisoformat(doc["completed_at"])
-                if doc.get("completed_at")
-                else None
+                datetime.fromisoformat(doc["completed_at"]) if doc.get("completed_at") else None
             ),
             inputs=doc.get("input", {}),
             outputs=doc.get("output", {}),
@@ -202,16 +194,8 @@ class JobRecord:
             pk=self.pk or 0,
             state=state_map.get(self.state, "created"),
             label=self.name,
-            ctime=(
-                self.created_at.strftime("%Y-%m-%d %H:%M")
-                if self.created_at
-                else ""
-            ),
-            mtime=(
-                self.completed_at.strftime("%Y-%m-%d %H:%M")
-                if self.completed_at
-                else ""
-            ),
+            ctime=(self.created_at.strftime("%Y-%m-%d %H:%M") if self.created_at else ""),
+            mtime=(self.completed_at.strftime("%Y-%m-%d %H:%M") if self.completed_at else ""),
             description=self.metadata.get("description", ""),
         )
 
@@ -438,9 +422,7 @@ class SQLiteJobStore:
                     params.append(f"%{pattern}%")
                 else:
                     where_clauses.append(f"{key} = ?")
-                    params.append(
-                        value if not isinstance(value, dict) else json.dumps(value)
-                    )
+                    params.append(value if not isinstance(value, dict) else json.dumps(value))
 
         sql = f"SELECT * FROM {self._collection_name}"
         if where_clauses:
@@ -450,9 +432,7 @@ class SQLiteJobStore:
             for field_name, direction in sort.items():
                 if not _VALID_COLUMN.match(field_name):
                     raise ValueError(f"Invalid column name in sort: {field_name!r}")
-                sort_clauses.append(
-                    f"{field_name} {'ASC' if direction == 1 else 'DESC'}"
-                )
+                sort_clauses.append(f"{field_name} {'ASC' if direction == 1 else 'DESC'}")
             sql += " ORDER BY " + ", ".join(sort_clauses)
         if limit:
             sql += f" LIMIT {limit}"
@@ -571,9 +551,7 @@ class SQLiteJobStore:
             where_clauses: List[str] = []
             for key, value in criteria.items():
                 where_clauses.append(f"{key} = ?")
-                params.append(
-                    value if not isinstance(value, dict) else json.dumps(value)
-                )
+                params.append(value if not isinstance(value, dict) else json.dumps(value))
             sql += " WHERE " + " AND ".join(where_clauses)
         cursor = self._conn.execute(sql, params)
         return [row[0] for row in cursor]
@@ -591,9 +569,7 @@ class SQLiteJobStore:
         Note:
             This is a STUB implementation. Full implementation in Phase 3.
         """
-        raise NotImplementedError(
-            "SQLiteJobStore.remove_docs() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("SQLiteJobStore.remove_docs() will be implemented in Phase 3.")
 
 
 # =============================================================================

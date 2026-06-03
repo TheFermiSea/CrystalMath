@@ -127,11 +127,17 @@ class TestSQLiteJobStore:
         store = SQLiteJobStore(db_path)
         store.connect()
 
-        store.update([
-            {"uuid": "j1", "name": "relax_Si", "state": "completed",
-             "output": {"energy": -10.84}},
-            {"uuid": "j2", "name": "bands_Si", "state": "running"},
-        ])
+        store.update(
+            [
+                {
+                    "uuid": "j1",
+                    "name": "relax_Si",
+                    "state": "completed",
+                    "output": {"energy": -10.84},
+                },
+                {"uuid": "j2", "name": "bands_Si", "state": "running"},
+            ]
+        )
 
         # Query all
         docs = list(store.query())
@@ -153,11 +159,13 @@ class TestSQLiteJobStore:
         store = SQLiteJobStore(db_path)
         store.connect()
 
-        store.update([
-            {"uuid": "j1", "name": "relax_Si"},
-            {"uuid": "j2", "name": "bands_MoS2"},
-            {"uuid": "j3", "name": "relax_MoS2"},
-        ])
+        store.update(
+            [
+                {"uuid": "j1", "name": "relax_Si"},
+                {"uuid": "j2", "name": "bands_MoS2"},
+                {"uuid": "j3", "name": "relax_MoS2"},
+            ]
+        )
 
         results = list(store.query(criteria={"name": {"$regex": "relax"}}))
         assert len(results) == 2
@@ -172,11 +180,13 @@ class TestSQLiteJobStore:
         store = SQLiteJobStore(db_path)
         store.connect()
 
-        store.update([
-            {"uuid": "j1", "state": "completed"},
-            {"uuid": "j2", "state": "running"},
-            {"uuid": "j3", "state": "completed"},
-        ])
+        store.update(
+            [
+                {"uuid": "j1", "state": "completed"},
+                {"uuid": "j2", "state": "running"},
+                {"uuid": "j3", "state": "completed"},
+            ]
+        )
 
         states = store.distinct("state")
         assert set(states) == {"completed", "running"}
@@ -191,10 +201,12 @@ class TestSQLiteJobStore:
         store = SQLiteJobStore(db_path)
         store.connect()
 
-        store.update([
-            {"uuid": "j1", "state": "completed"},
-            {"uuid": "j2", "state": "running"},
-        ])
+        store.update(
+            [
+                {"uuid": "j1", "state": "completed"},
+                {"uuid": "j2", "state": "running"},
+            ]
+        )
 
         assert store.count() == 2
         assert store.count(criteria={"state": "completed"}) == 1
@@ -376,13 +388,7 @@ class TestWorkflowBuilder:
         """Build with chained steps preserves order."""
         from crystalmath.high_level.builder import WorkflowBuilder, Workflow
 
-        builder = (
-            WorkflowBuilder()
-            .from_file("test.cif")
-            .relax()
-            .then_bands()
-            .then_dos()
-        )
+        builder = WorkflowBuilder().from_file("test.cif").relax().then_bands().then_dos()
         workflow = builder.build()
         assert len(workflow.steps) == 3
         assert workflow.steps[0].name == "relax"

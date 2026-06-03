@@ -65,9 +65,7 @@ WorkflowState = Literal[
 ]
 
 # Supported DFT codes
-DFTCode = Literal[
-    "crystal23", "vasp", "quantum_espresso", "yambo", "berkeleygw", "wannier90"
-]
+DFTCode = Literal["crystal23", "vasp", "quantum_espresso", "yambo", "berkeleygw", "wannier90"]
 
 # Backend types
 BackendType = Literal["aiida", "jobflow", "local", "sqlite", "demo"]

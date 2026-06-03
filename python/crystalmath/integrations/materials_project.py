@@ -238,8 +238,7 @@ class MPClient:
         self._api_key = api_key or os.getenv("MP_API_KEY")
         if not self._api_key:
             raise MPAuthenticationError(
-                "MP_API_KEY not configured. Set via environment variable or "
-                "pass api_key parameter."
+                "MP_API_KEY not configured. Set via environment variable or pass api_key parameter."
             )
 
         self._cache_enabled = cache_enabled
@@ -543,9 +542,7 @@ class MPClient:
             symmetry=symmetry_data,
         )
 
-    def get_similar_structures(
-        self, structure: "Structure", limit: int = 5
-    ) -> list[MPMaterial]:
+    def get_similar_structures(self, structure: "Structure", limit: int = 5) -> list[MPMaterial]:
         """Find similar structures in MP database.
 
         Uses the structure's composition to find materials with the same

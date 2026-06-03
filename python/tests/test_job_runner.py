@@ -62,6 +62,7 @@ class TestPotcarValidation:
         monkeypatch.delenv("VASP_PP_PATH", raising=False)
         # Also mock quacc import to fail
         import sys
+
         if "quacc" in sys.modules:
             monkeypatch.setattr(sys.modules["quacc"], "SETTINGS", None)
 
@@ -208,14 +209,18 @@ class TestJobRunnerABC:
 
     def test_job_runner_generate_job_id(self):
         """Test job ID generation."""
+
         # Use a concrete implementation to test inherited method
         class TestRunner(JobRunner):
             def submit(self, *args, **kwargs):
                 return self.generate_job_id()
+
             def get_status(self, job_id):
                 return JobState.PENDING
+
             def get_result(self, job_id):
                 return None
+
             def cancel(self, job_id):
                 return False
 
@@ -227,13 +232,17 @@ class TestJobRunnerABC:
 
     def test_job_runner_import_recipe_invalid(self):
         """Test recipe import fails for invalid path."""
+
         class TestRunner(JobRunner):
             def submit(self, *args, **kwargs):
                 pass
+
             def get_status(self, job_id):
                 return JobState.PENDING
+
             def get_result(self, job_id):
                 return None
+
             def cancel(self, job_id):
                 return False
 
@@ -261,6 +270,7 @@ class TestGetRunner:
             assert runner is not None
             # ParslRunner is a JobRunner
             from crystalmath.quacc.parsl_runner import ParslRunner
+
             assert isinstance(runner, ParslRunner)
         except ImportError:
             pytest.skip("Parsl runner dependencies not installed")
@@ -271,6 +281,7 @@ class TestGetRunner:
             runner = get_runner("covalent")
             assert runner is not None
             from crystalmath.quacc.covalent_runner import CovalentRunner
+
             assert isinstance(runner, CovalentRunner)
         except ImportError:
             pytest.skip("Covalent runner dependencies not installed")

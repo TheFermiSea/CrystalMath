@@ -42,11 +42,17 @@ def _get_controller(use_aiida: bool = False) -> CrystalController:
 @app.command()
 def run(
     input_file: str = typer.Argument(..., help="Input file name (without .d12 extension)"),
-    ranks: Optional[int] = typer.Argument(None, help="Number of MPI ranks (serial if not specified)"),
+    ranks: Optional[int] = typer.Argument(
+        None, help="Number of MPI ranks (serial if not specified)"
+    ),
     explain: bool = typer.Option(False, "--explain", help="Show execution plan without running"),
-    dft_code: str = typer.Option("crystal", help="DFT code to use (crystal, vasp, quantum_espresso)"),
+    dft_code: str = typer.Option(
+        "crystal", help="DFT code to use (crystal, vasp, quantum_espresso)"
+    ),
     runner: str = typer.Option("local", help="Execution backend (local, ssh, slurm)"),
-    db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
+    db_path: Optional[str] = typer.Option(
+        None, "--db-path", help="Path to database file", callback=_db_path_callback
+    ),
 ) -> None:
     """
     Submit a calculation job.
@@ -131,7 +137,9 @@ def run(
 @app.command(name="list")
 def list_jobs(
     limit: int = typer.Option(100, help="Maximum number of jobs to show"),
-    db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
+    db_path: Optional[str] = typer.Option(
+        None, "--db-path", help="Path to database file", callback=_db_path_callback
+    ),
 ) -> None:
     """
     List all jobs.
@@ -192,7 +200,9 @@ def list_jobs(
 @app.command()
 def status(
     pk: int = typer.Argument(..., help="Job ID"),
-    db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
+    db_path: Optional[str] = typer.Option(
+        None, "--db-path", help="Path to database file", callback=_db_path_callback
+    ),
 ) -> None:
     """
     Show detailed job status.
@@ -211,7 +221,9 @@ def status(
         # Basic info
         console.print(f"\n[bold]Job {pk}: {details.name}[/bold]")
         console.print(f"  UUID:         {details.uuid or 'N/A'}")
-        console.print(f"  State:        [{_state_color(details.state.value)}]{details.state.value}[/]")
+        console.print(
+            f"  State:        [{_state_color(details.state.value)}]{details.state.value}[/]"
+        )
         console.print(f"  DFT Code:     {details.dft_code.value}")
 
         # Results
@@ -259,7 +271,9 @@ def status(
 def log(
     pk: int = typer.Argument(..., help="Job ID"),
     lines: int = typer.Option(100, "--lines", "-n", help="Number of lines to show"),
-    db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
+    db_path: Optional[str] = typer.Option(
+        None, "--db-path", help="Path to database file", callback=_db_path_callback
+    ),
 ) -> None:
     """
     View job output log.
@@ -298,7 +312,9 @@ def log(
 @app.command()
 def cancel(
     pk: int = typer.Argument(..., help="Job ID"),
-    db_path: Optional[str] = typer.Option(None, "--db-path", help="Path to database file", callback=_db_path_callback),
+    db_path: Optional[str] = typer.Option(
+        None, "--db-path", help="Path to database file", callback=_db_path_callback
+    ),
 ) -> None:
     """
     Cancel a running job.
@@ -321,6 +337,7 @@ def cancel(
 
 
 # Utility functions
+
 
 def _state_color(state: str) -> str:
     """Map job state to color."""

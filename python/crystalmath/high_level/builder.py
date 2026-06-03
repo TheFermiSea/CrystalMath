@@ -240,9 +240,7 @@ class Workflow:
                     final_result = update.intermediate_result
         """
         # Stub implementation
-        raise NotImplementedError(
-            "Workflow.run_async() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("Workflow.run_async() will be implemented in Phase 3.")
         yield  # Makes this a generator (required for type checking)
 
     def submit(self) -> str:
@@ -269,9 +267,7 @@ class Workflow:
             result = Workflow.get_result(workflow_id)
         """
         # Stub implementation
-        raise NotImplementedError(
-            "Workflow.submit() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("Workflow.submit() will be implemented in Phase 3.")
 
     @classmethod
     def get_status(cls, workflow_id: str) -> WorkflowStatus:
@@ -287,9 +283,7 @@ class Workflow:
             WorkflowNotFoundError: If workflow_id not found
         """
         # Stub implementation
-        raise NotImplementedError(
-            "Workflow.get_status() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("Workflow.get_status() will be implemented in Phase 3.")
 
     @classmethod
     def get_result(cls, workflow_id: str) -> "AnalysisResults":
@@ -307,9 +301,7 @@ class Workflow:
             WorkflowFailedError: If workflow failed
         """
         # Stub implementation
-        raise NotImplementedError(
-            "Workflow.get_result() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("Workflow.get_result() will be implemented in Phase 3.")
 
     @classmethod
     def cancel(cls, workflow_id: str) -> bool:
@@ -325,9 +317,7 @@ class Workflow:
             WorkflowNotFoundError: If workflow_id not found
         """
         # Stub implementation
-        raise NotImplementedError(
-            "Workflow.cancel() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("Workflow.cancel() will be implemented in Phase 3.")
 
 
 # =============================================================================
