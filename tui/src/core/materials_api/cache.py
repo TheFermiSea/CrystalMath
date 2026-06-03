@@ -180,7 +180,7 @@ class CacheRepository:
             raise CacheError(
                 "read",
                 "CacheRepository must be used as async context manager. "
-                "Use: async with CacheRepository(db_path) as cache: ..."
+                "Use: async with CacheRepository(db_path) as cache: ...",
             )
         return self._connection
 
@@ -223,11 +223,7 @@ class CacheRepository:
 
             # Parse datetime strings
             fetched_at = datetime.fromisoformat(row["fetched_at"])
-            expires_at = (
-                datetime.fromisoformat(row["expires_at"])
-                if row["expires_at"]
-                else None
-            )
+            expires_at = datetime.fromisoformat(row["expires_at"]) if row["expires_at"] else None
 
             return CacheEntry(
                 cache_key=row["cache_key"],
@@ -602,9 +598,7 @@ class CacheRepository:
 
                 # mpcontribs_cache only applies to 'mpcontribs' source
                 if source == "mpcontribs":
-                    async with conn.execute(
-                        "DELETE FROM mpcontribs_cache"
-                    ) as cursor:
+                    async with conn.execute("DELETE FROM mpcontribs_cache") as cursor:
                         total_deleted += cursor.rowcount
 
             else:
@@ -648,9 +642,7 @@ class CacheRepository:
             stats: dict[str, Any] = {}
 
             # Count materials_cache entries
-            async with conn.execute(
-                "SELECT COUNT(*) FROM materials_cache"
-            ) as cursor:
+            async with conn.execute("SELECT COUNT(*) FROM materials_cache") as cursor:
                 row = await cursor.fetchone()
                 stats["total_responses"] = row[0] if row else 0
 
@@ -666,16 +658,12 @@ class CacheRepository:
                 stats["expired_responses"] = row[0] if row else 0
 
             # Count materials_structures entries
-            async with conn.execute(
-                "SELECT COUNT(*) FROM materials_structures"
-            ) as cursor:
+            async with conn.execute("SELECT COUNT(*) FROM materials_structures") as cursor:
                 row = await cursor.fetchone()
                 stats["total_structures"] = row[0] if row else 0
 
             # Count mpcontribs_cache entries
-            async with conn.execute(
-                "SELECT COUNT(*) FROM mpcontribs_cache"
-            ) as cursor:
+            async with conn.execute("SELECT COUNT(*) FROM mpcontribs_cache") as cursor:
                 row = await cursor.fetchone()
                 stats["total_contributions"] = row[0] if row else 0
 
