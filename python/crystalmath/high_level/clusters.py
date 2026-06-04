@@ -44,10 +44,11 @@ Example:
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 from crystalmath.protocols import DFTCode, ResourceRequirements
 
@@ -131,12 +132,12 @@ class NodeConfig:
     has_gpu: bool = True
     gpu_type: str = "Tesla V100S"
     gpu_memory_gb: float = 32.0
-    infiniband_ip: Optional[str] = None
+    infiniband_ip: str | None = None
     node_type: NodeType = NodeType.GENERAL
-    available_codes: List[DFTCode] = field(default_factory=list)
+    available_codes: list[DFTCode] = field(default_factory=list)
     numa_nodes: int = 4
     ssh_user: str = "root"
-    ssh_password: Optional[str] = None
+    ssh_password: str | None = None
     work_directory: str = "/home/calculations"
     scratch_directory: str = "/scratch"
 
@@ -149,9 +150,16 @@ class NodeConfig:
         return code in self.available_codes
 
     def get_ssh_connection_string(self) -> str:
-        """Get SSH connection string for this node."""
+        """Build an SSH connection string for this node.
+
+        Prefers key-based authentication. When a password is configured (always
+        sourced from the environment, never hardcoded), uses ``sshpass -e`` so
+        the secret is read from the ``SSHPASS`` environment variable instead of
+        appearing on the command line / in the process table. Callers using the
+        password path must export ``SSHPASS`` (e.g. ``SSHPASS=$VASP_NODE_SSH_PASSWORD``).
+        """
         if self.ssh_password:
-            return f"sshpass -p '{self.ssh_password}' ssh {self.ssh_user}@{self.ip_address}"
+            return f"sshpass -e ssh {self.ssh_user}@{self.ip_address}"
         return f"ssh {self.ssh_user}@{self.ip_address}"
 
 
@@ -190,16 +198,16 @@ class CodeConfig:
     version: str
     label: str
     executable: str
-    executables: Dict[str, str] = field(default_factory=dict)
+    executables: dict[str, str] = field(default_factory=dict)
     mpi_command: str = "mpirun"
-    mpi_args: List[str] = field(default_factory=list)
+    mpi_args: list[str] = field(default_factory=list)
     prepend_text: str = ""
     append_text: str = ""
-    input_plugin: Optional[str] = None
-    parser_plugin: Optional[str] = None
-    default_resources: Optional[ResourceRequirements] = None
-    environment_variables: Dict[str, str] = field(default_factory=dict)
-    ucx_settings: Dict[str, str] = field(default_factory=dict)
+    input_plugin: str | None = None
+    parser_plugin: str | None = None
+    default_resources: ResourceRequirements | None = None
+    environment_variables: dict[str, str] = field(default_factory=dict)
+    ucx_settings: dict[str, str] = field(default_factory=dict)
     gpu_enabled: bool = False
     openmp_enabled: bool = True
 
@@ -239,8 +247,16 @@ class CodeConfig:
 # Beefcake2 Node Definitions
 # =============================================================================
 
+# VASP node SSH credentials are sourced from the environment, never hardcoded.
+# Set VASP_NODE_SSH_USER / VASP_NODE_SSH_PASSWORD, or (preferred) configure
+# key-based auth and leave VASP_NODE_SSH_PASSWORD unset so password auth is
+# disabled entirely. When the password is set, also export SSHPASS to the same
+# value so ``sshpass -e`` can read it without exposing it in the process table.
+_VASP_SSH_USER = os.getenv("VASP_NODE_SSH_USER", "root")
+_VASP_SSH_PASSWORD = os.getenv("VASP_NODE_SSH_PASSWORD")  # None -> key-based auth
+
 # VASP nodes (10.0.0.20-22)
-BEEFCAKE2_NODES: Dict[str, NodeConfig] = {
+BEEFCAKE2_NODES: dict[str, NodeConfig] = {
     "vasp-01": NodeConfig(
         name="vasp-01",
         hostname="vasp-01",
@@ -254,8 +270,8 @@ BEEFCAKE2_NODES: Dict[str, NodeConfig] = {
         node_type=NodeType.VASP,
         available_codes=["vasp", "crystal23"],
         numa_nodes=4,
-        ssh_user="root",
-        ssh_password="adminadmin",
+        ssh_user=_VASP_SSH_USER,
+        ssh_password=_VASP_SSH_PASSWORD,
         work_directory="/home/calculations",
         scratch_directory="/scratch",
     ),
@@ -272,8 +288,8 @@ BEEFCAKE2_NODES: Dict[str, NodeConfig] = {
         node_type=NodeType.VASP,
         available_codes=["vasp", "crystal23"],
         numa_nodes=4,
-        ssh_user="root",
-        ssh_password="adminadmin",
+        ssh_user=_VASP_SSH_USER,
+        ssh_password=_VASP_SSH_PASSWORD,
         work_directory="/home/calculations",
         scratch_directory="/scratch",
     ),
@@ -290,8 +306,8 @@ BEEFCAKE2_NODES: Dict[str, NodeConfig] = {
         node_type=NodeType.VASP,
         available_codes=["vasp", "crystal23"],
         numa_nodes=4,
-        ssh_user="root",
-        ssh_password="adminadmin",
+        ssh_user=_VASP_SSH_USER,
+        ssh_password=_VASP_SSH_PASSWORD,
         work_directory="/home/calculations",
         scratch_directory="/scratch",
     ),
@@ -368,10 +384,16 @@ _UCX_SETTINGS = {
 
 # Common OpenMPI settings
 _OPENMPI_ARGS = [
-    "--mca", "btl", "^openib",
-    "--mca", "pml", "ucx",
-    "-x", "UCX_TLS",
-    "-x", "UCX_NET_DEVICES",
+    "--mca",
+    "btl",
+    "^openib",
+    "--mca",
+    "pml",
+    "ucx",
+    "-x",
+    "UCX_TLS",
+    "-x",
+    "UCX_NET_DEVICES",
 ]
 
 # VASP prepend text (module loads and environment)
@@ -416,7 +438,7 @@ export CRYSTAL_TMPDIR=/tmp
 ulimit -s unlimited
 """
 
-BEEFCAKE2_CODES: Dict[str, CodeConfig] = {
+BEEFCAKE2_CODES: dict[str, CodeConfig] = {
     # VASP 6.4.3
     "vasp-6.4.3": CodeConfig(
         name="vasp",
@@ -600,7 +622,7 @@ BEEFCAKE2_CODES: Dict[str, CodeConfig] = {
 # Resource Presets for Beefcake2
 # =============================================================================
 
-BEEFCAKE2_RESOURCE_PRESETS: Dict[str, ResourceRequirements] = {
+BEEFCAKE2_RESOURCE_PRESETS: dict[str, ResourceRequirements] = {
     # Small jobs: 8 cores, 32GB, 4 hours
     # Good for: small molecules, testing, quick SCF
     "small": ResourceRequirements(
@@ -734,14 +756,14 @@ class ClusterProfile:
     cores_per_node: int
     memory_gb_per_node: float
     gpus_per_node: int = 0
-    gpu_type: Optional[str] = None
-    available_codes: List[DFTCode] = field(default_factory=list)
-    code_paths: Dict[DFTCode, str] = field(default_factory=dict)
+    gpu_type: str | None = None
+    available_codes: list[DFTCode] = field(default_factory=list)
+    code_paths: dict[DFTCode, str] = field(default_factory=dict)
     default_partition: str = "default"
     default_walltime_hours: float = 24.0
-    presets: Dict[str, ResourceRequirements] = field(default_factory=dict)
-    ssh_host: Optional[str] = None
-    ssh_user: Optional[str] = None
+    presets: dict[str, ResourceRequirements] = field(default_factory=dict)
+    ssh_host: str | None = None
+    ssh_user: str | None = None
     scheduler: str = "slurm"
 
     def get_preset(self, preset_name: str) -> ResourceRequirements:
@@ -774,7 +796,7 @@ class ClusterProfile:
         """
         return code in self.available_codes
 
-    def get_code_path(self, code: DFTCode) -> Optional[str]:
+    def get_code_path(self, code: DFTCode) -> str | None:
         """Get the executable path for a DFT code.
 
         Args:
@@ -790,7 +812,7 @@ class ClusterProfile:
 # Pre-configured Cluster Profiles
 # =============================================================================
 
-CLUSTER_PROFILES: Dict[str, ClusterProfile] = {
+CLUSTER_PROFILES: dict[str, ClusterProfile] = {
     "beefcake2": ClusterProfile(
         name="beefcake2",
         description="Beefcake2 HPC cluster (6 nodes, V100S GPUs, InfiniBand)",
@@ -869,13 +891,12 @@ def get_cluster_profile(name: str) -> ClusterProfile:
     """
     if name not in CLUSTER_PROFILES:
         raise KeyError(
-            f"Unknown cluster profile: '{name}'. "
-            f"Available: {list(CLUSTER_PROFILES.keys())}"
+            f"Unknown cluster profile: '{name}'. Available: {list(CLUSTER_PROFILES.keys())}"
         )
     return CLUSTER_PROFILES[name]
 
 
-def list_cluster_profiles() -> List[str]:
+def list_cluster_profiles() -> list[str]:
     """List available cluster profile names.
 
     Returns:
@@ -929,8 +950,7 @@ def get_node_config(node_name: str) -> NodeConfig:
     """
     if node_name not in BEEFCAKE2_NODES:
         raise KeyError(
-            f"Unknown node: '{node_name}'. "
-            f"Available nodes: {list(BEEFCAKE2_NODES.keys())}"
+            f"Unknown node: '{node_name}'. Available nodes: {list(BEEFCAKE2_NODES.keys())}"
         )
     return BEEFCAKE2_NODES[node_name]
 
@@ -954,13 +974,12 @@ def get_code_config(code_key: str) -> CodeConfig:
     """
     if code_key not in BEEFCAKE2_CODES:
         raise KeyError(
-            f"Unknown code: '{code_key}'. "
-            f"Available codes: {list(BEEFCAKE2_CODES.keys())}"
+            f"Unknown code: '{code_key}'. Available codes: {list(BEEFCAKE2_CODES.keys())}"
         )
     return BEEFCAKE2_CODES[code_key]
 
 
-def list_beefcake2_nodes() -> List[str]:
+def list_beefcake2_nodes() -> list[str]:
     """List all beefcake2 node names.
 
     Returns:
@@ -969,7 +988,7 @@ def list_beefcake2_nodes() -> List[str]:
     return list(BEEFCAKE2_NODES.keys())
 
 
-def list_beefcake2_codes() -> List[str]:
+def list_beefcake2_codes() -> list[str]:
     """List all beefcake2 code keys.
 
     Returns:
@@ -978,7 +997,7 @@ def list_beefcake2_codes() -> List[str]:
     return list(BEEFCAKE2_CODES.keys())
 
 
-def get_node_for_code(code: DFTCode) -> Optional[str]:
+def get_node_for_code(code: DFTCode) -> str | None:
     """Get recommended node for running a specific DFT code.
 
     Returns the primary node where the specified code is installed
@@ -995,7 +1014,7 @@ def get_node_for_code(code: DFTCode) -> Optional[str]:
         # Returns "qe-node1" (only node with YAMBO GPU build)
     """
     # Special cases with specific node requirements
-    code_node_mapping: Dict[DFTCode, str] = {
+    code_node_mapping: dict[DFTCode, str] = {
         "yambo": "qe-node1",  # GPU-enabled YAMBO only on qe-node1
         "vasp": "vasp-01",  # Primary VASP node
         "quantum_espresso": "qe-node1",  # Primary QE node
@@ -1015,7 +1034,7 @@ def get_node_for_code(code: DFTCode) -> Optional[str]:
     return None
 
 
-def get_nodes_for_code(code: DFTCode) -> List[str]:
+def get_nodes_for_code(code: DFTCode) -> list[str]:
     """Get all nodes that support a specific DFT code.
 
     Args:
@@ -1035,7 +1054,7 @@ def get_nodes_for_code(code: DFTCode) -> List[str]:
     ]
 
 
-def get_nodes_by_type(node_type: NodeType) -> List[str]:
+def get_nodes_by_type(node_type: NodeType) -> list[str]:
     """Get all nodes of a specific type.
 
     Args:
@@ -1063,7 +1082,7 @@ def get_nodes_by_type(node_type: NodeType) -> List[str]:
 def get_optimal_resources(
     code: DFTCode,
     system_size: int,
-    calculation_type: Union[str, CalculationType] = "scf",
+    calculation_type: str | CalculationType = "scf",
     use_gpu: bool = False,
     max_nodes: int = 6,
     max_walltime_hours: float = 48.0,
@@ -1220,7 +1239,7 @@ def get_optimal_resources(
 def estimate_job_time(
     code: DFTCode,
     system_size: int,
-    calculation_type: Union[str, CalculationType] = "scf",
+    calculation_type: str | CalculationType = "scf",
     num_kpoints: int = 1,
 ) -> float:
     """Estimate job walltime in hours.
@@ -1277,7 +1296,7 @@ def estimate_job_time(
     code_mult = code_multipliers.get(code, 1.0)
 
     # K-point scaling (sublinear for parallel execution)
-    kpoint_factor = num_kpoints ** 0.7
+    kpoint_factor = num_kpoints**0.7
 
     # Calculate estimate with safety margin (1.5x)
     estimate = system_size * base_time * code_mult * kpoint_factor * 1.5
@@ -1289,7 +1308,7 @@ def estimate_job_time(
 def recommend_preset(
     code: DFTCode,
     system_size: int,
-    calculation_type: Union[str, CalculationType] = "scf",
+    calculation_type: str | CalculationType = "scf",
 ) -> str:
     """Recommend a resource preset based on job characteristics.
 
@@ -1347,10 +1366,10 @@ def recommend_preset(
 
 def setup_aiida_beefcake2(
     profile_name: str = "beefcake2",
-    ssh_key_path: Optional[Path] = None,
+    ssh_key_path: Path | None = None,
     create_codes: bool = True,
     dry_run: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Auto-setup AiiDA profile with beefcake2 computers and codes.
 
     Creates a complete AiiDA configuration including:
@@ -1388,7 +1407,7 @@ def setup_aiida_beefcake2(
         # Dry run to see what would be created
         result = setup_aiida_beefcake2(dry_run=True)
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "computers": {},
         "codes": {},
         "errors": [],
@@ -1556,7 +1575,7 @@ def setup_aiida_beefcake2(
     return result
 
 
-def get_aiida_computer_config(node_name: str) -> Dict[str, Any]:
+def get_aiida_computer_config(node_name: str) -> dict[str, Any]:
     """Get AiiDA computer configuration dict for a beefcake2 node.
 
     Returns a configuration dict suitable for programmatic computer setup
@@ -1590,7 +1609,7 @@ def get_aiida_computer_config(node_name: str) -> Dict[str, Any]:
     }
 
 
-def get_aiida_code_config(code_key: str, node_name: str) -> Dict[str, Any]:
+def get_aiida_code_config(code_key: str, node_name: str) -> dict[str, Any]:
     """Get AiiDA code configuration dict.
 
     Returns a configuration dict suitable for programmatic code setup
@@ -1624,7 +1643,7 @@ def get_aiida_code_config(code_key: str, node_name: str) -> Dict[str, Any]:
 # =============================================================================
 
 
-def validate_cluster_config() -> Tuple[bool, List[str]]:
+def validate_cluster_config() -> tuple[bool, list[str]]:
     """Validate beefcake2 cluster configuration consistency.
 
     Checks:
@@ -1642,7 +1661,7 @@ def validate_cluster_config() -> Tuple[bool, List[str]]:
             for issue in issues:
                 print(f"  - {issue}")
     """
-    issues: List[str] = []
+    issues: list[str] = []
 
     # Validate nodes
     for node_name, node in BEEFCAKE2_NODES.items():
@@ -1686,14 +1705,13 @@ def validate_cluster_config() -> Tuple[bool, List[str]]:
         memory_per_node = preset.memory_gb / preset.num_nodes
         if memory_per_node > max_memory:
             issues.append(
-                f"Preset {preset_name}: exceeds {max_memory}GB/node "
-                f"({memory_per_node:.0f}GB)"
+                f"Preset {preset_name}: exceeds {max_memory}GB/node ({memory_per_node:.0f}GB)"
             )
 
     return len(issues) == 0, issues
 
 
-def get_cluster_status_summary() -> Dict[str, Any]:
+def get_cluster_status_summary() -> dict[str, Any]:
     """Get summary of cluster configuration.
 
     Returns:

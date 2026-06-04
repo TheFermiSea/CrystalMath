@@ -14,20 +14,15 @@ Many tests are skipped as methods are private or require complex mocking.
 
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
-from dataclasses import dataclass
+from unittest.mock import Mock, patch
 
+import pytest
 from crystalmath.protocols import (
-    WorkflowType,
-    WorkflowStep,
-    WorkflowResult,
     ResourceRequirements,
-    ErrorRecoveryStrategy,
+    WorkflowResult,
+    WorkflowType,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -249,12 +244,14 @@ class TestStandardAnalysis:
         analysis._structure_info = Mock(formula="Si", space_group_symbol="Fd-3m")
 
         # Build steps (accessing private method for testing)
-        with patch.object(analysis, '_select_code', return_value='vasp'):
+        with patch.object(analysis, "_select_code", return_value="vasp"):
             steps = analysis._build_workflow_steps()
 
         assert len(steps) >= 2  # At least SCF and bands
 
-    def test_workflow_types_included(self, mock_cluster_profile: Mock, mock_structure: Mock) -> None:
+    def test_workflow_types_included(
+        self, mock_cluster_profile: Mock, mock_structure: Mock
+    ) -> None:
         """Test that correct workflow types are included."""
         from crystalmath.high_level.runners import StandardAnalysis
 
@@ -268,7 +265,7 @@ class TestStandardAnalysis:
         analysis._structure = mock_structure
         analysis._structure_info = Mock(formula="Si", space_group_symbol="Fd-3m")
 
-        with patch.object(analysis, '_select_code', return_value='vasp'):
+        with patch.object(analysis, "_select_code", return_value="vasp"):
             steps = analysis._build_workflow_steps()
 
         workflow_types = [s.workflow_type for s in steps]
@@ -372,7 +369,7 @@ class TestOpticalAnalysisConfiguration:
 
     def test_code_not_available(self) -> None:
         """Test error when code not available on cluster."""
-        from crystalmath.high_level.runners import OpticalAnalysis, CodeNotAvailableError
+        from crystalmath.high_level.runners import CodeNotAvailableError, OpticalAnalysis
 
         mock_cluster = Mock()
         mock_cluster.available_codes = ["vasp"]  # yambo not available
@@ -447,7 +444,7 @@ class TestPhononAnalysis:
         analysis._structure = mock_structure
         analysis._structure_info = Mock(formula="Si", space_group_symbol="Fd-3m")
 
-        with patch.object(analysis, '_select_code', return_value='vasp'):
+        with patch.object(analysis, "_select_code", return_value="vasp"):
             steps = analysis._build_workflow_steps()
 
         assert len(steps) >= 2

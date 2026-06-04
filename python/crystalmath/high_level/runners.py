@@ -48,20 +48,13 @@ import asyncio
 import logging
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncIterator,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
 )
 
 from crystalmath.protocols import (
@@ -73,7 +66,6 @@ from crystalmath.protocols import (
     WorkflowResult,
     WorkflowRunner,
     WorkflowStep,
-    WorkflowState,
     WorkflowType,
 )
 
@@ -117,6 +109,20 @@ class WorkflowExecutionError(RunnerError):
     pass
 
 
+class NoRunnerConfiguredError(RunnerError):
+    """No execution runner is configured and stub execution was not opted into.
+
+    Raised by :meth:`BaseAnalysisRunner._execute_step` when ``self._runner`` is
+    ``None`` and ``metadata['allow_stub_execution']`` was not explicitly set to
+    ``True``. Previously this case silently returned a fake-success
+    ``StepResult(success=True, outputs={'simulated': True})``, which is
+    indistinguishable from a real result over IPC. Per the AGENTS.md security
+    rule, stub execution must be explicitly opted into.
+    """
+
+    pass
+
+
 class CodeNotAvailableError(RunnerError):
     """Required DFT code not available on cluster."""
 
@@ -150,8 +156,8 @@ class RunnerConfig:
     """
 
     protocol: str = "moderate"
-    output_dir: Optional[Path] = None
-    progress_callback: Optional[ProgressCallback] = None
+    output_dir: Path | None = None
+    progress_callback: ProgressCallback | None = None
     recovery_strategy: ErrorRecoveryStrategy = ErrorRecoveryStrategy.ADAPTIVE
     checkpoint_interval: int = 1
     max_retries: int = 3
@@ -163,8 +169,7 @@ class RunnerConfig:
         valid_protocols = {"fast", "moderate", "precise"}
         if self.protocol not in valid_protocols:
             raise ValueError(
-                f"Invalid protocol: '{self.protocol}'. "
-                f"Valid options: {valid_protocols}"
+                f"Invalid protocol: '{self.protocol}'. Valid options: {valid_protocols}"
             )
         if self.output_dir:
             self.output_dir = Path(self.output_dir)
@@ -187,12 +192,12 @@ class StepResult:
 
     step_name: str
     success: bool
-    outputs: Dict[str, Any] = field(default_factory=dict)
-    errors: List[str] = field(default_factory=list)
-    wall_time_seconds: Optional[float] = None
-    cpu_time_seconds: Optional[float] = None
-    output_files: List[Path] = field(default_factory=list)
-    checkpoint_path: Optional[Path] = None
+    outputs: dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    wall_time_seconds: float | None = None
+    cpu_time_seconds: float | None = None
+    output_files: list[Path] = field(default_factory=list)
+    checkpoint_path: Path | None = None
 
 
 # =============================================================================
@@ -240,11 +245,11 @@ class BaseAnalysisRunner(ABC):
 
     def __init__(
         self,
-        cluster: Optional["ClusterProfile"] = None,
-        runner: Optional[WorkflowRunner] = None,
+        cluster: ClusterProfile | None = None,
+        runner: WorkflowRunner | None = None,
         protocol: str = "moderate",
-        output_dir: Optional[Union[str, Path]] = None,
-        progress_callback: Optional[ProgressCallback] = None,
+        output_dir: str | Path | None = None,
+        progress_callback: ProgressCallback | None = None,
         recovery_strategy: ErrorRecoveryStrategy = ErrorRecoveryStrategy.ADAPTIVE,
         **kwargs: Any,
     ) -> None:
@@ -292,13 +297,13 @@ class BaseAnalysisRunner(ABC):
             self._runner = None
 
         # State
-        self._structure: Optional["Structure"] = None
-        self._structure_info: Optional[StructureInfo] = None
-        self._workflow_id: Optional[str] = None
-        self._steps: List[WorkflowStep] = []
-        self._step_results: List[StepResult] = []
-        self._started_at: Optional[datetime] = None
-        self._completed_at: Optional[datetime] = None
+        self._structure: Structure | None = None
+        self._structure_info: StructureInfo | None = None
+        self._workflow_id: str | None = None
+        self._steps: list[WorkflowStep] = []
+        self._step_results: list[StepResult] = []
+        self._started_at: datetime | None = None
+        self._completed_at: datetime | None = None
 
         logger.debug(
             f"Initialized {self.__class__.__name__} with "
@@ -310,7 +315,7 @@ class BaseAnalysisRunner(ABC):
     # =========================================================================
 
     @property
-    def cluster(self) -> Optional["ClusterProfile"]:
+    def cluster(self) -> ClusterProfile | None:
         """Get cluster profile."""
         return self._cluster
 
@@ -320,32 +325,32 @@ class BaseAnalysisRunner(ABC):
         return self._config
 
     @property
-    def workflow_id(self) -> Optional[str]:
+    def workflow_id(self) -> str | None:
         """Get workflow ID (set after run starts)."""
         return self._workflow_id
 
     @property
-    def structure(self) -> Optional["Structure"]:
+    def structure(self) -> Structure | None:
         """Get loaded structure."""
         return self._structure
 
     @property
-    def structure_info(self) -> Optional[StructureInfo]:
+    def structure_info(self) -> StructureInfo | None:
         """Get structure metadata."""
         return self._structure_info
 
     @property
-    def steps(self) -> List[WorkflowStep]:
+    def steps(self) -> list[WorkflowStep]:
         """Get workflow steps."""
         return self._steps
 
     @property
-    def step_results(self) -> List[StepResult]:
+    def step_results(self) -> list[StepResult]:
         """Get results from completed steps."""
         return self._step_results
 
     @property
-    def available_codes(self) -> List[DFTCode]:
+    def available_codes(self) -> list[DFTCode]:
         """Get list of available DFT codes on cluster."""
         if self._cluster:
             return list(self._cluster.available_codes)
@@ -357,8 +362,8 @@ class BaseAnalysisRunner(ABC):
 
     def _create_slurm_runner(
         self,
-        cluster: "ClusterProfile",
-    ) -> Optional[WorkflowRunner]:
+        cluster: ClusterProfile,
+    ) -> WorkflowRunner | None:
         """Create a SLURMWorkflowRunner for the given cluster.
 
         This method is called automatically when a cluster with SLURM scheduler
@@ -392,9 +397,7 @@ class BaseAnalysisRunner(ABC):
                 default_code=default_code,
             )
 
-            logger.info(
-                f"Auto-selected SLURMWorkflowRunner for cluster '{cluster.name}'"
-            )
+            logger.info(f"Auto-selected SLURMWorkflowRunner for cluster '{cluster.name}'")
             return runner
 
         except ImportError as e:
@@ -415,7 +418,7 @@ class BaseAnalysisRunner(ABC):
     # =========================================================================
 
     @abstractmethod
-    def _build_workflow_steps(self) -> List[WorkflowStep]:
+    def _build_workflow_steps(self) -> list[WorkflowStep]:
         """Build the workflow step sequence.
 
         Subclasses implement this to define their specific workflow steps.
@@ -467,8 +470,8 @@ class BaseAnalysisRunner(ABC):
 
     def _load_structure(
         self,
-        source: Union[str, Path, "Structure"],
-    ) -> "Structure":
+        source: str | Path | Structure,
+    ) -> Structure:
         """Load structure from various input formats.
 
         Args:
@@ -488,8 +491,7 @@ class BaseAnalysisRunner(ABC):
             from pymatgen.core import Structure
         except ImportError:
             raise StructureLoadError(
-                "pymatgen is required for structure loading. "
-                "Install with: pip install pymatgen"
+                "pymatgen is required for structure loading. Install with: pip install pymatgen"
             )
 
         # Already a Structure
@@ -514,9 +516,7 @@ class BaseAnalysisRunner(ABC):
             return self._load_from_file(path)
 
         # Try as MP ID without prefix
-        if source_str.isdigit() or (
-            len(source_str) < 10 and source_str.replace("-", "").isalnum()
-        ):
+        if source_str.isdigit() or (len(source_str) < 10 and source_str.replace("-", "").isalnum()):
             try:
                 return self._load_from_mp(f"mp-{source_str}")
             except Exception:
@@ -527,7 +527,7 @@ class BaseAnalysisRunner(ABC):
             f"Expected: file path, 'mp-XXX' ID, or pymatgen Structure."
         )
 
-    def _load_from_file(self, path: Path) -> "Structure":
+    def _load_from_file(self, path: Path) -> Structure:
         """Load structure from file.
 
         Args:
@@ -548,7 +548,7 @@ class BaseAnalysisRunner(ABC):
         except Exception as e:
             raise StructureLoadError(f"Failed to load structure from {path}: {e}")
 
-    def _load_from_mp(self, material_id: str) -> "Structure":
+    def _load_from_mp(self, material_id: str) -> Structure:
         """Fetch structure from Materials Project.
 
         Args:
@@ -564,8 +564,7 @@ class BaseAnalysisRunner(ABC):
             from mp_api.client import MPRester
         except ImportError:
             raise StructureLoadError(
-                "mp-api is required for Materials Project access. "
-                "Install with: pip install mp-api"
+                "mp-api is required for Materials Project access. Install with: pip install mp-api"
             )
 
         try:
@@ -580,7 +579,7 @@ class BaseAnalysisRunner(ABC):
         except Exception as e:
             raise StructureLoadError(f"Failed to fetch {material_id} from MP: {e}")
 
-    def _load_from_aiida(self, pk_or_uuid: str) -> "Structure":
+    def _load_from_aiida(self, pk_or_uuid: str) -> Structure:
         """Load structure from AiiDA database.
 
         Args:
@@ -616,7 +615,7 @@ class BaseAnalysisRunner(ABC):
         except Exception as e:
             raise StructureLoadError(f"Failed to load AiiDA node {pk_or_uuid}: {e}")
 
-    def _get_structure_info(self, structure: "Structure") -> StructureInfo:
+    def _get_structure_info(self, structure: Structure) -> StructureInfo:
         """Extract metadata from structure.
 
         Args:
@@ -645,7 +644,7 @@ class BaseAnalysisRunner(ABC):
             dimensionality=self._get_dimensionality(structure),
         )
 
-    def _check_magnetic(self, structure: "Structure") -> bool:
+    def _check_magnetic(self, structure: Structure) -> bool:
         """Check if structure likely has magnetic ordering.
 
         Args:
@@ -655,14 +654,30 @@ class BaseAnalysisRunner(ABC):
             True if structure contains magnetic elements
         """
         magnetic_elements = {
-            "Fe", "Co", "Ni", "Mn", "Cr", "V", "Ti",
-            "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb",
-            "Nd", "Sm", "Eu", "Ce", "Pr",
+            "Fe",
+            "Co",
+            "Ni",
+            "Mn",
+            "Cr",
+            "V",
+            "Ti",
+            "Gd",
+            "Tb",
+            "Dy",
+            "Ho",
+            "Er",
+            "Tm",
+            "Yb",
+            "Nd",
+            "Sm",
+            "Eu",
+            "Ce",
+            "Pr",
         }
         elements = {str(el) for el in structure.composition.elements}
         return bool(elements & magnetic_elements)
 
-    def _get_dimensionality(self, structure: "Structure") -> int:
+    def _get_dimensionality(self, structure: Structure) -> int:
         """Determine structure dimensionality (3D, 2D, 1D, 0D).
 
         Args:
@@ -693,8 +708,8 @@ class BaseAnalysisRunner(ABC):
     def _select_code(
         self,
         workflow_type: WorkflowType,
-        preference: Optional[DFTCode] = None,
-        previous_code: Optional[DFTCode] = None,
+        preference: DFTCode | None = None,
+        previous_code: DFTCode | None = None,
     ) -> DFTCode:
         """Select appropriate DFT code for a workflow step.
 
@@ -735,7 +750,7 @@ class BaseAnalysisRunner(ABC):
         workflow_type: WorkflowType,
         code: DFTCode,
         **overrides: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generate calculation parameters.
 
         Args:
@@ -758,7 +773,7 @@ class BaseAnalysisRunner(ABC):
 
         return params
 
-    def _get_protocol_parameters(self, workflow_type: WorkflowType) -> Dict[str, Any]:
+    def _get_protocol_parameters(self, workflow_type: WorkflowType) -> dict[str, Any]:
         """Get parameters based on protocol level.
 
         Args:
@@ -800,7 +815,7 @@ class BaseAnalysisRunner(ABC):
         self,
         code: DFTCode,
         workflow_type: WorkflowType,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get code-specific parameters.
 
         Args:
@@ -810,38 +825,46 @@ class BaseAnalysisRunner(ABC):
         Returns:
             Code-specific parameters
         """
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
 
         if code == "vasp":
-            params.update({
-                "prec": "Accurate",
-                "algo": "Normal",
-                "ismear": 0,
-                "sigma": 0.05,
-            })
+            params.update(
+                {
+                    "prec": "Accurate",
+                    "algo": "Normal",
+                    "ismear": 0,
+                    "sigma": 0.05,
+                }
+            )
             if workflow_type == WorkflowType.RELAX:
                 params["ibrion"] = 2
                 params["isif"] = 3
                 params["nsw"] = 200
 
         elif code == "crystal23":
-            params.update({
-                "dft_type": "PBE",
-                "spinpol": "AUTO",
-            })
+            params.update(
+                {
+                    "dft_type": "PBE",
+                    "spinpol": "AUTO",
+                }
+            )
 
         elif code == "quantum_espresso":
-            params.update({
-                "calculation": "scf",
-                "ecutwfc": 60.0,  # Ry
-                "ecutrho": 480.0,  # Ry
-            })
+            params.update(
+                {
+                    "calculation": "scf",
+                    "ecutwfc": 60.0,  # Ry
+                    "ecutrho": 480.0,  # Ry
+                }
+            )
 
         elif code == "yambo":
-            params.update({
-                "gw_mode": "GW0",
-                "screening_bands": "auto",
-            })
+            params.update(
+                {
+                    "gw_mode": "GW0",
+                    "screening_bands": "auto",
+                }
+            )
 
         return params
 
@@ -851,9 +874,9 @@ class BaseAnalysisRunner(ABC):
 
     def run(
         self,
-        structure: Union[str, Path, "Structure"],
+        structure: str | Path | Structure,
         **kwargs: Any,
-    ) -> "AnalysisResults":
+    ) -> AnalysisResults:
         """Run the analysis workflow synchronously.
 
         This is the main entry point for workflow execution. It:
@@ -884,9 +907,7 @@ class BaseAnalysisRunner(ABC):
         self._workflow_id = str(uuid.uuid4())
         self._started_at = datetime.now()
 
-        logger.info(
-            f"Starting {self.__class__.__name__} workflow [{self._workflow_id[:8]}...]"
-        )
+        logger.info(f"Starting {self.__class__.__name__} workflow [{self._workflow_id[:8]}...]")
 
         try:
             # Load structure
@@ -947,9 +968,9 @@ class BaseAnalysisRunner(ABC):
 
     async def run_async(
         self,
-        structure: Union[str, Path, "Structure"],
+        structure: str | Path | Structure,
         **kwargs: Any,
-    ) -> AsyncIterator["ProgressUpdate"]:
+    ) -> AsyncIterator[ProgressUpdate]:
         """Run workflow asynchronously with progress updates.
 
         Yields ProgressUpdate objects for each step, enabling real-time
@@ -1005,9 +1026,7 @@ class BaseAnalysisRunner(ABC):
 
                 # Execute step (in thread pool for blocking operations)
                 try:
-                    step_result = await asyncio.to_thread(
-                        self._execute_step, step, **kwargs
-                    )
+                    step_result = await asyncio.to_thread(self._execute_step, step, **kwargs)
                     self._step_results.append(step_result)
 
                     # Yield progress for step completion
@@ -1071,7 +1090,7 @@ class BaseAnalysisRunner(ABC):
         """
         from .registry import PropertyCalculator
 
-        issues: List[str] = []
+        issues: list[str] = []
 
         # Check we have steps
         if not self._steps:
@@ -1086,9 +1105,7 @@ class BaseAnalysisRunner(ABC):
         for step in self._steps:
             for dep in step.depends_on:
                 if dep not in names:
-                    issues.append(
-                        f"Step '{step.name}' depends on unknown step '{dep}'"
-                    )
+                    issues.append(f"Step '{step.name}' depends on unknown step '{dep}'")
 
         # Check code compatibility
         is_valid, code_issues = PropertyCalculator.validate_workflow_codes(self._steps)
@@ -1097,7 +1114,7 @@ class BaseAnalysisRunner(ABC):
 
         if issues:
             raise WorkflowBuildError(
-                f"Workflow validation failed:\n" + "\n".join(f"  - {i}" for i in issues)
+                "Workflow validation failed:\n" + "\n".join(f"  - {i}" for i in issues)
             )
 
     def _setup_output_dir(self) -> None:
@@ -1105,11 +1122,7 @@ class BaseAnalysisRunner(ABC):
         if self._config.output_dir is None:
             # Create timestamped directory
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            formula = (
-                self._structure_info.formula
-                if self._structure_info
-                else "unknown"
-            )
+            formula = self._structure_info.formula if self._structure_info else "unknown"
             self._config.output_dir = Path(f"./results/{formula}_{timestamp}")
 
         self._config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1145,9 +1158,7 @@ class BaseAnalysisRunner(ABC):
             # Check for failure
             if not step_result.success:
                 if self._config.recovery_strategy == ErrorRecoveryStrategy.FAIL_FAST:
-                    raise WorkflowExecutionError(
-                        f"Step '{step.name}' failed: {step_result.errors}"
-                    )
+                    raise WorkflowExecutionError(f"Step '{step.name}' failed: {step_result.errors}")
                 elif self._config.recovery_strategy == ErrorRecoveryStrategy.ADAPTIVE:
                     # Try adaptive recovery
                     step_result = self._attempt_adaptive_recovery(step, step_result)
@@ -1171,13 +1182,17 @@ class BaseAnalysisRunner(ABC):
         logger.info(f"Executing step: {step.name} ({step.code})")
         start_time = datetime.now()
 
-        try:
-            # In real implementation, this would submit to runner
-            # For now, return stub result
-            if self._runner is None:
-                # Stub execution for development
+        # Handle the no-runner case BEFORE the broad try/except below so that a
+        # missing runner cannot be silently swallowed into a fake-success result.
+        if self._runner is None:
+            # Stub execution must be EXPLICITLY opted into (AGENTS.md security
+            # rule). Without that opt-in, returning success={'simulated': True}
+            # is indistinguishable from a real result over IPC, so we fail loud.
+            metadata = kwargs.get("metadata") or {}
+            if metadata.get("allow_stub_execution") is True:
                 logger.warning(
-                    f"No runner configured - step {step.name} will be simulated"
+                    f"No runner configured - step {step.name} will be simulated "
+                    f"(allow_stub_execution=True)"
                 )
                 return StepResult(
                     step_name=step.name,
@@ -1185,7 +1200,14 @@ class BaseAnalysisRunner(ABC):
                     outputs={"simulated": True},
                     wall_time_seconds=(datetime.now() - start_time).total_seconds(),
                 )
+            raise NoRunnerConfiguredError(
+                f"No execution runner is configured for step '{step.name}', so it "
+                f"cannot be run. This previously returned a fake 'simulated' success. "
+                f"To run without a real runner (e.g. for local development), explicitly "
+                f"opt into stub execution by passing metadata={{'allow_stub_execution': True}}."
+            )
 
+        try:
             # Real execution via runner
             result = self._runner.submit(
                 workflow_type=step.workflow_type,
@@ -1228,7 +1250,7 @@ class BaseAnalysisRunner(ABC):
             StepResult from successful attempt or last failure
         """
         max_retries = self._config.max_retries
-        last_result: Optional[StepResult] = None
+        last_result: StepResult | None = None
 
         for attempt in range(max_retries + 1):
             if attempt > 0:
@@ -1301,9 +1323,9 @@ class BaseAnalysisRunner(ABC):
         # Convergence issues - relax parameters
         if "convergence" in error_text or "scf" in error_text:
             logger.info("Detected convergence issue - adjusting parameters")
-            step.parameters["energy_convergence"] = step.parameters.get(
-                "energy_convergence", 1e-5
-            ) * 10
+            step.parameters["energy_convergence"] = (
+                step.parameters.get("energy_convergence", 1e-5) * 10
+            )
 
         # Retry with adjusted parameters
         return self._execute_step(step)
@@ -1315,9 +1337,9 @@ class BaseAnalysisRunner(ABC):
             Combined WorkflowResult
         """
         # Merge all outputs
-        all_outputs: Dict[str, Any] = {}
-        all_errors: List[str] = []
-        all_warnings: List[str] = []
+        all_outputs: dict[str, Any] = {}
+        all_errors: list[str] = []
+        all_warnings: list[str] = []
         total_wall_time = 0.0
         total_cpu_time = 0.0
 
@@ -1368,7 +1390,7 @@ class BaseAnalysisRunner(ABC):
     def _create_analysis_results(
         self,
         workflow_result: WorkflowResult,
-    ) -> "AnalysisResults":
+    ) -> AnalysisResults:
         """Convert WorkflowResult to AnalysisResults.
 
         Args:
@@ -1453,9 +1475,9 @@ class StandardAnalysis(BaseAnalysisRunner):
         include_relax: bool = True,
         include_bands: bool = True,
         include_dos: bool = True,
-        kpath: Union[str, List[Tuple[str, List[float]]]] = "auto",
-        dos_mesh: Optional[List[int]] = None,
-        dft_code: Optional[DFTCode] = None,
+        kpath: str | list[tuple[str, list[float]]] = "auto",
+        dos_mesh: list[int] | None = None,
+        dft_code: DFTCode | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize standard analysis runner.
@@ -1480,15 +1502,15 @@ class StandardAnalysis(BaseAnalysisRunner):
         self._dos_mesh = dos_mesh
         self._dft_code = dft_code
 
-    def _build_workflow_steps(self) -> List[WorkflowStep]:
+    def _build_workflow_steps(self) -> list[WorkflowStep]:
         """Build standard analysis workflow steps.
 
         Returns:
             List of WorkflowStep objects
         """
-        steps: List[WorkflowStep] = []
-        previous_step: Optional[str] = None
-        previous_code: Optional[DFTCode] = None
+        steps: list[WorkflowStep] = []
+        previous_step: str | None = None
+        previous_code: DFTCode | None = None
 
         # Select DFT code
         code = self._dft_code or self._select_code(WorkflowType.SCF)
@@ -1627,7 +1649,7 @@ class OpticalAnalysis(BaseAnalysisRunner):
         dft_code: DFTCode = "vasp",
         gw_code: DFTCode = "yambo",
         gw_protocol: str = "gw0",
-        n_bands_gw: Optional[int] = None,
+        n_bands_gw: int | None = None,
         n_valence_bse: int = 4,
         n_conduction_bse: int = 4,
         include_bse: bool = True,
@@ -1660,21 +1682,17 @@ class OpticalAnalysis(BaseAnalysisRunner):
         # Validate code availability
         if self._cluster:
             if dft_code not in self._cluster.available_codes:
-                raise CodeNotAvailableError(
-                    f"DFT code '{dft_code}' not available on cluster"
-                )
+                raise CodeNotAvailableError(f"DFT code '{dft_code}' not available on cluster")
             if gw_code not in self._cluster.available_codes:
-                raise CodeNotAvailableError(
-                    f"GW code '{gw_code}' not available on cluster"
-                )
+                raise CodeNotAvailableError(f"GW code '{gw_code}' not available on cluster")
 
-    def _build_workflow_steps(self) -> List[WorkflowStep]:
+    def _build_workflow_steps(self) -> list[WorkflowStep]:
         """Build GW/BSE workflow steps.
 
         Returns:
             List of WorkflowStep objects
         """
-        steps: List[WorkflowStep] = []
+        steps: list[WorkflowStep] = []
 
         # DFT ground state with dense k-mesh
         dft_params = self._get_parameters(WorkflowType.SCF, self._dft_code)
@@ -1818,11 +1836,11 @@ class PhononAnalysis(BaseAnalysisRunner):
 
     def __init__(
         self,
-        supercell: Optional[List[int]] = None,
+        supercell: list[int] | None = None,
         displacement: float = 0.01,
         include_thermodynamics: bool = True,
-        temperature_range: Tuple[float, float, float] = (0, 1000, 10),
-        dft_code: Optional[DFTCode] = None,
+        temperature_range: tuple[float, float, float] = (0, 1000, 10),
+        dft_code: DFTCode | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize phonon analysis runner.
@@ -1842,13 +1860,13 @@ class PhononAnalysis(BaseAnalysisRunner):
         self._temperature_range = temperature_range
         self._dft_code = dft_code
 
-    def _build_workflow_steps(self) -> List[WorkflowStep]:
+    def _build_workflow_steps(self) -> list[WorkflowStep]:
         """Build phonon workflow steps.
 
         Returns:
             List of WorkflowStep objects
         """
-        steps: List[WorkflowStep] = []
+        steps: list[WorkflowStep] = []
 
         # Select code
         code = self._dft_code or self._select_code(WorkflowType.PHONON)
@@ -1965,7 +1983,7 @@ class ElasticAnalysis(BaseAnalysisRunner):
         self,
         strain_magnitude: float = 0.01,
         num_strains: int = 6,
-        dft_code: Optional[DFTCode] = None,
+        dft_code: DFTCode | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize elastic analysis runner.
@@ -1981,13 +1999,13 @@ class ElasticAnalysis(BaseAnalysisRunner):
         self._num_strains = num_strains
         self._dft_code = dft_code or "vasp"
 
-    def _build_workflow_steps(self) -> List[WorkflowStep]:
+    def _build_workflow_steps(self) -> list[WorkflowStep]:
         """Build elastic workflow steps.
 
         Returns:
             List of WorkflowStep objects
         """
-        steps: List[WorkflowStep] = []
+        steps: list[WorkflowStep] = []
         code = self._dft_code
 
         # Relaxation (tight convergence)
@@ -2085,10 +2103,10 @@ class TransportAnalysis(BaseAnalysisRunner):
 
     def __init__(
         self,
-        doping_levels: Optional[List[float]] = None,
-        temperature_range: Tuple[float, float, float] = (300, 800, 50),
+        doping_levels: list[float] | None = None,
+        temperature_range: tuple[float, float, float] = (300, 800, 50),
         interpolation_factor: int = 5,
-        dft_code: Optional[DFTCode] = None,
+        dft_code: DFTCode | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize transport analysis runner.
@@ -2106,13 +2124,13 @@ class TransportAnalysis(BaseAnalysisRunner):
         self._interpolation_factor = interpolation_factor
         self._dft_code = dft_code or "vasp"
 
-    def _build_workflow_steps(self) -> List[WorkflowStep]:
+    def _build_workflow_steps(self) -> list[WorkflowStep]:
         """Build transport workflow steps.
 
         Returns:
             List of WorkflowStep objects
         """
-        steps: List[WorkflowStep] = []
+        steps: list[WorkflowStep] = []
         code = self._dft_code
 
         # Relaxation
@@ -2225,13 +2243,13 @@ class NonlinearOpticsAnalysis(BaseAnalysisRunner):
     def __init__(
         self,
         response_type: str = "SHG",
-        energy_range: Tuple[float, float] = (0.5, 3.5),
+        energy_range: tuple[float, float] = (0.5, 3.5),
         energy_steps: int = 500,
         damping: float = 0.1,
         dft_code: DFTCode = "quantum_espresso",
-        n_bands: Optional[int] = None,
+        n_bands: int | None = None,
         include_excitons: bool = False,
-        k_mesh: Optional[List[int]] = None,
+        k_mesh: list[int] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize nonlinear optics analysis runner.
@@ -2264,8 +2282,7 @@ class NonlinearOpticsAnalysis(BaseAnalysisRunner):
         valid_responses = {"SHG", "THG", "SHIFT"}
         if self._response_type not in valid_responses:
             raise ValueError(
-                f"Invalid response_type: '{response_type}'. "
-                f"Valid options: {valid_responses}"
+                f"Invalid response_type: '{response_type}'. Valid options: {valid_responses}"
             )
 
         # Warn about exciton requirements
@@ -2276,13 +2293,13 @@ class NonlinearOpticsAnalysis(BaseAnalysisRunner):
                 "Falling back to IPA if GW fails."
             )
 
-    def _build_workflow_steps(self) -> List[WorkflowStep]:
+    def _build_workflow_steps(self) -> list[WorkflowStep]:
         """Build nonlinear optics workflow steps.
 
         Returns:
             List of WorkflowStep objects
         """
-        steps: List[WorkflowStep] = []
+        steps: list[WorkflowStep] = []
 
         # Determine k-mesh and bands based on protocol
         k_mesh = self._k_mesh or self._get_auto_k_mesh()
@@ -2338,7 +2355,7 @@ class NonlinearOpticsAnalysis(BaseAnalysisRunner):
 
         return steps
 
-    def _get_yambo_nl_parameters(self) -> Dict[str, Any]:
+    def _get_yambo_nl_parameters(self) -> dict[str, Any]:
         """Get parameters for yambo_nl calculation.
 
         Returns:
@@ -2363,7 +2380,7 @@ class NonlinearOpticsAnalysis(BaseAnalysisRunner):
 
         return params
 
-    def _get_auto_k_mesh(self) -> List[int]:
+    def _get_auto_k_mesh(self) -> list[int]:
         """Get automatic k-mesh based on protocol.
 
         Returns:
@@ -2453,6 +2470,7 @@ __all__ = [
     "StructureLoadError",
     "WorkflowBuildError",
     "WorkflowExecutionError",
+    "NoRunnerConfiguredError",
     "CodeNotAvailableError",
     "MultiCodeHandoffError",
     # Configuration

@@ -9,23 +9,19 @@ Tests cover:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Any, Dict, Optional
-import tempfile
 
 import pytest
-
 from crystalmath.quacc.potcar import (
+    get_potcar_info,
     get_potcar_path,
     validate_potcars,
-    get_potcar_info,
 )
 from crystalmath.quacc.runner import (
     JobRunner,
     JobState,
-    get_runner,
     get_or_create_runner,
+    get_runner,
 )
 
 
@@ -62,6 +58,7 @@ class TestPotcarValidation:
         monkeypatch.delenv("VASP_PP_PATH", raising=False)
         # Also mock quacc import to fail
         import sys
+
         if "quacc" in sys.modules:
             monkeypatch.setattr(sys.modules["quacc"], "SETTINGS", None)
 
@@ -208,14 +205,18 @@ class TestJobRunnerABC:
 
     def test_job_runner_generate_job_id(self):
         """Test job ID generation."""
+
         # Use a concrete implementation to test inherited method
         class TestRunner(JobRunner):
             def submit(self, *args, **kwargs):
                 return self.generate_job_id()
+
             def get_status(self, job_id):
                 return JobState.PENDING
+
             def get_result(self, job_id):
                 return None
+
             def cancel(self, job_id):
                 return False
 
@@ -227,23 +228,78 @@ class TestJobRunnerABC:
 
     def test_job_runner_import_recipe_invalid(self):
         """Test recipe import fails for invalid path."""
+
         class TestRunner(JobRunner):
             def submit(self, *args, **kwargs):
                 pass
+
             def get_status(self, job_id):
                 return JobState.PENDING
+
             def get_result(self, job_id):
                 return None
+
             def cancel(self, job_id):
                 return False
 
         runner = TestRunner()
 
-        with pytest.raises(ValueError, match="Invalid recipe path"):
+        # Disallowed namespaces are rejected by the security allowlist before any
+        # dynamic import is attempted (crystalmath-6l8).
+        with pytest.raises(ValueError, match="not permitted"):
             runner._import_recipe("invalid")
 
-        with pytest.raises(ValueError, match="Cannot import recipe"):
+        with pytest.raises(ValueError, match="not permitted"):
             runner._import_recipe("nonexistent.module.function")
+
+        # An allowed namespace whose module/function does not exist still fails
+        # cleanly with an import error.
+        with pytest.raises(ValueError, match="Cannot import recipe"):
+            runner._import_recipe("quacc.recipes.nonexistent.function")
+
+        # Dunder segments are an attribute-traversal vector and are rejected by
+        # the allowlist (isidentifier() alone would accept "__builtins__").
+        with pytest.raises(ValueError, match="not permitted"):
+            runner._import_recipe("quacc.recipes.__builtins__")
+
+        # Non-ASCII homoglyph segments are rejected (fullwidth 'v').
+        with pytest.raises(ValueError, match="not permitted"):
+            runner._import_recipe("quacc.recipes.ｖasp.core.relax_job")
+
+    def test_job_runner_import_recipe_requires_callable(self):
+        """_import_recipe rejects an allowed path that resolves to a non-callable."""
+        import sys
+        import types
+
+        class TestRunner(JobRunner):
+            def submit(self, *args, **kwargs):
+                pass
+
+            def get_status(self, job_id):
+                return JobState.PENDING
+
+            def get_result(self, job_id):
+                return None
+
+            def cancel(self, job_id):
+                return False
+
+        runner = TestRunner()
+        mod_name = "quacc.recipes.faketest_runner.core"
+        mod = types.ModuleType(mod_name)
+        mod.constant = 3.14  # not callable
+
+        def relax_job():  # pragma: no cover - body never executed
+            return "ok"
+
+        mod.relax_job = relax_job
+        try:
+            sys.modules[mod_name] = mod
+            with pytest.raises(ValueError, match="did not resolve to a callable"):
+                runner._import_recipe(f"{mod_name}.constant")
+            assert runner._import_recipe(f"{mod_name}.relax_job") is relax_job
+        finally:
+            sys.modules.pop(mod_name, None)
 
 
 class TestGetRunner:
@@ -261,6 +317,7 @@ class TestGetRunner:
             assert runner is not None
             # ParslRunner is a JobRunner
             from crystalmath.quacc.parsl_runner import ParslRunner
+
             assert isinstance(runner, ParslRunner)
         except ImportError:
             pytest.skip("Parsl runner dependencies not installed")
@@ -271,6 +328,7 @@ class TestGetRunner:
             runner = get_runner("covalent")
             assert runner is not None
             from crystalmath.quacc.covalent_runner import CovalentRunner
+
             assert isinstance(runner, CovalentRunner)
         except ImportError:
             pytest.skip("Covalent runner dependencies not installed")

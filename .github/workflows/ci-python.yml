@@ -109,9 +109,9 @@ jobs:
           fi
           echo "✓ Ruff errors ($current) ≤ baseline ($baseline)"
 
-      - name: Run Python tests
-        run: |
-          mapfile -t targets <<'EOF'
-          ${{ steps.changes.outputs.pytest_targets }}
-          EOF
-          uv run pytest "${targets[@]}" -x -q
+      - name: Run Python core test suite
+        # Always run the ENTIRE crystalmath core suite (the ADR-006 business-logic
+        # SSOT), not just changed/smoke files — a refactor of python/crystalmath
+        # with no test edits must still be fully covered. Tests needing optional
+        # science backends skip gracefully when those extras are absent.
+        run: uv run pytest python/tests/ -x -q

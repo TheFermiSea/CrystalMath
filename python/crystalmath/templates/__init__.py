@@ -32,9 +32,10 @@ Usage:
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Optional
+from typing import List, Optional
 
 import yaml
 
@@ -63,7 +64,7 @@ class TemplateInfo:
     path: Path
     description: str = ""
     dft_code: str = "crystal"  # crystal, vasp, qe
-    tags: List[str] = None
+    tags: list[str] = None
 
     def __post_init__(self):
         if self.tags is None:
@@ -87,8 +88,8 @@ def _parse_template_metadata(path: Path) -> dict:
 
 
 def list_templates(
-    category: Optional[str] = None,
-    dft_code: Optional[str] = None,
+    category: str | None = None,
+    dft_code: str | None = None,
 ) -> Iterator[TemplateInfo]:
     """
     List available templates.
@@ -103,10 +104,11 @@ def list_templates(
     templates_dir = get_template_dir()
 
     # Categories to search
-    categories = [category] if category else [
-        d.name for d in templates_dir.iterdir()
-        if d.is_dir() and not d.name.startswith("_")
-    ]
+    categories = (
+        [category]
+        if category
+        else [d.name for d in templates_dir.iterdir() if d.is_dir() and not d.name.startswith("_")]
+    )
 
     # Map category names to default DFT codes
     category_code_map = {"vasp": "vasp", "qe": "qe"}
@@ -136,7 +138,7 @@ def list_templates(
                 )
 
 
-def get_template(template_id: str) -> Optional[Path]:
+def get_template(template_id: str) -> Path | None:
     """
     Get path to a template by ID.
 
@@ -167,7 +169,7 @@ def get_template(template_id: str) -> Optional[Path]:
     return None
 
 
-def load_template(template_id: str) -> Optional[dict]:
+def load_template(template_id: str) -> dict | None:
     """
     Load a template by ID.
 

@@ -13,7 +13,7 @@ Example:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from crystalmath.protocols import ProgressCallback, WorkflowResult, WorkflowType
 
@@ -68,7 +68,7 @@ class ConsoleProgressCallback(ProgressCallback):
         workflow_id: str,
         step: str,
         progress_percent: float,
-        message: Optional[str] = None,
+        message: str | None = None,
     ) -> None:
         """Called on progress update.
 
@@ -157,8 +157,8 @@ class JupyterProgressCallback(ProgressCallback):
         self._initialized = False
 
         try:
-            from ipywidgets import FloatProgress, HTML, VBox
             from IPython.display import display
+            from ipywidgets import HTML, FloatProgress, VBox
 
             self._progress_bar = FloatProgress(
                 min=0,
@@ -172,9 +172,7 @@ class JupyterProgressCallback(ProgressCallback):
             display(self._widget)
             self._initialized = True
         except ImportError:
-            logger.warning(
-                "ipywidgets not available, falling back to console progress"
-            )
+            logger.warning("ipywidgets not available, falling back to console progress")
 
     def on_started(self, workflow_id: str, workflow_type: WorkflowType) -> None:
         """Called when workflow starts."""
@@ -191,7 +189,7 @@ class JupyterProgressCallback(ProgressCallback):
         workflow_id: str,
         step: str,
         progress_percent: float,
-        message: Optional[str] = None,
+        message: str | None = None,
     ) -> None:
         """Called on progress update."""
         if self._initialized and self._progress_bar and self._status_label:
@@ -269,17 +267,14 @@ class LoggingProgressCallback(ProgressCallback):
 
     def on_started(self, workflow_id: str, workflow_type: WorkflowType) -> None:
         """Called when workflow starts."""
-        self._logger.log(
-            self._level,
-            f"Workflow started: {workflow_type.value} [{workflow_id}]"
-        )
+        self._logger.log(self._level, f"Workflow started: {workflow_type.value} [{workflow_id}]")
 
     def on_progress(
         self,
         workflow_id: str,
         step: str,
         progress_percent: float,
-        message: Optional[str] = None,
+        message: str | None = None,
     ) -> None:
         """Called on progress update."""
         msg = f"[{workflow_id[:8]}] {progress_percent:.1f}% - {step}"
@@ -333,7 +328,7 @@ class NullProgressCallback(ProgressCallback):
         workflow_id: str,
         step: str,
         progress_percent: float,
-        message: Optional[str] = None,
+        message: str | None = None,
     ) -> None:
         """Called on progress update."""
         pass

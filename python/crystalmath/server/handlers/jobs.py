@@ -9,10 +9,10 @@ This module provides handlers for:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from io import StringIO
 from typing import TYPE_CHECKING, Any
-import logging
 
 from crystalmath.server.handlers import register_handler
 
@@ -90,9 +90,13 @@ async def handle_jobs_submit(
         }
     """
     from crystalmath.quacc.engines import get_workflow_engine
-    from crystalmath.quacc.runner import get_or_create_runner
     from crystalmath.quacc.potcar import validate_potcars
-    from crystalmath.quacc.store import JobStatus, JobMetadata, JobStore
+    from crystalmath.quacc.runner import (
+        ALLOWED_RECIPE_PREFIX,
+        get_or_create_runner,
+        is_allowed_recipe,
+    )
+    from crystalmath.quacc.store import JobMetadata, JobStatus, JobStore
 
     # Check workflow engine is configured
     engine = get_workflow_engine()
@@ -113,6 +117,20 @@ async def handle_jobs_submit(
             "job_id": None,
             "status": "error",
             "error": "recipe parameter is required",
+        }
+
+    # Allowlist the recipe before it ever reaches the dynamic import in the
+    # runner: an IPC client must not be able to import arbitrary modules. See
+    # crystalmath-6l8.
+    if not is_allowed_recipe(recipe):
+        logger.warning("Rejected disallowed recipe in jobs.submit: %r", recipe)
+        return {
+            "job_id": None,
+            "status": "error",
+            "error": (
+                f"Invalid recipe {recipe!r}: must be a quacc recipe under "
+                f"'{ALLOWED_RECIPE_PREFIX}'."
+            ),
         }
 
     structure_data = params.get("structure")
@@ -215,7 +233,7 @@ async def handle_jobs_status(
         }
     """
     from crystalmath.quacc.engines import get_workflow_engine
-    from crystalmath.quacc.runner import get_or_create_runner, JobState
+    from crystalmath.quacc.runner import JobState, get_or_create_runner
     from crystalmath.quacc.store import JobStatus, JobStore
 
     job_id = params.get("job_id")
@@ -399,8 +417,8 @@ def _parse_structure(structure_data: str | dict) -> Any:
     Raises:
         ValueError: If structure format is unknown
     """
-    from ase.io import read
     from ase import Atoms
+    from ase.io import read
 
     if isinstance(structure_data, str):
         # POSCAR string
@@ -537,19 +555,28 @@ def _analyze_vasp_errors_fallback(content: str) -> list[dict[str, Any]]:
     seen_codes: set[str] = set()
 
     for line in content.split("\n"):
-        for pattern, code, severity, message, suggestions, incar_changes in _VASP_ERROR_PATTERNS_FALLBACK:
+        for (
+            pattern,
+            code,
+            severity,
+            message,
+            suggestions,
+            incar_changes,
+        ) in _VASP_ERROR_PATTERNS_FALLBACK:
             if code in seen_codes:
                 continue
             if re.search(pattern, line, re.IGNORECASE):
                 seen_codes.add(code)
-                errors.append({
-                    "code": code,
-                    "severity": severity,
-                    "message": message,
-                    "line_content": line.strip()[:100],
-                    "suggestions": suggestions,
-                    "incar_changes": incar_changes,
-                })
+                errors.append(
+                    {
+                        "code": code,
+                        "severity": severity,
+                        "message": message,
+                        "line_content": line.strip()[:100],
+                        "suggestions": suggestions,
+                        "incar_changes": incar_changes,
+                    }
+                )
                 break  # Only match first pattern per line
 
     return errors
@@ -564,9 +591,9 @@ def _analyze_vasp_errors(content: str) -> list[dict[str, Any]]:
     Returns:
         List of error dictionaries
     """
-    # Try to use the full VASPErrorHandler from tui
+    # Try to use the full VASPErrorHandler (vendored from the deprecated TUI).
     try:
-        from tui.src.runners.vasp_errors import VASPErrorHandler
+        from crystalmath._vendor.runners.vasp_errors import VASPErrorHandler
 
         handler = VASPErrorHandler()
         vasp_errors = handler.analyze_outcar(content)
@@ -818,9 +845,7 @@ async def handle_jobs_get_output_file(
 
     # Read file content in a thread to avoid blocking the event loop
     try:
-        result = await asyncio.to_thread(
-            _read_file_with_tail, str(file_path), tail_lines
-        )
+        result = await asyncio.to_thread(_read_file_with_tail, str(file_path), tail_lines)
         return {"ok": True, "data": result}
     except Exception as e:
         logger.exception("Failed to read file %s", file_path)
@@ -846,6 +871,7 @@ def _summarize_result(result: dict) -> dict:
     if "results" in result and "forces" in result["results"]:
         try:
             import numpy as np
+
             forces = np.array(result["results"]["forces"])
             summary["max_force_ev_ang"] = float(np.max(np.linalg.norm(forces, axis=1)))
         except Exception:

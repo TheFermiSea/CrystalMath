@@ -14,15 +14,12 @@ Tests are designed to verify API behavior without running actual calculations.
 from __future__ import annotations
 
 import json
-import pytest
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
-from dataclasses import dataclass
-from datetime import datetime
+from typing import Any
+from unittest.mock import Mock
 
+import pytest
 from crystalmath.protocols import WorkflowType
-
 
 # Check if optional dependencies are available
 try:
@@ -270,7 +267,7 @@ class TestValidateProperties:
             ["scf", "gw", "bse"],
         ],
     )
-    def test_valid_combinations(self, properties: List[str]) -> None:
+    def test_valid_combinations(self, properties: list[str]) -> None:
         """Test validation of valid property combinations."""
         from crystalmath.high_level.api import HighThroughput
 
@@ -286,9 +283,7 @@ class TestValidateProperties:
 class TestHighThroughputEntryPoints:
     """Tests for HighThroughput entry point methods."""
 
-    def test_run_standard_analysis_returns_results(
-        self, mock_structure: Mock
-    ) -> None:
+    def test_run_standard_analysis_returns_results(self, mock_structure: Mock) -> None:
         """Test that run_standard_analysis returns AnalysisResults."""
         from crystalmath.high_level.api import HighThroughput
         from crystalmath.high_level.results import AnalysisResults
@@ -800,8 +795,8 @@ class TestAPIIntegration:
     def test_property_info_matches_definitions(self) -> None:
         """Test that property info matches definitions."""
         from crystalmath.high_level.api import (
-            HighThroughput,
             PROPERTY_DEFINITIONS,
+            HighThroughput,
         )
 
         for prop_name in PROPERTY_DEFINITIONS:
@@ -893,3 +888,131 @@ class TestModuleExports:
         from crystalmath.high_level import results
 
         assert hasattr(results, "DielectricTensor")
+
+
+# =============================================================================
+# Test BaseAnalysisRunner stub-execution guard (crystalmath-b0d)
+# =============================================================================
+
+
+def _make_runnerless_analysis() -> Any:
+    """Build a minimal BaseAnalysisRunner subclass with no runner configured.
+
+    BaseAnalysisRunner is abstract, so we provide trivial implementations of its
+    abstract methods. With no cluster and no runner, ``self._runner`` is None,
+    which is exactly the condition under test.
+    """
+    from crystalmath.high_level.runners import BaseAnalysisRunner
+    from crystalmath.protocols import ResourceRequirements, WorkflowStep, WorkflowType
+
+    class _RunnerlessAnalysis(BaseAnalysisRunner):
+        def _build_workflow_steps(self) -> list[Any]:
+            return [
+                WorkflowStep(
+                    name="scf",
+                    workflow_type=WorkflowType.SCF,
+                    code="vasp",
+                )
+            ]
+
+        def _get_default_resources(self) -> Any:
+            return ResourceRequirements()
+
+    analysis = _RunnerlessAnalysis()
+    assert analysis._runner is None
+    return analysis
+
+
+def _make_step() -> Any:
+    """Build a single WorkflowStep for direct _execute_step testing."""
+    from crystalmath.protocols import WorkflowStep, WorkflowType
+
+    return WorkflowStep(name="scf", workflow_type=WorkflowType.SCF, code="vasp")
+
+
+class TestExecuteStepStubGuard:
+    """Tests for the no-runner stub-execution guard in _execute_step.
+
+    Regression coverage for crystalmath-b0d: previously _execute_step silently
+    returned StepResult(success=True, outputs={'simulated': True}) whenever no
+    runner was configured. It must now RAISE unless stub execution is explicitly
+    opted into via metadata['allow_stub_execution'] is True.
+    """
+
+    def test_raises_when_no_runner_and_no_metadata(self) -> None:
+        """No runner + no metadata -> raises NoRunnerConfiguredError, not fake success."""
+        from crystalmath.high_level.runners import NoRunnerConfiguredError
+
+        analysis = _make_runnerless_analysis()
+        step = _make_step()
+
+        with pytest.raises(NoRunnerConfiguredError):
+            analysis._execute_step(step)
+
+    def test_raises_when_allow_stub_execution_false(self) -> None:
+        """Explicit allow_stub_execution=False still raises."""
+        from crystalmath.high_level.runners import NoRunnerConfiguredError
+
+        analysis = _make_runnerless_analysis()
+        step = _make_step()
+
+        with pytest.raises(NoRunnerConfiguredError):
+            analysis._execute_step(step, metadata={"allow_stub_execution": False})
+
+    def test_raises_when_metadata_present_without_flag(self) -> None:
+        """metadata present but missing the flag still raises."""
+        from crystalmath.high_level.runners import NoRunnerConfiguredError
+
+        analysis = _make_runnerless_analysis()
+        step = _make_step()
+
+        with pytest.raises(NoRunnerConfiguredError):
+            analysis._execute_step(step, metadata={"something_else": True})
+
+    def test_raises_when_flag_is_truthy_but_not_true(self) -> None:
+        """Only a literal True opts in; truthy-but-not-True values still raise."""
+        from crystalmath.high_level.runners import NoRunnerConfiguredError
+
+        analysis = _make_runnerless_analysis()
+        step = _make_step()
+
+        # "yes" is truthy but is not the literal True; must not enable stub mode.
+        with pytest.raises(NoRunnerConfiguredError):
+            analysis._execute_step(step, metadata={"allow_stub_execution": "yes"})
+
+    def test_returns_simulated_when_opted_in(self) -> None:
+        """Explicit allow_stub_execution=True returns the simulated StepResult."""
+        analysis = _make_runnerless_analysis()
+        step = _make_step()
+
+        result = analysis._execute_step(step, metadata={"allow_stub_execution": True})
+
+        assert result.success is True
+        assert result.outputs == {"simulated": True}
+        assert result.step_name == "scf"
+
+    def test_error_is_not_swallowed_into_failed_step_result(self) -> None:
+        """The guard must propagate, not be caught by the broad except clause."""
+        from crystalmath.high_level.runners import (
+            NoRunnerConfiguredError,
+            RunnerError,
+        )
+
+        analysis = _make_runnerless_analysis()
+        step = _make_step()
+
+        # If the guard were inside the try/except, this would return a
+        # StepResult(success=False) instead of raising.
+        with pytest.raises(RunnerError) as exc_info:
+            analysis._execute_step(step)
+        assert isinstance(exc_info.value, NoRunnerConfiguredError)
+
+    def test_error_message_mentions_opt_in(self) -> None:
+        """Error message must explain how to opt into stub execution."""
+        from crystalmath.high_level.runners import NoRunnerConfiguredError
+
+        analysis = _make_runnerless_analysis()
+        step = _make_step()
+
+        with pytest.raises(NoRunnerConfiguredError, match="allow_stub_execution"):
+            analysis._execute_step(step)

@@ -92,9 +92,8 @@ class TestKpointsBuilder:
     )
     def test_from_density(self):
         """Test automatic mesh from k-point density."""
-        from pymatgen.core import Lattice, Structure
-
         from crystalmath.vasp.kpoints import KpointsBuilder
+        from pymatgen.core import Lattice, Structure
 
         # Create a simple cubic structure
         lattice = Lattice.cubic(5.0)
@@ -118,15 +117,12 @@ class TestVaspInputGenerator:
     )
     def test_generate_complete_inputs(self):
         """Test complete VASP input generation."""
-        from pymatgen.core import Lattice, Structure
-
         from crystalmath.vasp import IncarPreset, VaspInputGenerator
+        from pymatgen.core import Lattice, Structure
 
         # Create a simple structure
         lattice = Lattice.cubic(5.43)
-        structure = Structure(
-            lattice, ["Si", "Si"], [[0, 0, 0], [0.25, 0.25, 0.25]]
-        )
+        structure = Structure(lattice, ["Si", "Si"], [[0, 0, 0], [0.25, 0.25, 0.25]])
 
         generator = VaspInputGenerator(structure, preset=IncarPreset.STATIC)
         inputs = generator.generate()
@@ -153,9 +149,8 @@ class TestVaspInputGenerator:
     )
     def test_estimate_encut(self):
         """Test ENCUT estimation from elements."""
-        from pymatgen.core import Lattice, Structure
-
         from crystalmath.vasp import VaspInputGenerator
+        from pymatgen.core import Lattice, Structure
 
         # Si structure - ENMAX ~245 eV, estimated ENCUT ~320 eV (1.3x)
         lattice = Lattice.cubic(5.43)
@@ -173,9 +168,8 @@ class TestVaspInputGenerator:
         """Test VaspInputs is JSON-serializable."""
         import json
 
-        from pymatgen.core import Lattice, Structure
-
         from crystalmath.vasp import VaspInputGenerator
+        from pymatgen.core import Lattice, Structure
 
         lattice = Lattice.cubic(5.0)
         structure = Structure(lattice, ["Si"], [[0, 0, 0]])
@@ -204,9 +198,8 @@ class TestStructureToPoscar:
     )
     def test_structure_to_poscar_basic(self):
         """Test basic POSCAR generation."""
-        from pymatgen.core import Lattice, Structure
-
         from crystalmath.integrations.pymatgen_bridge import structure_to_poscar
+        from pymatgen.core import Lattice, Structure
 
         lattice = Lattice.cubic(5.0)
         structure = Structure(lattice, ["Si", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]])
@@ -225,9 +218,8 @@ class TestStructureToPoscar:
     )
     def test_structure_to_poscar_custom_comment(self):
         """Test POSCAR with custom comment."""
-        from pymatgen.core import Lattice, Structure
-
         from crystalmath.integrations.pymatgen_bridge import structure_to_poscar
+        from pymatgen.core import Lattice, Structure
 
         lattice = Lattice.cubic(5.0)
         structure = Structure(lattice, ["Si"], [[0, 0, 0]])

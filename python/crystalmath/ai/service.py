@@ -49,8 +49,19 @@ class AIService:
         Args:
             api_key: Anthropic API key. If None, uses ANTHROPIC_API_KEY env var.
             model: Model identifier. Defaults to claude-sonnet-4-20250514.
+
+        Raises:
+            ValueError: If no API key is provided or found in the environment.
         """
-        self.client = Anthropic(api_key=api_key or os.getenv("ANTHROPIC_API_KEY"))
+        key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        if not key:
+            # Fail fast with a clear message instead of deferring to a late,
+            # cryptic failure inside the first API request.
+            raise ValueError(
+                "No Anthropic API key configured. Pass api_key= or set the "
+                "ANTHROPIC_API_KEY environment variable to use AI features."
+            )
+        self.client = Anthropic(api_key=key)
         self.model = model
 
     def diagnose_job(

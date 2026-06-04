@@ -41,6 +41,9 @@ pub struct RecipeBrowserState {
 
 impl RecipeBrowserState {
     /// Create a new recipe browser state.
+    ///
+    /// Test-only convenience wrapper over `Default`; production code constructs
+    /// this via `..Default::default()` in `App`.
     #[cfg(test)]
     pub fn new() -> Self {
         Self::default()

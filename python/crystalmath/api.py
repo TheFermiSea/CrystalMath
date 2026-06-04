@@ -167,7 +167,7 @@ class CrystalController:
         """Initialize SQLite database for fallback mode."""
         try:
             # Import TUI database module via uv workspace (crystal-tui package)
-            from src.core.database import Database
+            from crystalmath._vendor.core.database import Database
 
             self._db = Database(Path(db_path))
             logger.info(f"Loaded SQLite database: {db_path}")
@@ -988,8 +988,8 @@ class CrystalController:
 
         async def _run() -> list[dict[str, Any]]:
             # Lazy import to avoid loading heavy dependencies on startup
-            from src.core.materials_api.service import MaterialsService
-            from src.core.materials_api.settings import MaterialsSettings
+            from crystalmath._vendor.core.materials_api.service import MaterialsService
+            from crystalmath._vendor.core.materials_api.settings import MaterialsSettings
 
             settings = MaterialsSettings.get_instance()
 
@@ -1034,8 +1034,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> str:
-            from src.core.materials_api.service import MaterialsService
-            from src.core.materials_api.settings import MaterialsSettings
+            from crystalmath._vendor.core.materials_api.service import MaterialsService
+            from crystalmath._vendor.core.materials_api.settings import MaterialsSettings
 
             settings = MaterialsSettings.get_instance()
 
@@ -1072,8 +1072,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> dict[str, Any]:
-            from src.core.materials_api.service import MaterialsService
-            from src.core.materials_api.settings import MaterialsSettings
+            from crystalmath._vendor.core.materials_api.service import MaterialsService
+            from crystalmath._vendor.core.materials_api.settings import MaterialsSettings
 
             settings = MaterialsSettings.get_instance()
 
@@ -1124,8 +1124,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> list[dict[str, Any]]:
-            from src.core.connection_manager import ConnectionManager
-            from src.runners.slurm_runner import SLURMRunner
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
+            from crystalmath._vendor.runners.slurm_runner import SLURMRunner
 
             # Get cluster config from database
             if not hasattr(self, "_db") or not self._db:
@@ -1212,8 +1212,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> None:
-            from src.core.connection_manager import ConnectionManager
-            from src.runners.slurm_runner import SLURMRunner
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
+            from crystalmath._vendor.runners.slurm_runner import SLURMRunner
 
             if not hasattr(self, "_db") or not self._db:
                 logger.warning("Database not available - cannot sync remote jobs")
@@ -1376,8 +1376,8 @@ class CrystalController:
         import os
 
         async def _run() -> None:
-            from src.core.connection_manager import ConnectionManager
-            from src.runners.slurm_runner import SLURMRunner
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
+            from crystalmath._vendor.runners.slurm_runner import SLURMRunner
 
             if not hasattr(self, "_db") or not self._db:
                 raise ValueError("Database not available")
@@ -1487,8 +1487,8 @@ class CrystalController:
         import asyncio
 
         async def _run() -> dict[str, Any]:
-            from src.core.connection_manager import ConnectionManager
-            from src.runners.slurm_runner import SLURMRunner
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
+            from crystalmath._vendor.runners.slurm_runner import SLURMRunner
 
             # Get cluster config from database
             if not hasattr(self, "_db") or not self._db:
@@ -1774,7 +1774,7 @@ class CrystalController:
         import asyncio
 
         async def _test() -> dict[str, Any]:
-            from src.core.connection_manager import ConnectionManager
+            from crystalmath._vendor.core.connection_manager import ConnectionManager
 
             if not hasattr(self, "_db") or not self._db:
                 raise ValueError("Database not available")
@@ -2164,7 +2164,7 @@ class CrystalController:
             - Error: {"ok": false, "error": {"code": "...", "message": "..."}}
         """
         try:
-            from src.core.templates import TemplateManager
+            from crystalmath._vendor.core.templates import TemplateManager
 
             # Use monorepo templates directory
             repo_root = Path(__file__).parent.parent.parent
@@ -2225,7 +2225,7 @@ class CrystalController:
             - Error: {"ok": false, "error": {"code": "...", "message": "..."}}
         """
         try:
-            from src.core.templates import TemplateManager
+            from crystalmath._vendor.core.templates import TemplateManager
 
             # Use monorepo templates directory
             repo_root = Path(__file__).parent.parent.parent
@@ -2524,8 +2524,8 @@ class CrystalController:
         """
         try:
             from crystalmath.workflows.phonon import (
-                DFTCode,
                 PhononConfig,
+                PhononDFTCode,
                 PhononMethod,
                 PhononWorkflow,
             )
@@ -2534,13 +2534,12 @@ class CrystalController:
 
             config = PhononConfig(
                 source_job_pk=config_data["source_job_pk"],
-                supercell_dim=tuple(config_data.get("supercell_dim", [2, 2, 2])),
-                method=PhononMethod(config_data.get("method", "finite_displacement")),
-                dft_code=DFTCode(config_data.get("dft_code", "crystal")),
+                supercell_dim=list(config_data.get("supercell_dim", [2, 2, 2])),
+                method=PhononMethod(config_data.get("method", "phonopy")),
+                dft_code=PhononDFTCode(config_data.get("dft_code", "crystal")),
                 displacement_distance=config_data.get("displacement_distance", 0.01),
-                symmetry=config_data.get("symmetry", True),
-                acoustic_sum_rule=config_data.get("acoustic_sum_rule", True),
-                mesh=tuple(config_data.get("mesh", [20, 20, 20])),
+                use_symmetry=config_data.get("use_symmetry", config_data.get("symmetry", True)),
+                mesh=list(config_data.get("mesh", [20, 20, 20])),
                 band_path=config_data.get("band_path", "AUTO"),
                 tmin=config_data.get("tmin", 0.0),
                 tmax=config_data.get("tmax", 1000.0),
@@ -2550,17 +2549,38 @@ class CrystalController:
 
             workflow = PhononWorkflow(config)
 
-            # Generate displacements if structure provided
-            displacements = None
+            # Generate displaced structures when a structure is provided. Each
+            # displacement becomes a workflow "input" — the key the TUI submit loop
+            # reads (src/app.rs). `content` is the serialized displaced geometry for
+            # the backend generator to turn into a code-specific deck.
+            inputs = []
             if "structure" in config_data:
                 structure = config_data["structure"]
-                displacements = workflow.generate_displacements(structure)
+                displacements = workflow.generate_displacements_phonopy(
+                    cell=structure["cell"],
+                    positions=structure["positions"],
+                    symbols=structure["symbols"],
+                )
+                for disp in displacements:
+                    inputs.append(
+                        {
+                            "name": f"{config.name_prefix}_disp_{disp['index']}",
+                            "content": json.dumps(
+                                {
+                                    "cell": structure["cell"],
+                                    "symbols": structure["symbols"],
+                                    "positions": disp["displaced_positions"],
+                                }
+                            ),
+                            "displacement": disp,
+                        }
+                    )
 
             return _ok_response(
                 {
                     "workflow_json": workflow.to_json(),
-                    "num_displacements": workflow.result.num_displacements,
-                    "displacements": displacements,
+                    "n_displacements": workflow.result.n_displacements,
+                    "inputs": inputs,
                 }
             )
 

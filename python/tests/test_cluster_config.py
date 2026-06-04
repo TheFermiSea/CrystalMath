@@ -14,14 +14,10 @@ requiring actual cluster access.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
-from dataclasses import dataclass
-
 from crystalmath.protocols import ResourceRequirements
-
 
 # =============================================================================
 # Fixtures
@@ -29,7 +25,7 @@ from crystalmath.protocols import ResourceRequirements
 
 
 @pytest.fixture
-def beefcake2_profile() -> Dict[str, Any]:
+def beefcake2_profile() -> dict[str, Any]:
     """Expected beefcake2 cluster profile."""
     return {
         "name": "beefcake2",
@@ -44,7 +40,7 @@ def beefcake2_profile() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def vasp_node_config() -> Dict[str, Any]:
+def vasp_node_config() -> dict[str, Any]:
     """Expected VASP node configuration."""
     return {
         "hostname": "vasp-01",
@@ -57,7 +53,7 @@ def vasp_node_config() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def qe_node_config() -> Dict[str, Any]:
+def qe_node_config() -> dict[str, Any]:
     """Expected QE node configuration."""
     return {
         "hostname": "qe-node1",
@@ -135,7 +131,7 @@ class TestClusterProfile:
 class TestClusterProfilePresets:
     """Tests for cluster profile presets."""
 
-    def test_beefcake2_preset(self, beefcake2_profile: Dict[str, Any]) -> None:
+    def test_beefcake2_preset(self, beefcake2_profile: dict[str, Any]) -> None:
         """Test beefcake2 cluster preset."""
         from crystalmath.high_level.clusters import get_cluster_profile
 
@@ -206,9 +202,7 @@ class TestNodeConfig:
             ("qe-node3", "10.0.0.12", 40),
         ],
     )
-    def test_beefcake2_nodes(
-        self, hostname: str, ip: str, expected_cores: int
-    ) -> None:
+    def test_beefcake2_nodes(self, hostname: str, ip: str, expected_cores: int) -> None:
         """Test all beefcake2 node configurations."""
         from crystalmath.high_level.clusters import get_node_config
 
@@ -217,7 +211,7 @@ class TestNodeConfig:
         assert node.hostname == hostname
         assert node.cores == expected_cores
 
-    def test_node_gpu_config(self, vasp_node_config: Dict[str, Any]) -> None:
+    def test_node_gpu_config(self, vasp_node_config: dict[str, Any]) -> None:
         """Test node GPU configuration."""
         from crystalmath.high_level.clusters import get_node_config
 
@@ -234,7 +228,7 @@ class TestNodeConfig:
 
         assert node.infiniband_ip is not None
 
-    def test_node_available_codes(self, vasp_node_config: Dict[str, Any]) -> None:
+    def test_node_available_codes(self, vasp_node_config: dict[str, Any]) -> None:
         """Test codes available on node."""
         from crystalmath.high_level.clusters import get_node_config
 
@@ -740,8 +734,8 @@ class TestClusterIntegration:
         """Test getting resources for full workflow."""
         from crystalmath.high_level.clusters import (
             get_cluster_profile,
-            get_optimal_resources,
             get_node_for_code,
+            get_optimal_resources,
         )
 
         # Get cluster profile

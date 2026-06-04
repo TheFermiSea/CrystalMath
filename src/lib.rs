@@ -21,6 +21,7 @@
 //! ```
 
 pub mod bridge;
+pub mod bridge_ipc;
 pub mod ipc;
 pub mod models;
 pub mod monitor;

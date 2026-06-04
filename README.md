@@ -1,6 +1,6 @@
 # CrystalMath: Multi-Code DFT Job Management
 
-A unified toolkit for quantum chemistry DFT calculations, supporting **CRYSTAL23**, **Quantum Espresso**, and **VASP**. Uses a primary Python/Textual TUI ("Workshop") with an optional Rust/Ratatui TUI ("Cockpit") for high-performance monitoring.
+A unified toolkit for quantum chemistry DFT calculations, supporting **CRYSTAL23**, **Quantum Espresso**, **VASP**, **Yambo**, and **phonopy**. The project is unifying on a single primary Rust/Ratatui TUI (`src/`) that talks to the Python core over an IPC boundary; the legacy Python/Textual TUI (`tui/`) is deprecated and being phased out. See [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md).
 
 ## Features
 
@@ -19,16 +19,15 @@ A unified toolkit for quantum chemistry DFT calculations, supporting **CRYSTAL23
 - Visual feedback with gum
 - Educational `--explain` mode
 
-### Python TUI - "Workshop" (`tui/`) — Primary
-- Primary UI for job creation, configuration, and workflows
-- Textual-based async interface
-- Tight integration with the Python scientific stack (AiiDA/pymatgen/ASE)
+### Rust TUI (`src/`) — Primary
+- Primary UI for job creation, configuration, workflows, and high-performance monitoring (Ratatui, 60fps)
+- Handles the full lifecycle: new jobs, editor + LSP, results, logs, clusters, SLURM queue, workflows, recipes, batch submission
+- Talks to the Python core over an IPC boundary (currently still using the PyO3 bridge during cutover) — see [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md)
 
-### Rust TUI - "Cockpit" (`src/`) — Secondary / Experimental
-- Optional high-performance monitoring UI (Ratatui)
-- Great for dense job/log dashboards
-- **Under feature freeze** until IPC boundary replaces PyO3 — see [ADR-002](docs/architecture/adr-002-rust-tui-secondary-policy.md)
-- Permitted: bug fixes, security patches, IPC migration prep
+### Python TUI (`tui/`) — Deprecated
+- Legacy Textual-based async interface, being phased out under ADR-006
+- Retained for reference until the Rust TUI fully supersedes it
+- Tight integration with the Python scientific stack (pymatgen/ASE, quacc/AiiDA backends)
 
 ## Quick Start
 
@@ -51,14 +50,7 @@ bin/runcrystal my_calculation 14
 bin/runcrystal my_calculation --explain
 ```
 
-### Python TUI (Primary)
-
-```bash
-cd tui/
-crystal-tui
-```
-
-### Rust TUI (Secondary)
+### Rust TUI (Primary)
 
 ```bash
 # From crystalmath/ root
@@ -71,7 +63,7 @@ crystal-tui
 
 # Keyboard shortcuts:
 # 1-4     - Switch tabs (Jobs, Editor, Results, Log)
-# n       - Create new job (formerly Workshop feature)
+# n       - Create new job
 # c       - Cluster Manager
 # s       - SLURM Queue
 # v       - VASP Input Manager
@@ -82,52 +74,70 @@ crystal-tui
 # Ctrl+Q  - Quit
 ```
 
+### Python TUI (Deprecated)
+
+```bash
+cd tui/
+crystal-tui
+```
+
 ## Project Status
 
 ### CLI: Production Ready ✅
 - 27/27 issues closed (100%)
 - 9 modular library components
-- 76 unit tests
+- 173 bats tests
 
-### Python TUI: Primary ✅
-- **Primary UI** for workflows and configuration.
-- **Backend**: Python scientific logic (AiiDA, parsers, runners).
+### Rust TUI: Primary ✅
+- **Primary UI** for job creation, configuration, workflows, and monitoring.
+- **Backend**: Python scientific logic (parsers, runners, quacc/AiiDA backends) reached over IPC (PyO3 bridge during cutover).
 - **Features**:
-  - Multi-code support (CRYSTAL23, QE, VASP)
+  - Multi-code support (CRYSTAL23, QE, VASP, Yambo, phonopy)
   - Remote execution (SSH, SLURM)
   - Materials Project integration
+- **Direction** — see [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md) for the unification policy.
 
-### Rust TUI: Secondary / Experimental ⚠️
-- Optional high-performance cockpit for monitoring.
-- **Feature freeze in effect** — see [ADR-002](docs/architecture/adr-002-rust-tui-secondary-policy.md) for policy.
+### Python TUI: Deprecated ⚠️
+- Legacy Textual UI, being phased out under [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md).
+- Retained for reference until the Rust TUI fully supersedes it.
 
 ## Architecture
 
 ```
 crystalmath/
-├── src/                        # Rust TUI (secondary/experimental)
-│   ├── main.rs                # Entry point
-│   ├── app.rs                 # State management & Tests
-│   ├── bridge.rs              # PyO3 bridge
+├── src/                        # Rust TUI (primary)
+│   ├── main.rs                # Entry point, terminal setup, event loop
+│   ├── app.rs                 # Application state, tab navigation
+│   ├── bridge.rs              # PyO3 bridge (transport during IPC cutover)
+│   ├── ipc.rs + ipc/          # IPC boundary (client.rs, framing.rs)
+│   ├── lsp.rs                 # LSP client (JSON-RPC over stdio)
 │   ├── models.rs              # Shared data models
-│   └── ui/                    # UI Components (New Job, Results, etc.)
+│   ├── monitor.rs             # Monitoring data collection
+│   ├── prometheus.rs          # Prometheus metrics export
+│   ├── state/                 # State module (mod.rs, actions.rs, help.rs)
+│   └── ui/                    # UI components, one file per screen
+│                              #   (jobs, editor, results, log, materials,
+│                              #    cluster_manager, slurm_queue, vasp_input,
+│                              #    monitor, workflows, recipes, batch_submission, ...)
 │
 ├── python/                    # Python Backend
 │   └── crystalmath/
 │       ├── api.py             # Facade for Rust
+│       ├── backends/          # CRYSTAL23, VASP, QE, Yambo, phonopy
+│       ├── server/            # IPC server (crystalmath-server)
 │       └── models.py          # Pydantic models
 │
 ├── cli/                       # Bash CLI tools
 │
-└── tui/                       # Python TUI (primary)
+└── tui/                       # Python TUI (deprecated, being phased out)
 ```
 
-### UI Architecture (Primary + Secondary)
+### UI Architecture
 
-The system follows a "Python-first UI with optional Rust cockpit" model:
-1.  **Primary UI (Python/Textual)**: Handles user interaction and workflows.
-2.  **Secondary UI (Rust/Ratatui)**: Optional high-performance cockpit. Should communicate via IPC rather than embedding Python.
-3.  **Backend (Python)**: Scientific logic, database access, and HPC communication.
+The system is unifying on a single Rust TUI over an IPC boundary (see [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md)):
+1.  **Primary UI (Rust/Ratatui)**: Handles all user interaction, job creation, configuration, workflows, and monitoring.
+2.  **Backend (Python)**: Scientific logic, database access, and HPC communication, exposed over an IPC boundary (`python/crystalmath/server/`). The PyO3 bridge remains the live transport during cutover.
+3.  **Legacy UI (Python/Textual)**: Deprecated, being phased out.
 4.  **Database**: SQLite (`.crystal_tui.db`) shared source of truth.
 
 ## DFT Code Support
@@ -176,25 +186,22 @@ workflow:
 - CRYSTAL23 installation
 - Optional: gum, mpirun
 
-### Python TUI
+### Rust TUI (Primary)
+- Rust 1.70+ (for cargo build)
+- Python 3.12 venv (for PyO3)
+- Node.js 18+ (for LSP server, optional)
+- Optional: vendored `vasp-language-server` (provides `vasp-lsp` / `dft-lsp` CLI)
+- See `Cargo.toml` for dependencies
+
+### Python TUI (Deprecated)
 - Python 3.10+
 - DFT executables in PATH or configured
 - See `tui/pyproject.toml` for dependencies
 
-### Rust TUI
-- Rust 1.70+ (for cargo build)
-- Python 3.12 venv (for PyO3)
-- Node.js 18+ (for LSP server, optional)
-- Optional: `dft-language-server` (provides `vasp-lsp` / `dft-lsp` CLI)
-- See `Cargo.toml` for dependencies
-
 ### LSP Setup (optional)
 
-```bash
-npm install -g dft-language-server
-```
-
-To use the bundled upstream repo:
+The LSP server (referred to in code as the "dft-language-server") is vendored at
+`third_party/vasp-language-server/`. Build it from the bundled repo:
 
 ```bash
 git submodule update --init --recursive
@@ -214,20 +221,20 @@ The Rust TUI will prefer the bundled repo when built (looks for
 # CLI tests
 cd cli/ && bats tests/unit/*.bats
 
-# Python TUI tests
+# Rust TUI tests (primary)
+cd crystalmath/
+cargo test                     # All tests (242)
+cargo clippy                   # Lint
+cargo fmt --check              # Format check
+./scripts/build-tui.sh         # Build with correct Python
+
+# Python TUI tests (deprecated)
 cd tui/
 pytest                          # All tests
 pytest --cov=src               # With coverage
 black src/ tests/              # Format
 ruff check src/ tests/         # Lint
 mypy src/                      # Type check
-
-# Rust TUI tests
-cd crystalmath/
-cargo test                     # All tests (44)
-cargo clippy                   # Lint
-cargo fmt --check              # Format check
-./scripts/build-tui.sh         # Build with correct Python
 ```
 
 ## Issue Tracking
@@ -241,7 +248,7 @@ bd show <issue-id>   # Details
 bd create "Title"    # New issue
 ```
 
-**Current Epic:** `crystalmath-as6l` - TUI Unification (Python primary, Rust secondary)
+**Current Epic:** `crystalmath-as6l` - TUI Unification (unify on the Rust TUI over an IPC boundary; Python TUI deprecated). Live status is tracked in beads.
 
 ## Documentation
 
@@ -255,22 +262,19 @@ Full documentation is available in the `docs/` directory:
 ## Roadmap
 
 ### Completed
-- [x] **CLI**: Production-ready with 76 tests
-- [x] **Python TUI Phase 1-2**: Core TUI, remote runners, templates
-- [x] **Multi-Code Support**: CRYSTAL23, QE, VASP
-- [x] **Rust TUI Core**: 60fps monitoring, PyO3 bridge, LSP editor
+- [x] **CLI**: Production-ready with 173 bats tests
+- [x] **Multi-Code Support**: CRYSTAL23, QE, VASP, Yambo, phonopy
+- [x] **Workflow Backends**: quacc and AiiDA both supported (co-equal)
+- [x] **Rust TUI Core**: 60fps UI, PyO3 bridge, LSP editor, job creation/config/workflows
+- [x] **IPC Boundary**: built (`src/ipc/`, `python/crystalmath/server/`)
 
 ### In Progress
-- [ ] **Epic 5hh**: TUI UX Excellence ("Cockpit vs Workshop")
-  - [x] Database unification
-  - [x] Empty state UX
-  - [ ] Live log streaming
-  - [ ] Job status dashboard
+- [ ] **Epic `crystalmath-as6l`**: TUI Unification — cut the live transport over from the PyO3 bridge to the IPC client (keystone)
 - [ ] **Phase 4**: Materials Project API integration
+- [ ] Live log streaming and job status dashboard polish
 
 ### Planned
-- [ ] **AiiDA**: Full provenance tracking
-- [ ] **Rust TUI IPC**: Optional Rust cockpit via stable IPC boundary
+- [ ] Fully phase out the deprecated Python/Textual TUI once the Rust TUI supersedes it
 
 ## License
 

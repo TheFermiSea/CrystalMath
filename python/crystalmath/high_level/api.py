@@ -26,15 +26,11 @@ Note:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
-    List,
-    Optional,
-    Union,
 )
 
 from crystalmath.protocols import (
@@ -80,13 +76,13 @@ class HighThroughputConfig:
         recovery_strategy: Error recovery strategy
     """
 
-    properties: List[str]
+    properties: list[str]
     protocol: str = "moderate"
-    codes: Optional[Dict[str, DFTCode]] = None
-    cluster: Optional[str] = None
-    resources: Optional[ResourceRequirements] = None
-    progress_callback: Optional[ProgressCallback] = None
-    output_dir: Optional[Path] = None
+    codes: dict[str, DFTCode] | None = None
+    cluster: str | None = None
+    resources: ResourceRequirements | None = None
+    progress_callback: ProgressCallback | None = None
+    output_dir: Path | None = None
     checkpoint_interval: int = 1
     recovery_strategy: ErrorRecoveryStrategy = ErrorRecoveryStrategy.ADAPTIVE
 
@@ -96,7 +92,7 @@ class HighThroughputConfig:
 # =============================================================================
 
 # Property -> (WorkflowType, default_code, dependencies)
-PROPERTY_DEFINITIONS: Dict[str, tuple[WorkflowType, DFTCode, List[str]]] = {
+PROPERTY_DEFINITIONS: dict[str, tuple[WorkflowType, DFTCode, list[str]]] = {
     "scf": (WorkflowType.SCF, "vasp", []),
     "relax": (WorkflowType.RELAX, "vasp", []),
     "bands": (WorkflowType.BANDS, "vasp", ["scf"]),
@@ -150,15 +146,15 @@ class HighThroughput:
     @classmethod
     def run_standard_analysis(
         cls,
-        structure: Union[str, Path, "Structure"],
-        properties: List[str],
-        codes: Optional[Dict[str, str]] = None,
-        cluster: Optional[str] = None,
+        structure: str | Path | Structure,
+        properties: list[str],
+        codes: dict[str, str] | None = None,
+        cluster: str | None = None,
         protocol: str = "moderate",
-        progress_callback: Optional[ProgressCallback] = None,
-        output_dir: Optional[Union[str, Path]] = None,
+        progress_callback: ProgressCallback | None = None,
+        output_dir: str | Path | None = None,
         **kwargs: Any,
-    ) -> "AnalysisResults":
+    ) -> AnalysisResults:
         """Run complete analysis workflow.
 
         This is the primary entry point for high-throughput analysis. Given a
@@ -242,7 +238,7 @@ class HighThroughput:
 
         # 4. Execute each step via bridge
         bridge = Atomate2Bridge()
-        collected_outputs: Dict[str, Any] = {}
+        collected_outputs: dict[str, Any] = {}
         last_result = None
 
         for step_name, wf_type, code in steps:
@@ -292,9 +288,9 @@ class HighThroughput:
     def from_mp(
         cls,
         material_id: str,
-        properties: List[str],
+        properties: list[str],
         **kwargs: Any,
-    ) -> "AnalysisResults":
+    ) -> AnalysisResults:
         """Fetch structure from Materials Project and run analysis.
 
         Convenience method that combines Materials Project structure retrieval
@@ -326,9 +322,7 @@ class HighThroughput:
         """
         structure = cls._load_structure_from_mp(material_id)
         if structure is None:
-            logger.warning(
-                f"Could not load structure for {material_id}, proceeding with None"
-            )
+            logger.warning(f"Could not load structure for {material_id}, proceeding with None")
         return cls.run_standard_analysis(
             structure=structure,
             properties=properties,
@@ -338,10 +332,10 @@ class HighThroughput:
     @classmethod
     def from_poscar(
         cls,
-        poscar_path: Union[str, Path],
-        properties: List[str],
+        poscar_path: str | Path,
+        properties: list[str],
         **kwargs: Any,
-    ) -> "AnalysisResults":
+    ) -> AnalysisResults:
         """Load VASP POSCAR and run analysis.
 
         Convenience method for VASP users who have structures in POSCAR format.
@@ -361,17 +355,15 @@ class HighThroughput:
             )
         """
         # Stub implementation
-        raise NotImplementedError(
-            "HighThroughput.from_poscar() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("HighThroughput.from_poscar() will be implemented in Phase 3.")
 
     @classmethod
     def from_structure(
         cls,
-        structure: "Structure",
-        properties: List[str],
+        structure: Structure,
+        properties: list[str],
         **kwargs: Any,
-    ) -> "AnalysisResults":
+    ) -> AnalysisResults:
         """Run analysis on pymatgen Structure object.
 
         For users who already have a pymatgen Structure in memory,
@@ -398,17 +390,15 @@ class HighThroughput:
             )
         """
         # Stub implementation
-        raise NotImplementedError(
-            "HighThroughput.from_structure() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("HighThroughput.from_structure() will be implemented in Phase 3.")
 
     @classmethod
     def from_aiida(
         cls,
-        pk_or_uuid: Union[int, str],
-        properties: List[str],
+        pk_or_uuid: int | str,
+        properties: list[str],
         **kwargs: Any,
-    ) -> "AnalysisResults":
+    ) -> AnalysisResults:
         """Load structure from AiiDA database and run analysis.
 
         For integration with existing AiiDA workflows, this loads a
@@ -433,9 +423,7 @@ class HighThroughput:
             )
         """
         # Stub implementation
-        raise NotImplementedError(
-            "HighThroughput.from_aiida() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("HighThroughput.from_aiida() will be implemented in Phase 3.")
 
     # =========================================================================
     # Internal Methods (for Phase 3 implementation)
@@ -444,7 +432,7 @@ class HighThroughput:
     @classmethod
     def _load_structure(
         cls,
-        structure: Union[str, Path, "Structure"],
+        structure: str | Path | Structure,
     ) -> Any:
         """Load structure from various input formats.
 
@@ -520,9 +508,9 @@ class HighThroughput:
     @classmethod
     def _determine_workflow_steps(
         cls,
-        properties: List[str],
-        codes: Optional[Dict[str, str]],
-    ) -> List[tuple[str, WorkflowType, DFTCode]]:
+        properties: list[str],
+        codes: dict[str, str] | None,
+    ) -> list[tuple[str, WorkflowType, DFTCode]]:
         """Determine workflow steps from property list.
 
         Resolves dependencies and selects codes for each step.
@@ -552,7 +540,7 @@ class HighThroughput:
             _add_with_deps(prop)
 
         # Build ordered list respecting dependencies (topological sort)
-        ordered: List[tuple[str, WorkflowType, DFTCode]] = []
+        ordered: list[tuple[str, WorkflowType, DFTCode]] = []
         added: set[str] = set()
 
         remaining = list(all_steps)
@@ -596,11 +584,11 @@ class HighThroughput:
     @classmethod
     def _generate_parameters(
         cls,
-        structure: "Structure",
+        structure: Structure,
         workflow_type: WorkflowType,
         code: DFTCode,
         protocol: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generate calculation parameters.
 
         Args:
@@ -616,7 +604,7 @@ class HighThroughput:
         raise NotImplementedError("Phase 3")
 
     @classmethod
-    def _validate_properties(cls, properties: List[str]) -> tuple[bool, List[str]]:
+    def _validate_properties(cls, properties: list[str]) -> tuple[bool, list[str]]:
         """Validate requested properties.
 
         Args:
@@ -632,7 +620,7 @@ class HighThroughput:
         return len(issues) == 0, issues
 
     @classmethod
-    def get_supported_properties(cls) -> List[str]:
+    def get_supported_properties(cls) -> list[str]:
         """Get list of supported properties.
 
         Returns:
@@ -641,7 +629,7 @@ class HighThroughput:
         return list(PROPERTY_DEFINITIONS.keys())
 
     @classmethod
-    def get_property_info(cls, property_name: str) -> Dict[str, Any]:
+    def get_property_info(cls, property_name: str) -> dict[str, Any]:
         """Get information about a property.
 
         Args:
@@ -654,8 +642,9 @@ class HighThroughput:
             KeyError: If property not found
         """
         if property_name not in PROPERTY_DEFINITIONS:
-            raise KeyError(f"Unknown property: {property_name}. "
-                          f"Supported: {cls.get_supported_properties()}")
+            raise KeyError(
+                f"Unknown property: {property_name}. Supported: {cls.get_supported_properties()}"
+            )
 
         wf_type, default_code, deps = PROPERTY_DEFINITIONS[property_name]
         return {

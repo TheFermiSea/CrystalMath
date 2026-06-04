@@ -29,18 +29,12 @@ Note:
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncIterator,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Union,
 )
 
 from crystalmath.protocols import (
@@ -48,7 +42,6 @@ from crystalmath.protocols import (
     ErrorRecoveryStrategy,
     ProgressCallback,
     ResourceRequirements,
-    WorkflowResult,
     WorkflowStep,
     WorkflowType,
 )
@@ -94,11 +87,11 @@ class ProgressUpdate:
     total_steps: int
     percent: float
     status: str = "running"
-    message: Optional[str] = None
+    message: str | None = None
     has_intermediate_result: bool = False
-    intermediate_result: Optional[Any] = None
+    intermediate_result: Any | None = None
     elapsed_seconds: float = 0.0
-    estimated_remaining_seconds: Optional[float] = None
+    estimated_remaining_seconds: float | None = None
 
 
 @dataclass
@@ -121,13 +114,13 @@ class WorkflowStatus:
 
     workflow_id: str
     state: str
-    current_step: Optional[str] = None
+    current_step: str | None = None
     current_step_index: int = 0
     total_steps: int = 0
     progress_percent: float = 0.0
-    errors: List[str] = field(default_factory=list)
-    started_at: Optional[str] = None
-    estimated_completion: Optional[str] = None
+    errors: list[str] = field(default_factory=list)
+    started_at: str | None = None
+    estimated_completion: str | None = None
 
 
 # =============================================================================
@@ -163,11 +156,11 @@ class Workflow:
     def __init__(
         self,
         structure: Any,
-        steps: List[WorkflowStep],
-        cluster: Optional["ClusterProfile"] = None,
-        resources: Optional[ResourceRequirements] = None,
-        progress_callback: Optional[ProgressCallback] = None,
-        output_dir: Optional[Path] = None,
+        steps: list[WorkflowStep],
+        cluster: ClusterProfile | None = None,
+        resources: ResourceRequirements | None = None,
+        progress_callback: ProgressCallback | None = None,
+        output_dir: Path | None = None,
         recovery_strategy: ErrorRecoveryStrategy = ErrorRecoveryStrategy.ADAPTIVE,
     ) -> None:
         """Initialize workflow (internal use).
@@ -188,19 +181,19 @@ class Workflow:
         self._progress_callback = progress_callback
         self._output_dir = output_dir
         self._recovery_strategy = recovery_strategy
-        self._workflow_id: Optional[str] = None
+        self._workflow_id: str | None = None
 
     @property
-    def steps(self) -> List[WorkflowStep]:
+    def steps(self) -> list[WorkflowStep]:
         """Get workflow steps."""
         return self._steps
 
     @property
-    def workflow_id(self) -> Optional[str]:
+    def workflow_id(self) -> str | None:
         """Get workflow ID (set after submit)."""
         return self._workflow_id
 
-    def run(self) -> "AnalysisResults":
+    def run(self) -> AnalysisResults:
         """Execute workflow synchronously.
 
         Blocks until all steps complete or an unrecoverable error occurs.
@@ -240,9 +233,7 @@ class Workflow:
                     final_result = update.intermediate_result
         """
         # Stub implementation
-        raise NotImplementedError(
-            "Workflow.run_async() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("Workflow.run_async() will be implemented in Phase 3.")
         yield  # Makes this a generator (required for type checking)
 
     def submit(self) -> str:
@@ -269,9 +260,7 @@ class Workflow:
             result = Workflow.get_result(workflow_id)
         """
         # Stub implementation
-        raise NotImplementedError(
-            "Workflow.submit() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("Workflow.submit() will be implemented in Phase 3.")
 
     @classmethod
     def get_status(cls, workflow_id: str) -> WorkflowStatus:
@@ -287,12 +276,10 @@ class Workflow:
             WorkflowNotFoundError: If workflow_id not found
         """
         # Stub implementation
-        raise NotImplementedError(
-            "Workflow.get_status() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("Workflow.get_status() will be implemented in Phase 3.")
 
     @classmethod
-    def get_result(cls, workflow_id: str) -> "AnalysisResults":
+    def get_result(cls, workflow_id: str) -> AnalysisResults:
         """Get results of a completed workflow.
 
         Args:
@@ -307,9 +294,7 @@ class Workflow:
             WorkflowFailedError: If workflow failed
         """
         # Stub implementation
-        raise NotImplementedError(
-            "Workflow.get_result() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("Workflow.get_result() will be implemented in Phase 3.")
 
     @classmethod
     def cancel(cls, workflow_id: str) -> bool:
@@ -325,9 +310,7 @@ class Workflow:
             WorkflowNotFoundError: If workflow_id not found
         """
         # Stub implementation
-        raise NotImplementedError(
-            "Workflow.cancel() will be implemented in Phase 3."
-        )
+        raise NotImplementedError("Workflow.cancel() will be implemented in Phase 3.")
 
 
 # =============================================================================
@@ -368,25 +351,25 @@ class WorkflowBuilder:
     def __init__(self) -> None:
         """Initialize empty workflow builder."""
         # Structure
-        self._structure: Optional[Any] = None
-        self._structure_source: Optional[str] = None
+        self._structure: Any | None = None
+        self._structure_source: str | None = None
 
         # Workflow steps
-        self._steps: List[WorkflowStep] = []
+        self._steps: list[WorkflowStep] = []
         self._step_counter: int = 0
 
         # Execution configuration
-        self._cluster: Optional["ClusterProfile"] = None
-        self._resources: Optional[ResourceRequirements] = None
-        self._progress_callback: Optional[ProgressCallback] = None
-        self._output_dir: Optional[Path] = None
+        self._cluster: ClusterProfile | None = None
+        self._resources: ResourceRequirements | None = None
+        self._progress_callback: ProgressCallback | None = None
+        self._output_dir: Path | None = None
         self._recovery_strategy: ErrorRecoveryStrategy = ErrorRecoveryStrategy.ADAPTIVE
 
     # =========================================================================
     # Structure Input Methods
     # =========================================================================
 
-    def from_file(self, path: Union[str, Path]) -> "WorkflowBuilder":
+    def from_file(self, path: str | Path) -> WorkflowBuilder:
         """Load structure from file.
 
         Supports CIF, POSCAR, XYZ, and other formats recognized by pymatgen.
@@ -406,7 +389,7 @@ class WorkflowBuilder:
         logger.debug(f"WorkflowBuilder: structure from file {path}")
         return self
 
-    def from_mp(self, material_id: str) -> "WorkflowBuilder":
+    def from_mp(self, material_id: str) -> WorkflowBuilder:
         """Fetch structure from Materials Project.
 
         Uses the MaterialsService to fetch the structure from the
@@ -426,7 +409,7 @@ class WorkflowBuilder:
         logger.debug(f"WorkflowBuilder: structure from MP {material_id}")
         return self
 
-    def from_structure(self, structure: "Structure") -> "WorkflowBuilder":
+    def from_structure(self, structure: Structure) -> WorkflowBuilder:
         """Use pymatgen Structure directly.
 
         For users who already have a pymatgen Structure object in memory.
@@ -447,7 +430,7 @@ class WorkflowBuilder:
         logger.debug("WorkflowBuilder: structure from pymatgen object")
         return self
 
-    def from_aiida(self, pk_or_uuid: Union[int, str]) -> "WorkflowBuilder":
+    def from_aiida(self, pk_or_uuid: int | str) -> WorkflowBuilder:
         """Load structure from AiiDA database.
 
         Args:
@@ -472,9 +455,9 @@ class WorkflowBuilder:
         self,
         name: str,
         workflow_type: WorkflowType,
-        code: Optional[DFTCode],
-        parameters: Dict[str, Any],
-        depends_on: Optional[List[str]] = None,
+        code: DFTCode | None,
+        parameters: dict[str, Any],
+        depends_on: list[str] | None = None,
     ) -> None:
         """Internal method to add a workflow step."""
         step = WorkflowStep(
@@ -489,13 +472,13 @@ class WorkflowBuilder:
 
     def relax(
         self,
-        code: Optional[DFTCode] = None,
+        code: DFTCode | None = None,
         protocol: str = "moderate",
         force_threshold: float = 0.01,
         stress_threshold: float = 0.1,
         max_steps: int = 200,
         **params: Any,
-    ) -> "WorkflowBuilder":
+    ) -> WorkflowBuilder:
         """Add geometry optimization step.
 
         Relaxes atomic positions and/or cell parameters to minimize
@@ -527,10 +510,10 @@ class WorkflowBuilder:
 
     def scf(
         self,
-        code: Optional[DFTCode] = None,
+        code: DFTCode | None = None,
         protocol: str = "moderate",
         **params: Any,
-    ) -> "WorkflowBuilder":
+    ) -> WorkflowBuilder:
         """Add SCF (self-consistent field) calculation step.
 
         Single-point energy calculation without geometry optimization.
@@ -552,10 +535,10 @@ class WorkflowBuilder:
 
     def then_bands(
         self,
-        kpath: Union[str, List[Tuple[str, List[float]]]] = "auto",
+        kpath: str | list[tuple[str, list[float]]] = "auto",
         kpoints_per_segment: int = 50,
         **params: Any,
-    ) -> "WorkflowBuilder":
+    ) -> WorkflowBuilder:
         """Add band structure calculation (depends on previous SCF).
 
         Calculates band structure along high-symmetry k-point path.
@@ -588,11 +571,11 @@ class WorkflowBuilder:
 
     def then_dos(
         self,
-        mesh: Optional[List[int]] = None,
+        mesh: list[int] | None = None,
         smearing: float = 0.05,
         projected: bool = False,
         **params: Any,
-    ) -> "WorkflowBuilder":
+    ) -> WorkflowBuilder:
         """Add DOS calculation (depends on previous SCF).
 
         Calculates density of states.
@@ -622,10 +605,10 @@ class WorkflowBuilder:
 
     def then_phonon(
         self,
-        supercell: Optional[List[int]] = None,
+        supercell: list[int] | None = None,
         displacement: float = 0.01,
         **params: Any,
-    ) -> "WorkflowBuilder":
+    ) -> WorkflowBuilder:
         """Add phonon calculation (depends on relaxed structure).
 
         Calculates phonon dispersion using finite displacement method.
@@ -651,7 +634,7 @@ class WorkflowBuilder:
         self._add_step("phonon", WorkflowType.PHONON, None, parameters, depends_on)
         return self
 
-    def then_elastic(self, **params: Any) -> "WorkflowBuilder":
+    def then_elastic(self, **params: Any) -> WorkflowBuilder:
         """Add elastic constants calculation.
 
         Calculates elastic tensor via strain-stress method.
@@ -669,7 +652,7 @@ class WorkflowBuilder:
         self._add_step("elastic", WorkflowType.ELASTIC, None, params, depends_on)
         return self
 
-    def then_dielectric(self, **params: Any) -> "WorkflowBuilder":
+    def then_dielectric(self, **params: Any) -> WorkflowBuilder:
         """Add dielectric tensor calculation.
 
         Args:
@@ -690,9 +673,9 @@ class WorkflowBuilder:
         self,
         code: DFTCode = "yambo",
         protocol: str = "gw0",
-        n_bands: Optional[int] = None,
+        n_bands: int | None = None,
         **params: Any,
-    ) -> "WorkflowBuilder":
+    ) -> WorkflowBuilder:
         """Add GW quasiparticle calculation.
 
         Requires SCF step with compatible code. Corrects DFT band energies
@@ -729,7 +712,7 @@ class WorkflowBuilder:
         n_valence: int = 4,
         n_conduction: int = 4,
         **params: Any,
-    ) -> "WorkflowBuilder":
+    ) -> WorkflowBuilder:
         """Add BSE optical calculation.
 
         Requires GW step for quasiparticle corrections. Calculates
@@ -765,9 +748,9 @@ class WorkflowBuilder:
     def on_cluster(
         self,
         cluster: str,
-        partition: Optional[str] = None,
-        resources: Optional[ResourceRequirements] = None,
-    ) -> "WorkflowBuilder":
+        partition: str | None = None,
+        resources: ResourceRequirements | None = None,
+    ) -> WorkflowBuilder:
         """Configure cluster execution.
 
         Args:
@@ -791,8 +774,8 @@ class WorkflowBuilder:
 
     def with_progress(
         self,
-        callback: Optional[ProgressCallback] = None,
-    ) -> "WorkflowBuilder":
+        callback: ProgressCallback | None = None,
+    ) -> WorkflowBuilder:
         """Enable progress tracking.
 
         Args:
@@ -809,7 +792,7 @@ class WorkflowBuilder:
         logger.debug("WorkflowBuilder: progress tracking enabled")
         return self
 
-    def with_output(self, output_dir: Union[str, Path]) -> "WorkflowBuilder":
+    def with_output(self, output_dir: str | Path) -> WorkflowBuilder:
         """Set output directory for results.
 
         Args:
@@ -827,7 +810,7 @@ class WorkflowBuilder:
     def with_recovery(
         self,
         strategy: ErrorRecoveryStrategy,
-    ) -> "WorkflowBuilder":
+    ) -> WorkflowBuilder:
         """Configure error recovery strategy.
 
         Args:
@@ -904,7 +887,7 @@ class WorkflowBuilder:
             recovery_strategy=self._recovery_strategy,
         )
 
-    def validate(self) -> Tuple[bool, List[str]]:
+    def validate(self) -> tuple[bool, list[str]]:
         """Validate workflow configuration.
 
         Checks for:
@@ -921,7 +904,7 @@ class WorkflowBuilder:
             if not is_valid:
                 print("\\n".join(issues))
         """
-        issues: List[str] = []
+        issues: list[str] = []
 
         # Check structure
         if self._structure is None and self._structure_source is None:
@@ -948,21 +931,21 @@ class WorkflowBuilder:
     # Internal Helper Methods
     # =========================================================================
 
-    def _find_scf_dependency(self) -> List[str]:
+    def _find_scf_dependency(self) -> list[str]:
         """Find the most recent SCF or relax step to depend on."""
         for step in reversed(self._steps):
             if step.workflow_type in (WorkflowType.SCF, WorkflowType.RELAX):
                 return [step.name]
         return []
 
-    def _find_relax_dependency(self) -> List[str]:
+    def _find_relax_dependency(self) -> list[str]:
         """Find the most recent relax step to depend on."""
         for step in reversed(self._steps):
             if step.workflow_type == WorkflowType.RELAX:
                 return [step.name]
         return []
 
-    def _find_gw_dependency(self) -> List[str]:
+    def _find_gw_dependency(self) -> list[str]:
         """Find the GW step to depend on (for BSE)."""
         for step in reversed(self._steps):
             if step.workflow_type == WorkflowType.GW:

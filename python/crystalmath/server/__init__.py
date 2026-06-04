@@ -115,6 +115,7 @@ class JsonRpcServer:
         socket_path: Path | None = None,
         inactivity_timeout: int = 300,
         controller: Any | None = None,
+        db_path: str | None = None,
     ) -> None:
         """Initialize the server.
 
@@ -122,10 +123,14 @@ class JsonRpcServer:
             socket_path: Unix socket path. If None, uses get_default_socket_path().
             inactivity_timeout: Seconds to wait before auto-shutdown (0 = disabled).
             controller: CrystalController instance. If None, creates one on first request.
+            db_path: SQLite database path for the lazily-created controller. If None,
+                falls back to the CRYSTAL_TUI_DB env var, then CrystalController's own
+                default. Must resolve to the SAME .crystal_tui.db the Rust client uses.
         """
         self.socket_path = socket_path or get_default_socket_path()
         self.inactivity_timeout = inactivity_timeout
         self._controller = controller
+        self._db_path = db_path or os.environ.get("CRYSTAL_TUI_DB")
         self._server: asyncio.Server | None = None
         self._shutdown_event = asyncio.Event()
         self._last_activity = datetime.now(timezone.utc)
@@ -138,8 +143,17 @@ class JsonRpcServer:
             try:
                 from crystalmath.api import CrystalController
 
-                self._controller = CrystalController()
-                logger.info("CrystalController initialized")
+                # Mirror the legacy PyO3 path: SQLite-backed (use_aiida=False) and
+                # opening the SAME database the Rust client resolved. Without an
+                # explicit db_path the IPC server would open a different/empty DB.
+                self._controller = CrystalController(
+                    use_aiida=False,
+                    db_path=self._db_path,
+                )
+                logger.info(
+                    "CrystalController initialized (db_path=%s)",
+                    self._db_path or "<default>",
+                )
             except Exception as e:
                 logger.warning(f"Failed to initialize CrystalController: {e}")
                 # Return None - handlers will need to handle this
@@ -192,9 +206,7 @@ class JsonRpcServer:
             raise ValueError(f"Invalid Content-Length: {content_length}")
 
         if content_length > MAX_MESSAGE_SIZE:
-            raise ValueError(
-                f"Message too large: {content_length} bytes (max {MAX_MESSAGE_SIZE})"
-            )
+            raise ValueError(f"Message too large: {content_length} bytes (max {MAX_MESSAGE_SIZE})")
 
         return content_length
 
@@ -385,13 +397,9 @@ class JsonRpcServer:
             if self._active_connections > 0:
                 continue
 
-            elapsed = (
-                datetime.now(timezone.utc) - self._last_activity
-            ).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - self._last_activity).total_seconds()
             if elapsed >= self.inactivity_timeout:
-                logger.info(
-                    f"Inactivity timeout ({self.inactivity_timeout}s) - shutting down"
-                )
+                logger.info(f"Inactivity timeout ({self.inactivity_timeout}s) - shutting down")
                 self._shutdown_event.set()
                 break
 
@@ -412,10 +420,8 @@ class JsonRpcServer:
             sock.settimeout(1.0)
             sock.connect(str(self.socket_path))
             sock.close()
-            raise RuntimeError(
-                f"Server already running at {self.socket_path}"
-            )
-        except socket.error:
+            raise RuntimeError(f"Server already running at {self.socket_path}")
+        except OSError:
             # Connection failed - stale socket, safe to remove
             logger.info(f"Removing stale socket: {self.socket_path}")
             self.socket_path.unlink()
@@ -508,7 +514,15 @@ def main() -> int:
         help="Inactivity timeout in seconds (default: 300, 0 to disable)",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--db-path",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="SQLite database path (default: $CRYSTAL_TUI_DB or controller default)",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable debug logging",
     )
@@ -521,6 +535,7 @@ def main() -> int:
     server = JsonRpcServer(
         socket_path=args.socket,
         inactivity_timeout=args.timeout,
+        db_path=args.db_path,
     )
 
     # Set up signal handlers

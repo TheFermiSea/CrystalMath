@@ -46,12 +46,54 @@ jobs:
       - name: cargo fmt check
         run: cargo fmt --check
 
-      - name: cargo clippy
-        run: cargo clippy -- -D warnings
+      # IPC transport (ADR-006 target) builds without Python — the primary,
+      # fast, reliable gate. This path is otherwise never linted in CI.
+      - name: cargo clippy (IPC transport)
+        run: cargo clippy --no-default-features -- -D warnings
+
+      - name: cargo build (IPC transport)
+        run: cargo build --no-default-features
+
+      # Legacy PyO3 transport is still the default build until the cutover, so
+      # keep it linted. The pyo3 build script needs a Python interpreter.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python + venv
+        run: |
+          uv python install 3.12
+          uv sync
+
+      - name: cargo clippy (PyO3 transport)
+        run: PYO3_PYTHON=$(pwd)/.venv/bin/python cargo clippy -- -D warnings
 
   rust-tests:
-    name: Rust Tests (manual dispatch)
-    if: github.event_name == 'workflow_dispatch' && inputs.run_tests
+    name: Rust Tests (IPC transport)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      # Unit + integration tests for the IPC transport. No Python is required to
+      # compile (no pyo3) or run: CRYSTALMATH_SKIP_IPC_TESTS skips the tests that
+      # spawn a live crystalmath-server.
+      - name: cargo test (IPC transport)
+        run: cargo test --no-default-features
+        env:
+          CRYSTALMATH_SKIP_IPC_TESTS: 1
+
+  rust-tests-pyo3:
+    name: Rust Tests (PyO3, full)
+    # Expensive: builds PyO3 against a real Python. Run on merges to main and on
+    # demand rather than on every PR (PRs are covered by the IPC test job above).
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

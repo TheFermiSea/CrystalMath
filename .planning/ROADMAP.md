@@ -8,6 +8,8 @@
 
 Transform CrystalMath from a dual-TUI (Python primary, Rust secondary) codebase into a unified Rust TUI that leverages quacc for VASP workflow orchestration on SLURM clusters.
 
+This unification direction is ratified by [ADR-006](../docs/architecture/adr-006-unify-on-rust-tui.md): unify on the single Rust/Ratatui TUI (which now handles job creation, config, and workflows) talking to the Python core over an IPC boundary; the Python/Textual TUI is deprecated. ADR-006 supersedes ADR-001 and ADR-002.
+
 **Success Criteria:**
 - [ ] Single Rust TUI replaces Python TUI
 - [ ] User can submit VASP jobs to SLURM via quacc
@@ -147,29 +149,31 @@ Plans:
 
 ---
 
-## Phase 4: Job Submission & Monitoring ✅
+## Phase 4: Job Submission & Monitoring
 
 **Goal:** Submit VASP jobs through quacc and track their status.
 
 **Why fourth:** Write operations only after read/input phases validated.
 
-**Status:** Complete
-**Completed:** 2026-02-02
-**Plans:** 4 plans (all complete)
+**Status:** Ready to plan (not started)
+**Plans:** TBD
+
+> Note: live status is tracked in beads (`bd ready` / `bd list`); this roadmap is a narrative snapshot.
+> Phases 1-3 are complete; Phase 4 is the next phase to plan.
 
 Plans:
-- [x] 04-01-PLAN.md — Python job submission core (POTCAR validation, JobRunner, handlers)
-- [x] 04-02-PLAN.md — Rust TUI job submission (models, cluster selection, keybindings)
-- [x] 04-03-PLAN.md — Job status polling and display (30s interval, progress, errors)
-- [x] 04-04-PLAN.md — Integration tests (MockRunner, handler tests, Rust tests)
+- [ ] 04-01-PLAN.md — Python job submission core (POTCAR validation, JobRunner, handlers)
+- [ ] 04-02-PLAN.md — Rust TUI job submission (models, cluster selection, keybindings)
+- [ ] 04-03-PLAN.md — Job status polling and display (30s interval, progress, errors)
+- [ ] 04-04-PLAN.md — Integration tests (MockRunner, handler tests, Rust tests)
 
 ### Deliverables
 
-- [x] `jobs.submit` RPC handler (invoke quacc recipe)
-- [x] Cluster selection UI (choose from configured executors)
-- [x] Job status polling (query workflow engine)
-- [x] Progress display (PENDING -> RUNNING -> COMPLETE)
-- [x] Error display (capture workflow engine errors)
+- [ ] `jobs.submit` RPC handler (invoke quacc recipe)
+- [ ] Cluster selection UI (choose from configured executors)
+- [ ] Job status polling (query workflow engine)
+- [ ] Progress display (PENDING -> RUNNING -> COMPLETE)
+- [ ] Error display (capture workflow engine errors)
 
 ### Technical Notes
 
@@ -183,16 +187,16 @@ Plans:
 
 ### Success Criteria
 
-- [x] Submit relaxation job from TUI
-- [x] See job status update from PENDING to RUNNING
-- [x] See completion status and basic results
-- [x] Handle submission errors gracefully
+- [ ] Submit relaxation job from TUI
+- [ ] See job status update from PENDING to RUNNING
+- [ ] See completion status and basic results
+- [ ] Handle submission errors gracefully
 
 ### Dependencies
 
 - Phase 3 (Structure & Input)
 
-### Implementation Notes
+### Implementation Notes (planned)
 
 - POTCAR validation: `validate_potcars()` checks VASP_PP_PATH, verifies element directories
 - ParslRunner: Uses `python_app` decorator, stores futures in dict
@@ -304,11 +308,13 @@ All phases are sequential - each depends on the previous.
 
 ## Out of Scope (v1)
 
-- AiiDA integration (using simpler quacc approach)
-- CRYSTAL23/Quantum Espresso support
 - High-throughput (10K+ jobs)
 - 3D structure visualization
 - Mobile/web interface
+
+> Note: quacc and AiiDA are co-equal, both-supported workflow backends (neither is removed).
+> CRYSTAL23, VASP, Quantum ESPRESSO, Yambo, and phonopy are all supported codes
+> (see `python/crystalmath/backends/`); v1 milestone work simply leads with the VASP-via-quacc path.
 
 ---
 

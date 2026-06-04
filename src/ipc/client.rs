@@ -10,9 +10,11 @@
 //! the Python server if it's not already running. This enables zero-config
 //! user experience for the TUI.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -33,6 +35,69 @@ const SERVER_STARTUP_TIMEOUT_SECS: u64 = 5;
 
 /// Polling interval when waiting for server socket.
 const SERVER_POLL_INTERVAL_MS: u64 = 100;
+
+/// Child processes for crystalmath-servers **this process spawned**, keyed by the
+/// socket path the server listens on. Their handles are retained so they can be
+/// terminated on shutdown instead of lingering until their own inactivity timeout
+/// (~300s). Servers that were already running when we connected are never added
+/// here, so we never kill a server we don't own.
+///
+/// Keying by socket path (rather than a flat list) means each owner can shut down
+/// *only* the server bound to its socket: dropping one bridge handle must not kill
+/// a server another handle started on a different socket.
+static SPAWNED_SERVERS: LazyLock<Mutex<HashMap<PathBuf, Child>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Lock the spawned-server registry, recovering from a poisoned mutex.
+///
+/// The registry only holds `Child` handles; a panic while holding the lock cannot
+/// leave them in a logically inconsistent state, so recovering the inner data is
+/// safe and preferable to propagating the poison (which would leak the children).
+fn lock_spawned_servers() -> std::sync::MutexGuard<'static, HashMap<PathBuf, Child>> {
+    SPAWNED_SERVERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Reap the child registered for `socket_path` (if any), without killing it.
+///
+/// Used after a server has been replaced/restarted on the same socket: we drop the
+/// stale handle and reap it to avoid a zombie, but do not signal it.
+fn take_spawned_server(socket_path: &Path) -> Option<Child> {
+    lock_spawned_servers().remove(socket_path)
+}
+
+/// Kill and reap **only** the crystalmath-server this process spawned for
+/// `socket_path`.
+///
+/// Idempotent and safe to call from `Drop`: it removes the child from the registry
+/// before killing, so a second call (or a concurrent call for the same socket) is a
+/// no-op. Servers started outside this process — and servers this process started on
+/// *other* sockets — are untouched.
+pub fn shutdown_spawned_server(socket_path: &Path) {
+    if let Some(mut child) = take_spawned_server(socket_path) {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// Kill and reap every crystalmath-server this process spawned.
+///
+/// Idempotent and safe to call from `Drop`: it drains the registry, so a second
+/// call is a no-op. Servers started outside this process are untouched.
+///
+/// Prefer [`shutdown_spawned_server`] when an owner only wants to tear down the
+/// server it itself started; this drain-all variant kills *every* spawned server.
+pub fn shutdown_spawned_servers() {
+    let children: Vec<Child> = lock_spawned_servers()
+        .drain()
+        .map(|(_, child)| child)
+        .collect();
+    for mut child in children {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
 
 /// IPC-specific error types.
 ///
@@ -94,7 +159,11 @@ impl From<JsonRpcError> for IpcError {
 /// Resolution order:
 /// 1. `$XDG_RUNTIME_DIR/crystalmath.sock` (Linux standard)
 /// 2. `~/Library/Caches/crystalmath.sock` (macOS)
-/// 3. `/tmp/crystalmath.sock` (fallback)
+/// 3. `/tmp/crystalmath-{uid}.sock` (fallback, uid-scoped to match the Python server)
+///
+/// This MUST stay in sync with `get_default_socket_path()` in
+/// `python/crystalmath/server/__init__.py` — both sides resolve the same path or
+/// they cannot connect.
 ///
 /// # Example
 ///
@@ -113,8 +182,10 @@ pub fn default_socket_path() -> PathBuf {
         return cache_dir.join("crystalmath.sock");
     }
 
-    // Fallback to /tmp (less secure, but works everywhere)
-    PathBuf::from("/tmp/crystalmath.sock")
+    // Fallback to /tmp, uid-scoped so it matches the Python server and does not
+    // collide on the world-writable /tmp (see ADR-003). `getuid` is infallible.
+    let uid = unsafe { libc::getuid() };
+    PathBuf::from(format!("/tmp/crystalmath-{uid}.sock"))
 }
 
 /// Find the crystalmath-server binary, checking venv first then PATH.
@@ -211,24 +282,45 @@ pub fn ensure_server_running(socket_path: &Path) -> Result<()> {
     // Try venv first (most common case), then PATH
     let server_binary = find_server_binary();
     tracing::info!("Starting crystalmath-server from {:?}...", server_binary);
-    let _child = Command::new(&server_binary)
+    let mut command = Command::new(&server_binary);
+    command
         .arg("--socket")
         .arg(socket_path)
         .stdout(Stdio::null())
-        .stderr(Stdio::piped()) // Pipe stderr for debugging if needed
-        .spawn()
-        .context(
-            "Failed to start crystalmath-server. Is it installed? (uv pip install -e python/)",
-        )?;
+        .stderr(Stdio::piped()); // Pipe stderr for debugging if needed
 
-    // Wait for socket to appear (max 5 seconds)
+    // Pass the resolved database path so the spawned server opens the SAME
+    // .crystal_tui.db the Rust side uses. Resolution lives in one place
+    // (bridge::find_database_path); the server reads CRYSTAL_TUI_DB. See ADR-006.
+    if let Some(db_path) = crate::bridge::find_database_path() {
+        tracing::info!("Passing CRYSTAL_TUI_DB={} to server", db_path);
+        command.env("CRYSTAL_TUI_DB", db_path);
+    }
+
+    let child = command.spawn().context(
+        "Failed to start crystalmath-server. Is it installed? (uv pip install -e python/)",
+    )?;
+
+    // Retain the handle (keyed by socket path) so the owner can kill it on shutdown
+    // (see shutdown_spawned_server). If we already had a handle for this socket — e.g.
+    // a prior server we spawned crashed and we're restarting it — reap the stale child
+    // here to avoid leaving a zombie, then register the fresh one.
+    let stale = lock_spawned_servers().insert(socket_path.to_path_buf(), child);
+    if let Some(mut stale) = stale {
+        // The old listener is gone (we only reach a spawn after a failed connect),
+        // so the process should already be exiting; kill+reap to be certain.
+        let _ = stale.kill();
+        let _ = stale.wait();
+    }
+
+    // Wait until the server actually accepts a connection. Retrying a real
+    // `connect` (rather than checking that the socket file exists) closes the
+    // race where the socket node is present but the listener isn't ready yet.
     let max_polls = (SERVER_STARTUP_TIMEOUT_SECS * 1000) / SERVER_POLL_INTERVAL_MS;
     for i in 0..max_polls {
-        if socket_path.exists() {
-            // Socket exists - give server a moment to start accepting connections
-            std::thread::sleep(Duration::from_millis(SERVER_POLL_INTERVAL_MS));
+        if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
             tracing::info!(
-                "Server started after {}ms",
+                "Server accepting connections after {}ms",
                 (i + 1) * SERVER_POLL_INTERVAL_MS
             );
             return Ok(());
@@ -470,6 +562,27 @@ impl IpcClient {
 
         match result {
             Ok(Ok(response)) => self.process_response(response),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(IpcError::Timeout(self.timeout.as_secs())),
+        }
+    }
+
+    /// Send a pre-built JSON-RPC request and return the RAW response envelope.
+    ///
+    /// Unlike [`call`], this does NOT unwrap the JSON-RPC error into an
+    /// [`IpcError`] — a well-formed error envelope is returned as
+    /// `Ok(JsonRpcResponse)` so callers can apply per-method error handling
+    /// (e.g. mapping `NOT_FOUND` to `Ok(None)`). Only transport/parse failures
+    /// (timeout, I/O, malformed frame) become `Err`. Used by the IPC bridge
+    /// worker, which feeds the response into `bridge::route_rpc_response`.
+    ///
+    /// [`call`]: IpcClient::call
+    pub async fn call_rpc(
+        &mut self,
+        request: &JsonRpcRequest,
+    ) -> Result<JsonRpcResponse, IpcError> {
+        match timeout(self.timeout, self.send_receive(request)).await {
+            Ok(Ok(response)) => Ok(response),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(IpcError::Timeout(self.timeout.as_secs())),
         }

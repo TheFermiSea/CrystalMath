@@ -34,6 +34,7 @@ def get_workflow_engine() -> str | None:
     """
     try:
         from quacc import SETTINGS
+
         engine = getattr(SETTINGS, "WORKFLOW_ENGINE", None)
         return engine if engine else None
     except ImportError:
@@ -89,6 +90,7 @@ def _is_quacc_installed() -> bool:
     """Check if quacc is installed."""
     try:
         import quacc  # noqa: F401
+
         return True
     except ImportError:
         return False

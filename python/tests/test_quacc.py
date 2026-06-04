@@ -15,7 +15,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from crystalmath.quacc.config import ClusterConfigStore, ParslClusterConfig
 from crystalmath.quacc.discovery import discover_vasp_recipes
 from crystalmath.quacc.engines import (
@@ -24,7 +23,6 @@ from crystalmath.quacc.engines import (
     get_workflow_engine,
 )
 from crystalmath.quacc.store import JobMetadata, JobStatus, JobStore
-
 
 # =============================================================================
 # Discovery Tests
@@ -143,12 +141,8 @@ class TestDiscoverVaspRecipes:
                 ]
 
                 # Mock import_module to raise ImportError for mlip
-                with patch(
-                    "crystalmath.quacc.discovery.import_module"
-                ) as mock_import:
-                    mock_import.side_effect = ImportError(
-                        "No module named 'mace'"
-                    )
+                with patch("crystalmath.quacc.discovery.import_module") as mock_import:
+                    mock_import.side_effect = ImportError("No module named 'mace'")
 
                     with caplog.at_level(logging.DEBUG):
                         recipes = discover_vasp_recipes()
@@ -156,9 +150,7 @@ class TestDiscoverVaspRecipes:
         # Should return empty list (no successful modules)
         assert recipes == []
 
-    def test_discover_logs_skipped_modules(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_discover_logs_skipped_modules(self, caplog: pytest.LogCaptureFixture) -> None:
         """Verify DEBUG log message is emitted for skipped modules."""
         from types import ModuleType
 
@@ -171,26 +163,26 @@ class TestDiscoverVaspRecipes:
         mock_quacc.recipes = mock_recipes  # type: ignore[attr-defined]
         mock_recipes.vasp = mock_vasp  # type: ignore[attr-defined]
 
-        with patch.dict(
-            sys.modules,
-            {
-                "quacc": mock_quacc,
-                "quacc.recipes": mock_recipes,
-                "quacc.recipes.vasp": mock_vasp,
-            },
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "quacc": mock_quacc,
+                    "quacc.recipes": mock_recipes,
+                    "quacc.recipes.vasp": mock_vasp,
+                },
+            ),
+            patch("crystalmath.quacc.discovery.pkgutil.walk_packages") as mock_walk,
         ):
-            with patch("crystalmath.quacc.discovery.pkgutil.walk_packages") as mock_walk:
-                mock_walk.return_value = [
-                    (None, "quacc.recipes.vasp.broken", False),
-                ]
+            mock_walk.return_value = [
+                (None, "quacc.recipes.vasp.broken", False),
+            ]
 
-                with patch(
-                    "crystalmath.quacc.discovery.import_module"
-                ) as mock_import:
-                    mock_import.side_effect = ImportError("missing dep")
+            with patch("crystalmath.quacc.discovery.import_module") as mock_import:
+                mock_import.side_effect = ImportError("missing dep")
 
-                    with caplog.at_level(logging.DEBUG):
-                        discover_vasp_recipes()
+                with caplog.at_level(logging.DEBUG):
+                    discover_vasp_recipes()
 
         # Check log contains the skip message
         assert any(
@@ -219,9 +211,7 @@ class TestGetWorkflowEngine:
         mock_settings.WORKFLOW_ENGINE = None
 
         with patch.dict(sys.modules, {"quacc": MagicMock(SETTINGS=mock_settings)}):
-            with patch(
-                "crystalmath.quacc.engines.get_workflow_engine"
-            ) as mock_get:
+            with patch("crystalmath.quacc.engines.get_workflow_engine") as mock_get:
                 mock_get.return_value = None
                 result = mock_get()
 
@@ -237,6 +227,7 @@ class TestGetWorkflowEngine:
         with patch.dict(sys.modules, {"quacc": mock_quacc}):
             # Need to reimport to pick up mock
             from importlib import reload
+
             import crystalmath.quacc.engines as engines_mod
 
             reload(engines_mod)
@@ -250,9 +241,7 @@ class TestGetInstalledEngines:
 
     def test_get_installed_engines_none(self) -> None:
         """Returns empty list when no engines installed."""
-        with patch(
-            "crystalmath.quacc.engines.import_module"
-        ) as mock_import:
+        with patch("crystalmath.quacc.engines.import_module") as mock_import:
             mock_import.side_effect = ImportError("not installed")
             result = get_installed_engines()
 
@@ -268,9 +257,7 @@ class TestGetInstalledEngines:
                 return MagicMock()
             raise ImportError(f"No module named '{name}'")
 
-        with patch(
-            "crystalmath.quacc.engines.import_module", side_effect=selective_import
-        ):
+        with patch("crystalmath.quacc.engines.import_module", side_effect=selective_import):
             result = get_installed_engines()
 
         assert "parsl" in result
@@ -319,39 +306,27 @@ class TestParslClusterConfig:
     def test_parsl_cluster_config_walltime_valid(self) -> None:
         """Valid walltime patterns are accepted."""
         # Standard format
-        config = ParslClusterConfig(
-            name="test", partition="compute", walltime="02:30:00"
-        )
+        config = ParslClusterConfig(name="test", partition="compute", walltime="02:30:00")
         assert config.walltime == "02:30:00"
 
         # Single digit hours
-        config = ParslClusterConfig(
-            name="test", partition="compute", walltime="1:00:00"
-        )
+        config = ParslClusterConfig(name="test", partition="compute", walltime="1:00:00")
         assert config.walltime == "1:00:00"
 
         # Large hours
-        config = ParslClusterConfig(
-            name="test", partition="compute", walltime="168:00:00"
-        )
+        config = ParslClusterConfig(name="test", partition="compute", walltime="168:00:00")
         assert config.walltime == "168:00:00"
 
     def test_parsl_cluster_config_walltime_invalid(self) -> None:
         """Invalid walltime patterns are rejected."""
         with pytest.raises(ValueError, match="Invalid walltime format"):
-            ParslClusterConfig(
-                name="test", partition="compute", walltime="2h30m"
-            )
+            ParslClusterConfig(name="test", partition="compute", walltime="2h30m")
 
         with pytest.raises(ValueError, match="Invalid walltime format"):
-            ParslClusterConfig(
-                name="test", partition="compute", walltime="02:30"
-            )
+            ParslClusterConfig(name="test", partition="compute", walltime="02:30")
 
         with pytest.raises(ValueError, match="Invalid walltime format"):
-            ParslClusterConfig(
-                name="test", partition="compute", walltime="invalid"
-            )
+            ParslClusterConfig(name="test", partition="compute", walltime="invalid")
 
 
 class TestClusterConfigStore:

@@ -11,14 +11,22 @@ Uses MockRunner to test without requiring Parsl/Covalent dependencies.
 
 from __future__ import annotations
 
+import importlib.util
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from crystalmath.quacc.mock_runner import MockRunner, MockJobState
+from crystalmath.quacc.mock_runner import MockJobState, MockRunner
 from crystalmath.quacc.runner import JobState
 from crystalmath.quacc.store import JobMetadata, JobStatus
+
+# Some submission tests patch ``ase.io.read`` to parse the structure payload. ASE
+# ships only in the optional ``crystalmath[vasp]`` / ``[quacc]`` extras, so guard
+# those tests behind its presence instead of hard-failing on a minimal install.
+HAS_ASE = importlib.util.find_spec("ase") is not None
+requires_ase = pytest.mark.skipif(
+    not HAS_ASE, reason="ase not installed (crystalmath[vasp] / [quacc] extra)"
+)
 
 
 # =============================================================================
@@ -174,6 +182,7 @@ class TestJobsSubmitHandler:
         atoms.get_chemical_symbols.return_value = ["Si"] * 8
         return atoms
 
+    @requires_ase
     @pytest.mark.asyncio
     async def test_submit_returns_job_id(self, mock_atoms):
         """Successful submission returns job_id."""
@@ -233,6 +242,7 @@ class TestJobsSubmitHandler:
         assert result["status"] == "error"
         assert "workflow engine" in result["error"].lower()
 
+    @requires_ase
     @pytest.mark.asyncio
     async def test_submit_potcar_validation_fails(self, mock_atoms):
         """Submission fails if POTCARs missing."""
@@ -297,6 +307,150 @@ class TestJobsSubmitHandler:
         assert result["status"] == "error"
         assert "structure" in result["error"].lower()
 
+    @pytest.mark.asyncio
+    async def test_submit_rejects_disallowed_recipe(self):
+        """A recipe outside quacc.recipes.* is refused before any import/parse.
+
+        Security regression test for crystalmath-6l8: the recipe string flows into
+        a dynamic __import__, so an IPC client must not be able to import arbitrary
+        modules (e.g. ``os.system``).
+        """
+        from crystalmath.server.handlers.jobs import handle_jobs_submit
+
+        for malicious in [
+            "os.system",
+            "subprocess.run",
+            "builtins.__import__",
+            "crystalmath.server.handlers.jobs.handle_jobs_submit",
+        ]:
+            with patch(
+                "crystalmath.quacc.engines.get_workflow_engine",
+                return_value="parsl",
+            ):
+                result = await handle_jobs_submit(
+                    None,
+                    {"recipe": malicious, "structure": "Si\n1.0\n..."},
+                )
+
+            assert result["job_id"] is None, malicious
+            assert result["status"] == "error", malicious
+            assert "Invalid recipe" in result["error"], malicious
+
+
+class TestRecipeAllowlist:
+    """Security: dynamic recipe import is restricted to the quacc.recipes namespace."""
+
+    def test_is_allowed_recipe_accepts_quacc_recipes(self):
+        from crystalmath.quacc.runner import is_allowed_recipe
+
+        assert is_allowed_recipe("quacc.recipes.vasp.core.relax_job")
+        assert is_allowed_recipe("quacc.recipes.emt.core.relax_job")
+
+    def test_is_allowed_recipe_rejects_arbitrary_modules(self):
+        from crystalmath.quacc.runner import is_allowed_recipe
+
+        for bad in [
+            "os.system",
+            "subprocess.run",
+            "builtins.__import__",
+            "quacc.recipes",  # no function segment
+            "quacc.recipesX.evil",  # prefix not terminated by a dot
+            "quacc.recipes.vasp; os.system('x')",  # injection attempt
+            "",
+            None,
+            123,
+        ]:
+            assert not is_allowed_recipe(bad), bad
+
+    def test_is_allowed_recipe_rejects_dunder_segments(self):
+        """Dunder segments are attribute-traversal vectors, not real recipes.
+
+        ``str.isidentifier()`` returns True for ``__builtins__`` etc., so the
+        allowlist must explicitly reject any ^__.*__$ segment.
+        """
+        from crystalmath.quacc.runner import is_allowed_recipe
+
+        for bad in [
+            "quacc.recipes.__builtins__",
+            "quacc.recipes.vasp.__class__",
+            "quacc.recipes.__init__.relax_job",
+            "quacc.recipes.vasp.core.__globals__",
+        ]:
+            assert not is_allowed_recipe(bad), bad
+
+    def test_is_allowed_recipe_rejects_unicode_homoglyphs(self):
+        """Non-ASCII identifiers (e.g. fullwidth homoglyphs) must be refused.
+
+        ``"ｖasp".isidentifier()`` is True, so without an ASCII check a homoglyph
+        path would slip through and, after NFKC normalisation by the importer,
+        resolve to the real ``vasp`` module.
+        """
+        from crystalmath.quacc.runner import is_allowed_recipe
+
+        for bad in [
+            "quacc.recipes.ｖasp.core.relax_job",  # fullwidth 'v'
+            "quacc.recipes.vasp.core.relax_joб",  # cyrillic 'б'
+        ]:
+            assert not is_allowed_recipe(bad), bad
+
+    def test_import_recipe_rejects_arbitrary_module(self):
+        """_import_recipe (inherited by every runner) enforces the allowlist."""
+        runner = MockRunner()
+        with pytest.raises(ValueError, match="not permitted"):
+            runner._import_recipe("os.system")
+
+    def test_import_recipe_rejects_dunder_and_homoglyph(self):
+        """Dunder and homoglyph paths are blocked by the allowlist before import."""
+        runner = MockRunner()
+        for bad in [
+            "quacc.recipes.__builtins__",
+            "quacc.recipes.ｖasp.core.relax_job",
+        ]:
+            with pytest.raises(ValueError, match="not permitted"):
+                runner._import_recipe(bad)
+
+    def test_import_recipe_rejects_non_callable_target(self):
+        """An allowed path resolving to a non-callable attribute is refused.
+
+        The allowlist only constrains the *name*; the resolved attribute could be
+        a module-level constant. _import_recipe must verify callability and fail
+        closed otherwise.
+        """
+        import sys
+        import types
+
+        runner = MockRunner()
+        mod_name = "quacc.recipes.faketest.core"
+        mod = types.ModuleType(mod_name)
+        mod.not_a_function = 42  # a plain int, not callable
+        try:
+            sys.modules[mod_name] = mod
+            with pytest.raises(ValueError, match="did not resolve to a callable"):
+                runner._import_recipe(f"{mod_name}.not_a_function")
+        finally:
+            sys.modules.pop(mod_name, None)
+
+    def test_import_recipe_accepts_real_callable(self):
+        """A real recipe path resolving to a callable is returned unchanged."""
+        import sys
+        import types
+
+        runner = MockRunner()
+        mod_name = "quacc.recipes.faketest.core"
+        mod = types.ModuleType(mod_name)
+
+        def relax_job():  # pragma: no cover - body never executed
+            return "ok"
+
+        mod.relax_job = relax_job
+        try:
+            sys.modules[mod_name] = mod
+            resolved = runner._import_recipe(f"{mod_name}.relax_job")
+            assert resolved is relax_job
+        finally:
+            sys.modules.pop(mod_name, None)
+
+    @requires_ase
     @pytest.mark.asyncio
     async def test_submit_invalid_structure(self):
         """Submission fails with invalid structure format."""
@@ -566,12 +720,13 @@ class TestJobsCancelHandler:
 class TestJobSubmissionIntegration:
     """Integration tests using MockRunner end-to-end."""
 
+    @requires_ase
     @pytest.mark.asyncio
     async def test_full_job_lifecycle_with_mock_runner(self):
         """Test complete job lifecycle: submit -> poll -> complete."""
         from crystalmath.server.handlers.jobs import (
-            handle_jobs_submit,
             handle_jobs_status,
+            handle_jobs_submit,
         )
 
         mock_runner = MockRunner()
@@ -636,12 +791,13 @@ class TestJobSubmissionIntegration:
             # Result should be populated
             assert status2["result"] is not None
 
+    @requires_ase
     @pytest.mark.asyncio
     async def test_job_failure_lifecycle(self):
         """Test job failure flow: submit -> poll -> fail."""
         from crystalmath.server.handlers.jobs import (
-            handle_jobs_submit,
             handle_jobs_status,
+            handle_jobs_submit,
         )
 
         mock_runner = MockRunner()

@@ -1,7 +1,11 @@
 # ADR-001: Python Textual as Primary TUI; Rust Ratatui as Secondary
 
-**Status:** Accepted  
-**Date:** 2026-01-06  
+> **⚠️ SUPERSEDED by [ADR-006](adr-006-unify-on-rust-tui.md) (2026-05-31).** The project has
+> reversed this decision: the **Rust TUI is now the single primary UI** over an IPC backend,
+> and the **Python TUI is deprecated**. This ADR is retained for historical context only.
+
+**Status:** Superseded by ADR-006
+**Date:** 2026-01-06
 **Deciders:** Project maintainers
 
 ## Context

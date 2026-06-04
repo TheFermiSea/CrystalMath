@@ -12,8 +12,6 @@ import json
 from datetime import datetime
 
 import pytest
-from pydantic import ValidationError
-
 from crystalmath.models import (
     ClusterConfig,
     DftCode,
@@ -24,6 +22,7 @@ from crystalmath.models import (
     RunnerType,
     StructureData,
 )
+from pydantic import ValidationError
 
 
 class TestJobState:
@@ -87,7 +86,9 @@ class TestJobSubmission:
         """Name must be at least 3 characters."""
         with pytest.raises(ValidationError) as exc_info:
             JobSubmission(name="ab", input_content="test")
-        assert "string_too_short" in str(exc_info.value) or "at least 3 characters" in str(exc_info.value)
+        assert "string_too_short" in str(exc_info.value) or "at least 3 characters" in str(
+            exc_info.value
+        )
 
     def test_name_validation_forbidden_chars(self):
         """Name cannot contain filesystem-unsafe characters."""

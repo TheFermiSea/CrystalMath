@@ -17,7 +17,9 @@ use crystalmath_tui::{bridge, models};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::panic;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "pyo3-bridge")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -91,6 +93,7 @@ fn install_panic_hook() {
 ///
 /// Queries the Python executable directly to get sys.prefix and sys.path,
 /// avoiding fragile manual parsing of pyvenv.cfg and .pth files.
+#[cfg(feature = "pyo3-bridge")]
 fn configure_python_env() {
     if std::env::var_os("PYTHONHOME").is_some() {
         tracing::info!("PYTHONHOME already set; using existing value");
@@ -159,12 +162,14 @@ fn configure_python_env() {
 }
 
 /// Python environment info queried from the interpreter.
+#[cfg(feature = "pyo3-bridge")]
 struct PythonEnvInfo {
     prefix: String,
     base_prefix: String,
     path: Vec<String>,
 }
 
+#[cfg(feature = "pyo3-bridge")]
 impl PythonEnvInfo {
     /// Returns true if this is a virtual environment (prefix != base_prefix).
     fn is_venv(&self) -> bool {
@@ -195,6 +200,7 @@ impl PythonEnvInfo {
 }
 
 /// Query Python executable to get sys.prefix, sys.base_prefix, and sys.path.
+#[cfg(feature = "pyo3-bridge")]
 fn query_python_env(python_exe: &Path) -> Option<PythonEnvInfo> {
     use std::process::Command;
 
@@ -231,6 +237,7 @@ print(json.dumps({
 }
 
 /// Build a path to the Python executable inside a directory (venv or prefix).
+#[cfg(feature = "pyo3-bridge")]
 fn python_exe_in(base: &Path) -> PathBuf {
     let bin_dir = if cfg!(windows) { "Scripts" } else { "bin" };
     let exe_name = if cfg!(windows) {
@@ -242,6 +249,7 @@ fn python_exe_in(base: &Path) -> PathBuf {
 }
 
 /// Find Python executable candidates in order of preference.
+#[cfg(feature = "pyo3-bridge")]
 fn find_python_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -291,6 +299,7 @@ fn find_python_candidates() -> Vec<PathBuf> {
 }
 
 /// Find the project root by looking for Cargo.toml, walking up from the executable.
+#[cfg(feature = "pyo3-bridge")]
 fn find_project_root() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let mut dir = exe.parent()?;
@@ -345,12 +354,27 @@ fn main() -> Result<()> {
 
     tracing::info!("Starting CrystalMath TUI v{}", env!("CARGO_PKG_VERSION"));
 
-    // Initialize Python interpreter
-    tracing::info!("Initializing Python backend...");
-    configure_python_env();
-    pyo3::Python::initialize();
-    let py_controller = bridge::init_python_backend()?;
-    tracing::info!("Python backend initialized");
+    // Build the backend transport. The two paths are the ADR-006 cutover seam:
+    // PyO3 (legacy, in-process) vs IPC (default after soak; talks to
+    // crystalmath-server over a Unix socket). App is transport-agnostic.
+    #[cfg(feature = "pyo3-bridge")]
+    let bridge: Box<dyn bridge::BridgeService> = {
+        tracing::info!("Initializing Python backend (PyO3, legacy transport)...");
+        configure_python_env();
+        pyo3::Python::initialize();
+        let py_controller = bridge::init_python_backend()?;
+        tracing::info!("Python backend initialized");
+        Box::new(bridge::BridgeHandle::spawn(py_controller)?)
+    };
+    #[cfg(not(feature = "pyo3-bridge"))]
+    let bridge: Box<dyn bridge::BridgeService> = {
+        let socket = crystalmath_tui::ipc::default_socket_path();
+        tracing::info!(
+            "Using IPC transport; crystalmath-server socket: {:?}",
+            socket
+        );
+        Box::new(crystalmath_tui::bridge_ipc::IpcBridgeHandle::spawn(socket)?)
+    };
 
     // Setup terminal with RAII guard - ensures cleanup on any exit path
     let _terminal_guard = TerminalGuard::new()?;
@@ -359,8 +383,8 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Create application state (propagates error if Python bridge fails to spawn)
-    let mut app = App::new(py_controller)?;
+    // Create application state (propagates error if the bridge fails to spawn)
+    let mut app = App::new(bridge)?;
 
     // Run main loop - guard handles cleanup on success, error, or panic
     let result = run_app(&mut terminal, &mut app);
@@ -919,11 +943,9 @@ fn handle_workflow_dashboard_input(app: &mut App, key: event::KeyEvent) -> bool 
 fn handle_workflow_results_input(app: &mut App, key: event::KeyEvent) {
     match key.code {
         KeyCode::Esc => app.close_workflow_results(),
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.workflow_results.scroll > 0 {
-                app.workflow_results.scroll -= 1;
-                app.mark_dirty();
-            }
+        KeyCode::Up | KeyCode::Char('k') if app.workflow_results.scroll > 0 => {
+            app.workflow_results.scroll -= 1;
+            app.mark_dirty();
         }
         KeyCode::Down | KeyCode::Char('j') => {
             app.workflow_results.scroll = app.workflow_results.scroll.saturating_add(1);
@@ -962,10 +984,8 @@ fn handle_new_job_modal_input(app: &mut App, key: event::KeyEvent) {
         }
 
         // Submit job
-        KeyCode::Enter => {
-            if app.new_job.can_submit() {
-                app.submit_new_job();
-            }
+        KeyCode::Enter if app.new_job.can_submit() => {
+            app.submit_new_job();
         }
 
         // Navigate fields
@@ -1052,17 +1072,15 @@ fn handle_new_job_modal_input(app: &mut App, key: event::KeyEvent) {
 
         KeyCode::Char(c) => {
             match app.new_job.focused_field {
-                NewJobField::Name => {
+                NewJobField::Name
                     // Only allow valid characters
-                    if c.is_alphanumeric() || c == '-' || c == '_' {
+                    if (c.is_alphanumeric() || c == '-' || c == '_') => {
                         app.new_job.job_name.push(c);
                     }
-                }
-                NewJobField::MpiRanks => {
-                    if c.is_ascii_digit() {
+                NewJobField::MpiRanks
+                    if c.is_ascii_digit() => {
                         app.new_job.mpi_ranks.push(c);
                     }
-                }
                 NewJobField::Walltime => {
                     app.new_job.walltime.push(c);
                 }
@@ -1170,17 +1188,13 @@ fn handle_cluster_manager_modal_input(app: &mut App, key: event::KeyEvent) {
                     app.cluster_manager.start_add();
                     app.mark_dirty();
                 }
-                KeyCode::Char('e') => {
-                    if app.cluster_manager.selected_index.is_some() {
-                        app.cluster_manager.start_edit();
-                        app.mark_dirty();
-                    }
+                KeyCode::Char('e') if app.cluster_manager.selected_index.is_some() => {
+                    app.cluster_manager.start_edit();
+                    app.mark_dirty();
                 }
-                KeyCode::Char('d') => {
-                    if app.cluster_manager.selected_index.is_some() {
-                        app.cluster_manager.start_delete();
-                        app.mark_dirty();
-                    }
+                KeyCode::Char('d') if app.cluster_manager.selected_index.is_some() => {
+                    app.cluster_manager.start_delete();
+                    app.mark_dirty();
                 }
                 KeyCode::Char('t') => {
                     app.test_selected_cluster_connection();
@@ -1361,25 +1375,23 @@ fn handle_slurm_queue_modal_input(app: &mut App, key: event::KeyEvent) {
         }
 
         // Adopt selected job
-        KeyCode::Char('a') => {
+        KeyCode::Char('a')
             if app
                 .slurm_queue_state
                 .selected_entry(&app.slurm_queue)
-                .is_some()
-            {
-                app.adopt_selected_slurm_job();
-            }
+                .is_some() =>
+        {
+            app.adopt_selected_slurm_job();
         }
 
         // Cancel selected job
-        KeyCode::Char('c') => {
+        KeyCode::Char('c')
             if app
                 .slurm_queue_state
                 .selected_entry(&app.slurm_queue)
-                .is_some()
-            {
-                app.cancel_selected_slurm_job_from_modal();
-            }
+                .is_some() =>
+        {
+            app.cancel_selected_slurm_job_from_modal();
         }
 
         _ => {}
@@ -1694,85 +1706,53 @@ fn handle_workflow_config_input(app: &mut App, key: event::KeyEvent) {
             }
 
             match focused {
-                WorkflowConfigField::ConvergenceValues => {
-                    if allow_values(c) {
-                        app.workflow_config.convergence.values.push(c);
-                    }
+                WorkflowConfigField::ConvergenceValues if allow_values(c) => {
+                    app.workflow_config.convergence.values.push(c);
                 }
-                WorkflowConfigField::BandSourceJob => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.band_structure.source_job_pk.push(c);
-                    }
+                WorkflowConfigField::BandSourceJob if c.is_ascii_digit() => {
+                    app.workflow_config.band_structure.source_job_pk.push(c);
                 }
-                WorkflowConfigField::BandCustomPath => {
-                    if !c.is_control() {
-                        app.workflow_config.band_structure.custom_path.push(c);
-                    }
+                WorkflowConfigField::BandCustomPath if !c.is_control() => {
+                    app.workflow_config.band_structure.custom_path.push(c);
                 }
-                WorkflowConfigField::PhononSourceJob => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.phonon.source_job_pk.push(c);
-                    }
+                WorkflowConfigField::PhononSourceJob if c.is_ascii_digit() => {
+                    app.workflow_config.phonon.source_job_pk.push(c);
                 }
-                WorkflowConfigField::PhononSupercellA => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.phonon.supercell_a.push(c);
-                    }
+                WorkflowConfigField::PhononSupercellA if c.is_ascii_digit() => {
+                    app.workflow_config.phonon.supercell_a.push(c);
                 }
-                WorkflowConfigField::PhononSupercellB => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.phonon.supercell_b.push(c);
-                    }
+                WorkflowConfigField::PhononSupercellB if c.is_ascii_digit() => {
+                    app.workflow_config.phonon.supercell_b.push(c);
                 }
-                WorkflowConfigField::PhononSupercellC => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.phonon.supercell_c.push(c);
-                    }
+                WorkflowConfigField::PhononSupercellC if c.is_ascii_digit() => {
+                    app.workflow_config.phonon.supercell_c.push(c);
                 }
-                WorkflowConfigField::PhononDisplacement => {
-                    if allow_float(c) {
-                        app.workflow_config.phonon.displacement.push(c);
-                    }
+                WorkflowConfigField::PhononDisplacement if allow_float(c) => {
+                    app.workflow_config.phonon.displacement.push(c);
                 }
-                WorkflowConfigField::EosSourceJob => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.eos.source_job_pk.push(c);
-                    }
+                WorkflowConfigField::EosSourceJob if c.is_ascii_digit() => {
+                    app.workflow_config.eos.source_job_pk.push(c);
                 }
-                WorkflowConfigField::EosStrainMin => {
-                    if allow_float(c) {
-                        app.workflow_config.eos.strain_min.push(c);
-                    }
+                WorkflowConfigField::EosStrainMin if allow_float(c) => {
+                    app.workflow_config.eos.strain_min.push(c);
                 }
-                WorkflowConfigField::EosStrainMax => {
-                    if allow_float(c) {
-                        app.workflow_config.eos.strain_max.push(c);
-                    }
+                WorkflowConfigField::EosStrainMax if allow_float(c) => {
+                    app.workflow_config.eos.strain_max.push(c);
                 }
-                WorkflowConfigField::EosStrainSteps => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.eos.strain_steps.push(c);
-                    }
+                WorkflowConfigField::EosStrainSteps if c.is_ascii_digit() => {
+                    app.workflow_config.eos.strain_steps.push(c);
                 }
-                WorkflowConfigField::GeomStructurePk => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.geometry_opt.structure_pk.push(c);
-                    }
+                WorkflowConfigField::GeomStructurePk if c.is_ascii_digit() => {
+                    app.workflow_config.geometry_opt.structure_pk.push(c);
                 }
-                WorkflowConfigField::GeomCodeLabel => {
-                    if !c.is_control() {
-                        app.workflow_config.geometry_opt.code_label.push(c);
-                    }
+                WorkflowConfigField::GeomCodeLabel if !c.is_control() => {
+                    app.workflow_config.geometry_opt.code_label.push(c);
                 }
-                WorkflowConfigField::GeomFmax => {
-                    if allow_float(c) {
-                        app.workflow_config.geometry_opt.fmax.push(c);
-                    }
+                WorkflowConfigField::GeomFmax if allow_float(c) => {
+                    app.workflow_config.geometry_opt.fmax.push(c);
                 }
-                WorkflowConfigField::GeomMaxSteps => {
-                    if c.is_ascii_digit() {
-                        app.workflow_config.geometry_opt.max_steps.push(c);
-                    }
+                WorkflowConfigField::GeomMaxSteps if c.is_ascii_digit() => {
+                    app.workflow_config.geometry_opt.max_steps.push(c);
                 }
                 _ => {}
             }

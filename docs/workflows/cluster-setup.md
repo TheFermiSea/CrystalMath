@@ -376,12 +376,21 @@ print(code_config)
 
 ### VASP Nodes (password auth)
 
+VASP node credentials are sourced from the environment, never hardcoded. Export
+`VASP_NODE_SSH_PASSWORD` (and `SSHPASS` to the same value) before connecting, or
+configure key-based auth and leave the password unset.
+
+```bash
+export VASP_NODE_SSH_PASSWORD='<your-vasp-node-password>'
+export SSHPASS="$VASP_NODE_SSH_PASSWORD"   # consumed by `sshpass -e`
+```
+
 ```python
 node = get_node_config("vasp-01")
-print(f"User: {node.ssh_user}")           # root
-print(f"Password: {node.ssh_password}")   # adminadmin
+print(f"User: {node.ssh_user}")           # from VASP_NODE_SSH_USER (default: root)
+print(f"Password set: {node.ssh_password is not None}")  # True only if env var is set
 print(f"Command: {node.get_ssh_connection_string()}")
-# sshpass -p 'adminadmin' ssh root@10.0.0.20
+# sshpass -e ssh root@10.0.0.20   (reads SSHPASS from the environment)
 ```
 
 ### QE Nodes (key auth)
@@ -397,8 +406,8 @@ print(f"Command: {node.get_ssh_connection_string()}")
 ### Testing Connectivity
 
 ```bash
-# VASP nodes
-sshpass -p 'adminadmin' ssh root@10.0.0.20 "hostname && nproc"
+# VASP nodes (SSHPASS must be exported; see above)
+sshpass -e ssh root@10.0.0.20 "hostname && nproc"
 
 # QE nodes
 ssh ubuntu@10.0.0.10 "hostname && nproc"

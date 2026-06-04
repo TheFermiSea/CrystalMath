@@ -65,23 +65,13 @@ See Also:
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
-    Dict,
-    Generic,
-    List,
-    Literal,
-    Optional,
-    Protocol,
-    Sequence,
-    Type,
     TypeVar,
-    Union,
 )
 
 if TYPE_CHECKING:
@@ -90,7 +80,6 @@ if TYPE_CHECKING:
     from pymatgen.core import Structure
 
     from crystalmath.protocols import (
-        DFTCode,
         ResourceRequirements,
         WorkflowResult,
         WorkflowState,
@@ -177,11 +166,11 @@ class MakerConfig:
         supported_codes: List of DFT codes this Maker works with
     """
 
-    maker_class: Type["Maker"]
-    default_kwargs: Dict[str, Any] = field(default_factory=dict)
-    protocol_mapping: Dict[ProtocolLevel, Dict[str, Any]] = field(default_factory=dict)
+    maker_class: type[Maker]
+    default_kwargs: dict[str, Any] = field(default_factory=dict)
+    protocol_mapping: dict[ProtocolLevel, dict[str, Any]] = field(default_factory=dict)
     requires_gpu: bool = False
-    supported_codes: List[str] = field(default_factory=lambda: ["vasp"])
+    supported_codes: list[str] = field(default_factory=lambda: ["vasp"])
 
 
 @dataclass
@@ -201,13 +190,13 @@ class FlowResult:
     """
 
     flow_uuid: str
-    job_uuids: List[str] = field(default_factory=list)
-    outputs: Dict[str, Any] = field(default_factory=dict)
+    job_uuids: list[str] = field(default_factory=list)
+    outputs: dict[str, Any] = field(default_factory=dict)
     state: str = "created"
-    timing: Dict[str, float] = field(default_factory=dict)
-    errors: List[str] = field(default_factory=list)
+    timing: dict[str, float] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
 
-    def to_workflow_result(self) -> "WorkflowResult":
+    def to_workflow_result(self) -> WorkflowResult:
         """
         Convert to CrystalMath WorkflowResult.
 
@@ -249,10 +238,10 @@ class CodeHandoff:
     target_code: str
     output_key: str
     input_key: str
-    converter: Optional[Callable[[Any], Any]] = None
-    validation: Optional[Callable[[Any], bool]] = None
+    converter: Callable[[Any], Any] | None = None
+    validation: Callable[[Any], bool] | None = None
 
-    def transfer(self, source_outputs: Dict[str, Any]) -> Dict[str, Any]:
+    def transfer(self, source_outputs: dict[str, Any]) -> dict[str, Any]:
         """
         Execute the data transfer.
 
@@ -314,7 +303,7 @@ class FlowMakerRegistry:
 
     def __init__(self):
         """Initialize the registry with default mappings."""
-        self._registry: Dict[str, Dict[str, MakerConfig]] = {}
+        self._registry: dict[str, dict[str, MakerConfig]] = {}
         self._register_defaults()
 
     def _register_defaults(self) -> None:
@@ -393,15 +382,9 @@ class FlowMakerRegistry:
                 maker_class=None,
                 default_kwargs={"supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]]},
                 protocol_mapping={
-                    ProtocolLevel.FAST: {
-                        "supercell_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-                    },
-                    ProtocolLevel.MODERATE: {
-                        "supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]]
-                    },
-                    ProtocolLevel.PRECISE: {
-                        "supercell_matrix": [[3, 0, 0], [0, 3, 0], [0, 0, 3]]
-                    },
+                    ProtocolLevel.FAST: {"supercell_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]},
+                    ProtocolLevel.MODERATE: {"supercell_matrix": [[2, 0, 0], [0, 2, 0], [0, 0, 2]]},
+                    ProtocolLevel.PRECISE: {"supercell_matrix": [[3, 0, 0], [0, 3, 0], [0, 0, 3]]},
                 },
                 requires_gpu=True,
                 supported_codes=["vasp"],
@@ -410,7 +393,7 @@ class FlowMakerRegistry:
 
     def register(
         self,
-        workflow_type: Union[str, "WorkflowType"],
+        workflow_type: str | WorkflowType,
         code: str,
         config: MakerConfig,
     ) -> None:
@@ -433,9 +416,7 @@ class FlowMakerRegistry:
             ... )
         """
         type_key = (
-            workflow_type.value
-            if hasattr(workflow_type, "value")
-            else str(workflow_type)
+            workflow_type.value if hasattr(workflow_type, "value") else str(workflow_type)
         ).lower()
 
         if type_key not in self._registry:
@@ -445,11 +426,11 @@ class FlowMakerRegistry:
 
     def get_maker(
         self,
-        workflow_type: Union[str, "WorkflowType"],
+        workflow_type: str | WorkflowType,
         code: str = "vasp",
         protocol: ProtocolLevel = ProtocolLevel.MODERATE,
         **kwargs: Any,
-    ) -> "Maker":
+    ) -> Maker:
         """
         Get an atomate2 Maker for the specified workflow type and code.
 
@@ -471,9 +452,7 @@ class FlowMakerRegistry:
             >>> flow = maker.make(structure)
         """
         type_key = (
-            workflow_type.value
-            if hasattr(workflow_type, "value")
-            else str(workflow_type)
+            workflow_type.value if hasattr(workflow_type, "value") else str(workflow_type)
         ).lower()
         code_key = code.lower()
 
@@ -503,7 +482,7 @@ class FlowMakerRegistry:
 
         return maker_class(**merged_kwargs)
 
-    def _import_maker(self, workflow_type: str, code: str) -> Type["Maker"]:
+    def _import_maker(self, workflow_type: str, code: str) -> type[Maker]:
         """
         Lazily import the appropriate Maker class.
 
@@ -541,9 +520,7 @@ class FlowMakerRegistry:
 
         key = (workflow_type, code)
         if key not in import_map:
-            raise MakerNotFoundError(
-                f"No import path defined for {workflow_type}/{code}"
-            )
+            raise MakerNotFoundError(f"No import path defined for {workflow_type}/{code}")
 
         module_path, class_name = import_map[key]
 
@@ -558,16 +535,14 @@ class FlowMakerRegistry:
                 f"Is atomate2 installed? Error: {e}"
             ) from e
 
-    def list_available(self) -> Dict[str, List[str]]:
+    def list_available(self) -> dict[str, list[str]]:
         """
         List all available workflow type / code combinations.
 
         Returns:
             Dict mapping workflow types to available codes
         """
-        return {
-            wf_type: list(codes.keys()) for wf_type, codes in self._registry.items()
-        }
+        return {wf_type: list(codes.keys()) for wf_type, codes in self._registry.items()}
 
 
 # =============================================================================
@@ -596,9 +571,9 @@ class Atomate2FlowAdapter:
 
     def __init__(
         self,
-        flow: "Flow",
+        flow: Flow,
         execution_mode: ExecutionMode = ExecutionMode.LOCAL,
-        store: Optional["Store"] = None,
+        store: Store | None = None,
     ):
         """
         Initialize the adapter with an atomate2 Flow.
@@ -611,10 +586,10 @@ class Atomate2FlowAdapter:
         self._flow = flow
         self._execution_mode = execution_mode
         self._store = store
-        self._result: Optional[FlowResult] = None
+        self._result: FlowResult | None = None
 
     @property
-    def flow(self) -> "Flow":
+    def flow(self) -> Flow:
         """The wrapped atomate2 Flow."""
         return self._flow
 
@@ -649,7 +624,7 @@ class Atomate2FlowAdapter:
             "See docs/architecture/ATOMATE2-INTEGRATION.md for design."
         )
 
-    def to_workflow_steps(self) -> List["WorkflowStep"]:
+    def to_workflow_steps(self) -> list[WorkflowStep]:
         """
         Convert Flow Jobs to CrystalMath WorkflowSteps.
 
@@ -660,7 +635,7 @@ class Atomate2FlowAdapter:
             This enables the Flow to be visualized and managed
             through CrystalMath's workflow tools.
         """
-        from crystalmath.protocols import WorkflowStep, WorkflowType
+        from crystalmath.protocols import WorkflowStep
 
         steps = []
         for job in self._flow.jobs:
@@ -676,7 +651,7 @@ class Atomate2FlowAdapter:
 
         return steps
 
-    def _infer_workflow_type(self, job: "Job") -> "WorkflowType":
+    def _infer_workflow_type(self, job: Job) -> WorkflowType:
         """Infer WorkflowType from Job name/class."""
         from crystalmath.protocols import WorkflowType
 
@@ -696,7 +671,7 @@ class Atomate2FlowAdapter:
         else:
             return WorkflowType.SCF  # Default
 
-    def _infer_code(self, job: "Job") -> str:
+    def _infer_code(self, job: Job) -> str:
         """Infer DFT code from Job class."""
         class_name = job.__class__.__module__
         if "vasp" in class_name:
@@ -746,7 +721,7 @@ class Atomate2Bridge:
 
     def __init__(
         self,
-        store: Optional["Store"] = None,
+        store: Store | None = None,
         execution_mode: ExecutionMode = ExecutionMode.LOCAL,
     ):
         """
@@ -760,7 +735,7 @@ class Atomate2Bridge:
         self._registry = FlowMakerRegistry()
         self._execution_mode = execution_mode
         self._store = store
-        self._active_flows: Dict[str, Any] = {}
+        self._active_flows: dict[str, Any] = {}
 
     @property
     def name(self) -> str:
@@ -785,14 +760,14 @@ class Atomate2Bridge:
 
     def submit(
         self,
-        workflow_type: "WorkflowType",
+        workflow_type: WorkflowType,
         structure: Any,
         code: str = "vasp",
-        parameters: Optional[Dict[str, Any]] = None,
-        resources: Optional["ResourceRequirements"] = None,
+        parameters: dict[str, Any] | None = None,
+        resources: ResourceRequirements | None = None,
         protocol: ProtocolLevel = ProtocolLevel.MODERATE,
         **kwargs: Any,
-    ) -> "WorkflowResult":
+    ) -> WorkflowResult:
         """
         Submit a workflow for execution.
 
@@ -902,9 +877,7 @@ class Atomate2Bridge:
             workflow_id = str(uuid.uuid4())
 
             wf_type_str = (
-                workflow_type.value
-                if hasattr(workflow_type, "value")
-                else str(workflow_type)
+                workflow_type.value if hasattr(workflow_type, "value") else str(workflow_type)
             )
 
             self._active_flows[workflow_id] = {
@@ -935,10 +908,10 @@ class Atomate2Bridge:
 
     def submit_composite(
         self,
-        steps: Sequence["WorkflowStep"],
+        steps: Sequence[WorkflowStep],
         structure: Any,
         **kwargs: Any,
-    ) -> "WorkflowResult":
+    ) -> WorkflowResult:
         """
         Submit a composite multi-step workflow.
 
@@ -961,7 +934,7 @@ class Atomate2Bridge:
             "Use MultiCodeFlowBuilder for complex workflows."
         )
 
-    def get_status(self, workflow_id: str) -> "WorkflowState":
+    def get_status(self, workflow_id: str) -> WorkflowState:
         """
         Get current state of a workflow.
 
@@ -977,7 +950,7 @@ class Atomate2Bridge:
 
         return self._active_flows[workflow_id]["state"]
 
-    def get_result(self, workflow_id: str) -> "WorkflowResult":
+    def get_result(self, workflow_id: str) -> WorkflowResult:
         """
         Get complete result of a finished workflow.
 
@@ -1033,7 +1006,7 @@ class Atomate2Bridge:
             return True
         return False
 
-    def complete_workflow(self, workflow_id: str, outputs: Dict[str, Any]) -> bool:
+    def complete_workflow(self, workflow_id: str, outputs: dict[str, Any]) -> bool:
         """Mark a workflow as completed with given outputs. Testing hook.
 
         Args:
@@ -1067,7 +1040,7 @@ class Atomate2Bridge:
         self._active_flows[workflow_id]["outputs"][key] = value
         return True
 
-    def _convert_structure(self, structure: Any) -> "Structure":
+    def _convert_structure(self, structure: Any) -> Structure:
         """
         Convert input structure to pymatgen Structure.
 
@@ -1094,8 +1067,6 @@ class Atomate2Bridge:
 
         # Handle file path
         if isinstance(structure, (str, Path)):
-            from pathlib import Path
-
             return Structure.from_file(str(structure))
 
         # Handle dict representation
@@ -1146,18 +1117,18 @@ class MultiCodeFlowBuilder:
 
     def __init__(self):
         """Initialize the builder."""
-        self._steps: List[Dict[str, Any]] = []
-        self._handoffs: List[CodeHandoff] = []
+        self._steps: list[dict[str, Any]] = []
+        self._handoffs: list[CodeHandoff] = []
         self._bridge = Atomate2Bridge()
 
     def add_step(
         self,
         name: str,
         code: str,
-        workflow_type: "WorkflowType",
-        depends_on: Optional[List[str]] = None,
-        parameters: Optional[Dict[str, Any]] = None,
-    ) -> "MultiCodeFlowBuilder":
+        workflow_type: WorkflowType,
+        depends_on: list[str] | None = None,
+        parameters: dict[str, Any] | None = None,
+    ) -> MultiCodeFlowBuilder:
         """
         Add a workflow step.
 
@@ -1188,8 +1159,8 @@ class MultiCodeFlowBuilder:
         target_step: str,
         output_key: str = "structure",
         input_key: str = "structure",
-        converter: Optional[Callable[[Any], Any]] = None,
-    ) -> "MultiCodeFlowBuilder":
+        converter: Callable[[Any], Any] | None = None,
+    ) -> MultiCodeFlowBuilder:
         """
         Add a data handoff between steps.
 
@@ -1207,12 +1178,8 @@ class MultiCodeFlowBuilder:
             self for method chaining
         """
         # Find source and target codes
-        source_code = next(
-            (s["code"] for s in self._steps if s["name"] == source_step), "unknown"
-        )
-        target_code = next(
-            (s["code"] for s in self._steps if s["name"] == target_step), "unknown"
-        )
+        source_code = next((s["code"] for s in self._steps if s["name"] == source_step), "unknown")
+        target_code = next((s["code"] for s in self._steps if s["name"] == target_step), "unknown")
 
         self._handoffs.append(
             CodeHandoff(
@@ -1225,7 +1192,7 @@ class MultiCodeFlowBuilder:
         )
         return self
 
-    def build(self, structure: Any) -> "Flow":
+    def build(self, structure: Any) -> Flow:
         """
         Build the composite Flow.
 
@@ -1243,7 +1210,7 @@ class MultiCodeFlowBuilder:
             "See docs/architecture/ATOMATE2-INTEGRATION.md for design."
         )
 
-    def validate(self) -> tuple[bool, List[str]]:
+    def validate(self) -> tuple[bool, list[str]]:
         """
         Validate the workflow definition.
 
@@ -1263,9 +1230,7 @@ class MultiCodeFlowBuilder:
         for step in self._steps:
             for dep in step["depends_on"]:
                 if dep not in step_names:
-                    issues.append(
-                        f"Step '{step['name']}' depends on unknown step '{dep}'"
-                    )
+                    issues.append(f"Step '{step['name']}' depends on unknown step '{dep}'")
 
         # Check for circular dependencies (simple check)
         # Full implementation would do topological sort
@@ -1282,7 +1247,7 @@ class MultiCodeFlowBuilder:
 
 
 def get_atomate2_bridge(
-    store: Optional["Store"] = None,
+    store: Store | None = None,
     execution_mode: ExecutionMode = ExecutionMode.LOCAL,
 ) -> Atomate2Bridge:
     """
@@ -1304,8 +1269,8 @@ def get_atomate2_bridge(
 
 def create_vasp_to_yambo_flow(
     structure: Any,
-    gw_parameters: Optional[Dict[str, Any]] = None,
-) -> "Flow":
+    gw_parameters: dict[str, Any] | None = None,
+) -> Flow:
     """
     Create a VASP -> YAMBO GW workflow.
 

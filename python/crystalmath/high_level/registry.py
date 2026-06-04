@@ -16,9 +16,8 @@ Example:
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Tuple
 
-from crystalmath.protocols import DFTCode, WorkflowStep, WorkflowType
+from crystalmath.protocols import DFTCode, WorkflowStep
 
 logger = logging.getLogger(__name__)
 
@@ -38,30 +37,24 @@ class PropertyCalculator:
     """
 
     # Default code preferences for each property (ordered by preference)
-    DEFAULT_CODES: Dict[str, List[DFTCode]] = {
+    DEFAULT_CODES: dict[str, list[DFTCode]] = {
         # Ground state DFT
         "scf": ["vasp", "crystal23", "quantum_espresso"],
         "relax": ["vasp", "crystal23", "quantum_espresso"],
         "bands": ["vasp", "crystal23", "quantum_espresso"],
         "dos": ["vasp", "crystal23", "quantum_espresso"],
-
         # Mechanical properties
         "elastic": ["vasp"],
         "phonon": ["vasp", "crystal23", "quantum_espresso"],
-
         # Electronic response
         "dielectric": ["vasp", "crystal23"],
-
         # Many-body perturbation theory
         "gw": ["yambo", "berkeleygw"],
         "bse": ["yambo", "berkeleygw"],
-
         # Transport
         "transport": ["vasp"],  # with boltztrap2 post-processing
-
         # Transition states
         "neb": ["vasp"],
-
         # Convergence and EOS
         "convergence": ["vasp", "crystal23", "quantum_espresso"],
         "eos": ["vasp", "crystal23", "quantum_espresso"],
@@ -69,14 +62,13 @@ class PropertyCalculator:
 
     # Code compatibility matrix for multi-code workflows
     # (source_code, target_code) -> can_transfer
-    CODE_COMPATIBILITY: Dict[Tuple[DFTCode, DFTCode], bool] = {
+    CODE_COMPATIBILITY: dict[tuple[DFTCode, DFTCode], bool] = {
         # DFT -> GW code compatibility (wavefunction transfer)
         ("vasp", "yambo"): True,
         ("quantum_espresso", "yambo"): True,
         ("crystal23", "yambo"): True,  # Via p2y converter
         ("vasp", "berkeleygw"): True,
         ("quantum_espresso", "berkeleygw"): True,
-
         # Same code (always compatible)
         ("vasp", "vasp"): True,
         ("crystal23", "crystal23"): True,
@@ -86,7 +78,7 @@ class PropertyCalculator:
     }
 
     # Properties that require special codes
-    REQUIRED_CODES: Dict[str, List[DFTCode]] = {
+    REQUIRED_CODES: dict[str, list[DFTCode]] = {
         "gw": ["yambo", "berkeleygw"],
         "bse": ["yambo", "berkeleygw"],
     }
@@ -95,9 +87,9 @@ class PropertyCalculator:
     def select_code(
         cls,
         property_name: str,
-        available_codes: Optional[List[DFTCode]] = None,
-        user_preference: Optional[DFTCode] = None,
-        previous_code: Optional[DFTCode] = None,
+        available_codes: list[DFTCode] | None = None,
+        user_preference: DFTCode | None = None,
+        previous_code: DFTCode | None = None,
     ) -> DFTCode:
         """Select best code for a property.
 
@@ -155,8 +147,7 @@ class PropertyCalculator:
         # Check compatibility with previous code
         if previous_code and defaults:
             compatible = [
-                c for c in defaults
-                if cls.CODE_COMPATIBILITY.get((previous_code, c), False)
+                c for c in defaults if cls.CODE_COMPATIBILITY.get((previous_code, c), False)
             ]
             if compatible:
                 defaults = compatible
@@ -175,8 +166,8 @@ class PropertyCalculator:
     @classmethod
     def validate_workflow_codes(
         cls,
-        steps: List[WorkflowStep],
-    ) -> Tuple[bool, List[str]]:
+        steps: list[WorkflowStep],
+    ) -> tuple[bool, list[str]]:
         """Validate code compatibility across workflow steps.
 
         Checks that data can be transferred between consecutive steps
@@ -193,7 +184,7 @@ class PropertyCalculator:
             if not is_valid:
                 print("Incompatible codes:", issues)
         """
-        issues: List[str] = []
+        issues: list[str] = []
 
         # Build dependency map
         step_map = {s.name: s for s in steps}
@@ -218,7 +209,7 @@ class PropertyCalculator:
         return len(issues) == 0, issues
 
     @classmethod
-    def get_code_capabilities(cls, code: DFTCode) -> List[str]:
+    def get_code_capabilities(cls, code: DFTCode) -> list[str]:
         """Get list of properties a code can calculate.
 
         Args:
@@ -238,7 +229,7 @@ class PropertyCalculator:
         return capabilities
 
     @classmethod
-    def get_property_codes(cls, property_name: str) -> List[DFTCode]:
+    def get_property_codes(cls, property_name: str) -> list[DFTCode]:
         """Get codes that can calculate a property.
 
         Args:

@@ -3,6 +3,9 @@
 **Last updated:** 2026-02-03T03:00:00Z
 **Status:** Active development
 
+> Live status is tracked in beads (`bd ready` / `bd list`); this file is a narrative snapshot.
+> The unification direction below is ratified by [ADR-006](../docs/architecture/adr-006-unify-on-rust-tui.md) (unify on the single Rust/Ratatui TUI).
+
 ## Current Position
 
 **Phase:** 4 of 6 (Workflow Execution)

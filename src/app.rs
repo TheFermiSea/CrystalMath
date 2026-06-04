@@ -5,12 +5,10 @@
 
 use std::sync::mpsc::{self, Receiver};
 
-use anyhow::Context;
-use pyo3::{Py, PyAny};
 use tracing::{debug, error, info, warn};
 use tui_textarea::TextArea;
 
-use crate::bridge::{BridgeHandle, BridgeRequestKind, BridgeResponse, BridgeService};
+use crate::bridge::{BridgeRequestKind, BridgeResponse, BridgeService};
 use crate::lsp::{DftCodeType, Diagnostic, LspClient, LspEvent, LspService};
 use crate::models::{ApiResponse, JobDetails, JobStatus, SlurmQueueEntry};
 use crate::monitor::{MonitorMessage, MonitorState};
@@ -322,23 +320,14 @@ impl<'a> App<'a> {
         Self::LSP_SERVER_PATH_DEFAULT.to_string()
     }
 
-    /// Create a new application with the Python controller.
+    /// Create a new application from an already-constructed bridge.
     ///
-    /// Spawns a worker thread that owns the Py<PyAny> and handles all
-    /// Python calls asynchronously via channels.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the Python bridge worker thread fails to spawn.
-    /// This allows the caller to handle the failure gracefully (e.g., show
-    /// an error message) instead of panicking.
-    pub fn new(py_controller: Py<PyAny>) -> anyhow::Result<Self> {
-        // Spawn the async bridge worker thread and box it for DI
-        let bridge: Box<dyn BridgeService> = Box::new(
-            BridgeHandle::spawn(py_controller)
-                .context("Failed to spawn Python bridge worker thread")?,
-        );
-
+    /// `App` is transport-agnostic: it holds the bridge behind the
+    /// `BridgeService` trait object. The caller (`main.rs`) picks the concrete
+    /// transport — the PyO3 `BridgeHandle` (legacy, `pyo3-bridge` feature) or the
+    /// IPC `IpcBridgeHandle` — so this constructor has no PyO3 dependency. See
+    /// ADR-006.
+    pub fn new(bridge: Box<dyn BridgeService>) -> anyhow::Result<Self> {
         let mut editor = TextArea::default();
         editor.set_line_number_style(
             ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
@@ -446,6 +435,10 @@ impl<'a> App<'a> {
     }
 
     /// Check if redraw is needed without resetting.
+    ///
+    /// Non-consuming peek accessor (the render loop uses `take_needs_redraw`);
+    /// part of the documented dirty-flag API and exercised by the test suite.
+    #[allow(dead_code)]
     pub fn needs_redraw(&self) -> bool {
         self.needs_redraw
     }
@@ -652,6 +645,22 @@ impl<'a> App<'a> {
         let id = self.next_request_id;
         self.next_request_id = self.next_request_id.wrapping_add(1);
         id
+    }
+
+    /// Single funnel for all generic JSON-RPC sends.
+    ///
+    /// Centralizes `JsonRpcRequest` construction and dispatch so that the planned
+    /// transport swap (PyO3 `bridge.rs` -> IPC `ipc::client`, see ADR-006) touches
+    /// one function instead of every call site. Callers allocate the `request_id`
+    /// (via [`Self::next_request_id`] or a per-domain counter) and pass it here.
+    fn send_rpc(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        request_id: usize,
+    ) -> anyhow::Result<()> {
+        let rpc_request = crate::bridge::JsonRpcRequest::new(method, params, request_id as u64);
+        self.bridge.request_rpc(rpc_request, request_id)
     }
 
     /// Request a job list refresh (non-blocking).
@@ -2013,8 +2022,9 @@ impl<'a> App<'a> {
                                         Ok(api_response) => match api_response.into_result() {
                                             Ok(val_result) => {
                                                 if val_result.valid {
-                                                    self.vasp_input_state.status =
-                                                        Some("Validation passed!".to_string());
+                                                    self.vasp_input_state.set_status(
+                                                        "Validation passed!".to_string(),
+                                                    );
                                                 } else {
                                                     self.vasp_input_state.set_error(
                                                         "Validation failed. See details."
@@ -2344,7 +2354,6 @@ impl<'a> App<'a> {
     /// Sends status requests for active (non-terminal) jobs every 30 seconds.
     /// This keeps the TUI synchronized with actual job states on the workflow engine.
     pub fn poll_job_statuses(&mut self) {
-        use crate::bridge::JsonRpcRequest;
         use crate::models::JobState;
 
         // Only poll if enough time has passed
@@ -2384,8 +2393,7 @@ impl<'a> App<'a> {
 
             // Send JSON-RPC request: jobs.status with {"job_id": job_id}
             let params = serde_json::json!({"job_id": job_id.clone()});
-            let rpc_request = JsonRpcRequest::new("jobs.status", params, request_id as u64);
-            if let Err(e) = self.bridge.request_rpc(rpc_request, request_id) {
+            if let Err(e) = self.send_rpc("jobs.status", params, request_id) {
                 warn!("Failed to send status request for job {}: {}", job_id, e);
                 continue;
             }
@@ -3675,8 +3683,6 @@ impl<'a> App<'a> {
     /// Generates VASP input files (POSCAR, INCAR, KPOINTS) from the selected
     /// Materials Project structure. The result is delivered via `poll_bridge_responses()`.
     pub fn request_generate_vasp_from_mp(&mut self) {
-        use crate::bridge::JsonRpcRequest;
-
         let Some(material) = self.materials.selected_material() else {
             self.materials
                 .set_status("Please select a structure first", true);
@@ -3717,10 +3723,7 @@ impl<'a> App<'a> {
             "config_json": config_json
         });
 
-        let rpc_request =
-            JsonRpcRequest::new("vasp.generate_from_mp", params, self.vasp_request_id as u64);
-
-        match self.bridge.request_rpc(rpc_request, self.vasp_request_id) {
+        match self.send_rpc("vasp.generate_from_mp", params, self.vasp_request_id) {
             Ok(()) => {
                 info!(
                     "VASP generation requested for {} (id={})",
@@ -3741,7 +3744,6 @@ impl<'a> App<'a> {
     /// Submits the generated POSCAR to quacc's jobs.submit endpoint.
     /// The result is delivered via `poll_bridge_responses()`.
     pub fn request_submit_quacc_job(&mut self) {
-        use crate::bridge::JsonRpcRequest;
         use crate::models::QuaccJobSubmitRequest;
 
         // Check we have generated POSCAR content
@@ -3790,9 +3792,7 @@ impl<'a> App<'a> {
             }
         };
 
-        let rpc_request = JsonRpcRequest::new("jobs.submit", params, self.submit_request_id as u64);
-
-        match self.bridge.request_rpc(rpc_request, self.submit_request_id) {
+        match self.send_rpc("jobs.submit", params, self.submit_request_id) {
             Ok(()) => {
                 info!("Job submission requested (id={})", self.submit_request_id);
             }
@@ -3808,8 +3808,6 @@ impl<'a> App<'a> {
     /// Fetches detailed structure information (formula, lattice, symmetry) for display
     /// in the materials modal preview panel.
     pub fn request_structure_preview(&mut self) {
-        use crate::bridge::JsonRpcRequest;
-
         let Some(material) = self.materials.selected_material() else {
             // No selection, clear any existing preview
             self.materials.clear_preview();
@@ -3830,16 +3828,11 @@ impl<'a> App<'a> {
             "source_data": mp_id
         });
 
-        let rpc_request = JsonRpcRequest::new(
+        if let Err(e) = self.send_rpc(
             "structures.preview",
             params,
-            self.materials.preview_request_id as u64,
-        );
-
-        if let Err(e) = self
-            .bridge
-            .request_rpc(rpc_request, self.materials.preview_request_id)
-        {
+            self.materials.preview_request_id,
+        ) {
             self.materials.preview_loading = false;
             debug!("Structure preview request failed: {}", e);
         } else {
@@ -4218,8 +4211,6 @@ impl<'a> App<'a> {
 
     /// Request VASP input validation (async).
     pub fn request_validate_vasp_inputs(&mut self) {
-        use crate::bridge::JsonRpcRequest;
-
         // Get content from editors
         let files = self.vasp_input_state.get_contents();
         let inputs_json = match serde_json::to_string(&files) {
@@ -4234,23 +4225,19 @@ impl<'a> App<'a> {
 
         // Set up validation request
         self.vasp_input_state.validation_request_id = self.next_request_id();
-        self.vasp_input_state.status = Some("Validating...".to_string());
+        self.vasp_input_state
+            .set_status("Validating...".to_string());
         self.mark_dirty();
 
         let params = serde_json::json!({
             "inputs_json": inputs_json
         });
 
-        let rpc_request = JsonRpcRequest::new(
+        if let Err(e) = self.send_rpc(
             "vasp.validate_inputs",
             params,
-            self.vasp_input_state.validation_request_id as u64,
-        );
-
-        if let Err(e) = self
-            .bridge
-            .request_rpc(rpc_request, self.vasp_input_state.validation_request_id)
-        {
+            self.vasp_input_state.validation_request_id,
+        ) {
             self.vasp_input_state
                 .set_error(format!("Validation request failed: {}", e));
         }
@@ -4496,18 +4483,15 @@ impl<'a> App<'a> {
         // Increment request ID for this recipe fetch
         self.recipe_request_id = self.next_request_id();
 
-        // Use the JSON-RPC bridge pattern
-        let rpc_request = crate::bridge::JsonRpcRequest::new(
-            "recipes.list",
-            serde_json::json!({}),
-            self.recipe_request_id as u64,
-        );
-
         info!(
             "Sending recipes.list RPC request (id={})",
             self.recipe_request_id
         );
-        if let Err(e) = self.bridge.request_rpc(rpc_request, self.recipe_request_id) {
+        if let Err(e) = self.send_rpc(
+            "recipes.list",
+            serde_json::json!({}),
+            self.recipe_request_id,
+        ) {
             self.recipe_browser.loading = false;
             self.recipe_browser.error = Some(format!("Failed to request recipes: {}", e));
             error!("Failed to send recipes.list request: {}", e);
@@ -5099,16 +5083,11 @@ impl<'a> App<'a> {
     fn request_check_workflows(&mut self) {
         self.workflow_request_id = self.next_request_id();
 
-        let rpc_request = crate::bridge::JsonRpcRequest::new(
+        if let Err(e) = self.send_rpc(
             "check_workflows_available",
             serde_json::json!({}),
-            self.workflow_request_id as u64,
-        );
-
-        if let Err(e) = self
-            .bridge
-            .request_rpc(rpc_request, self.workflow_request_id)
-        {
+            self.workflow_request_id,
+        ) {
             self.workflow_state.set_loading(false);
             self.workflow_state
                 .set_status(format!("Failed to check availability: {}", e), true);
@@ -5215,8 +5194,6 @@ impl<'a> App<'a> {
 
     /// Request output file content from the Python backend.
     pub fn request_fetch_output_file(&mut self, job_pk: i32, file_type: OutputFileType) {
-        use crate::bridge::JsonRpcRequest;
-
         self.output_viewer_request_id = self.next_request_id();
         self.output_viewer.loading = true;
         self.output_viewer.error = None;
@@ -5228,16 +5205,11 @@ impl<'a> App<'a> {
             "tail_lines": 5000  // Limit for performance
         });
 
-        let rpc_request = JsonRpcRequest::new(
+        if let Err(e) = self.send_rpc(
             "jobs.get_output_file",
             params,
-            self.output_viewer_request_id as u64,
-        );
-
-        if let Err(e) = self
-            .bridge
-            .request_rpc(rpc_request, self.output_viewer_request_id)
-        {
+            self.output_viewer_request_id,
+        ) {
             self.output_viewer.loading = false;
             self.output_viewer
                 .set_error(format!("Failed to request output file: {}", e));

@@ -7,7 +7,7 @@ Requires AiiDA to be installed and configured with a profile.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from crystalmath.backends import Backend
 from crystalmath.models import (
@@ -63,7 +63,7 @@ class AiiDABackend(Backend):
     def is_available(self) -> bool:
         return self._available
 
-    def _map_process_state(self, state: str, exit_status: Optional[int]) -> JobState:
+    def _map_process_state(self, state: str, exit_status: int | None) -> JobState:
         """Map AiiDA process state to JobState."""
         if state == "finished":
             return JobState.COMPLETED if exit_status == 0 else JobState.FAILED
@@ -76,7 +76,7 @@ class AiiDABackend(Backend):
         else:
             return JobState.CREATED
 
-    def get_jobs(self, limit: int = 100) -> List[JobStatus]:
+    def get_jobs(self, limit: int = 100) -> list[JobStatus]:
         """Query AiiDA for job list."""
         if not self._available or not self._orm:
             return []
@@ -99,7 +99,7 @@ class AiiDABackend(Backend):
             qb.order_by({orm.CalcJobNode: {"ctime": "desc"}})
             qb.limit(limit)
 
-            results: List[JobStatus] = []
+            results: list[JobStatus] = []
             for pk, uuid, label, state, exit_status, ctime in qb.all():
                 ui_state = self._map_process_state(state, exit_status)
 
@@ -122,7 +122,7 @@ class AiiDABackend(Backend):
             logger.error(f"Error querying AiiDA jobs: {e}")
             return []
 
-    def get_job_details(self, pk: int) -> Optional[JobDetails]:
+    def get_job_details(self, pk: int) -> JobDetails | None:
         """Get detailed job info from AiiDA."""
         if not self._available or not self._orm:
             return None
@@ -137,17 +137,15 @@ class AiiDABackend(Backend):
                 return None
 
             # Get output parameters if available
-            output_params: Dict[str, Any] = {}
+            output_params: dict[str, Any] = {}
             if "output_parameters" in node.outputs:
                 output_params = node.outputs.output_parameters.get_dict()
 
             # Get stdout
-            stdout_lines: List[str] = []
+            stdout_lines: list[str] = []
             if "retrieved" in node.outputs:
                 try:
-                    stdout = node.outputs.retrieved.get_object_content(
-                        "_scheduler-stdout.txt"
-                    )
+                    stdout = node.outputs.retrieved.get_object_content("_scheduler-stdout.txt")
                     stdout_lines = stdout.splitlines()[-50:]
                 except Exception:
                     pass
@@ -188,8 +186,7 @@ class AiiDABackend(Backend):
                 code = orm.load_code("crystal@localhost")
             except Exception:
                 raise RuntimeError(
-                    "CRYSTAL code not configured in AiiDA. "
-                    "Run 'verdi code setup' first."
+                    "CRYSTAL code not configured in AiiDA. Run 'verdi code setup' first."
                 )
 
             # Create a builder
@@ -224,7 +221,7 @@ class AiiDABackend(Backend):
             logger.error(f"Failed to cancel job {pk}: {e}")
             return False
 
-    def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
+    def get_job_log(self, pk: int, tail_lines: int = 100) -> dict[str, list[str]]:
         """Get job logs from AiiDA."""
         if not self._available or not self._orm:
             return {"stdout": [], "stderr": []}
@@ -233,21 +230,17 @@ class AiiDABackend(Backend):
             from aiida import orm
 
             node = orm.load_node(pk)
-            stdout_lines: List[str] = []
-            stderr_lines: List[str] = []
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
 
             if "retrieved" in node.outputs:
                 try:
-                    stdout = node.outputs.retrieved.get_object_content(
-                        "_scheduler-stdout.txt"
-                    )
+                    stdout = node.outputs.retrieved.get_object_content("_scheduler-stdout.txt")
                     stdout_lines = stdout.splitlines()[-tail_lines:]
                 except Exception:
                     pass
                 try:
-                    stderr = node.outputs.retrieved.get_object_content(
-                        "_scheduler-stderr.txt"
-                    )
+                    stderr = node.outputs.retrieved.get_object_content("_scheduler-stderr.txt")
                     stderr_lines = stderr.splitlines()[-tail_lines:]
                 except Exception:
                     pass

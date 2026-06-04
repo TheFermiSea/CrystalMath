@@ -7,11 +7,17 @@
 //! owns the Py<PyAny>, allowing the main UI thread to remain responsive
 //! at 60fps while Python operations execute in the background.
 
+#[cfg(feature = "pyo3-bridge")]
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+#[cfg(feature = "pyo3-bridge")]
 use std::thread;
 
-use anyhow::{Context, Result};
+#[cfg(feature = "pyo3-bridge")]
+use anyhow::Context;
+use anyhow::Result;
+#[cfg(feature = "pyo3-bridge")]
 use pyo3::prelude::*;
+#[cfg(feature = "pyo3-bridge")]
 use pyo3::types::PyAnyMethods;
 
 use crate::models::{
@@ -110,20 +116,66 @@ impl JsonRpcResponse {
 /// - Separation of interface from implementation
 /// - Easier testing without requiring a Python runtime
 pub trait BridgeService {
+    /// Send a generic JSON-RPC request (the single transport primitive).
+    ///
+    /// Implementors only need to provide this plus [`poll_response`]; every typed
+    /// `request_*` helper below is a default method that builds a [`JsonRpcRequest`]
+    /// and funnels through here. This is the transport seam: PyO3 (`BridgeHandle`)
+    /// and IPC (`IpcBridgeHandle`) differ only in this method's implementation.
+    ///
+    /// [`poll_response`]: BridgeService::poll_response
+    fn request_rpc(&self, rpc_request: JsonRpcRequest, request_id: usize) -> Result<()>;
+
+    /// Poll for a response (non-blocking).
+    fn poll_response(&self) -> Option<BridgeResponse>;
+
     /// Send a request to fetch jobs (non-blocking).
-    fn request_fetch_jobs(&self, request_id: usize) -> Result<()>;
+    fn request_fetch_jobs(&self, request_id: usize) -> Result<()> {
+        let rpc_request =
+            JsonRpcRequest::new("fetch_jobs", serde_json::Value::Null, request_id as u64);
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to fetch job details (non-blocking).
-    fn request_fetch_job_details(&self, pk: i32, request_id: usize) -> Result<()>;
+    fn request_fetch_job_details(&self, pk: i32, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_job_details",
+            serde_json::json!({"pk": pk}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to submit a job (non-blocking).
-    fn request_submit_job(&self, submission: &JobSubmission, request_id: usize) -> Result<()>;
+    fn request_submit_job(&self, submission: &JobSubmission, request_id: usize) -> Result<()> {
+        let json = serde_json::to_string(submission)?;
+        let rpc_request = JsonRpcRequest::new(
+            "submit_job",
+            serde_json::json!({"json_payload": json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to cancel a job (non-blocking).
-    fn request_cancel_job(&self, pk: i32, request_id: usize) -> Result<()>;
+    fn request_cancel_job(&self, pk: i32, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "cancel_job",
+            serde_json::json!({"pk": pk}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to fetch job log (non-blocking).
-    fn request_fetch_job_log(&self, pk: i32, tail_lines: i32, request_id: usize) -> Result<()>;
+    fn request_fetch_job_log(&self, pk: i32, tail_lines: i32, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_job_log",
+            serde_json::json!({"pk": pk, "tail_lines": tail_lines}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to search materials (non-blocking).
     fn request_search_materials(
@@ -131,14 +183,39 @@ pub trait BridgeService {
         formula: &str,
         limit: usize,
         request_id: usize,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "search_materials",
+            serde_json::json!({"formula": formula, "limit": limit}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to generate a .d12 file (non-blocking).
-    fn request_generate_d12(&self, mp_id: &str, config_json: &str, request_id: usize)
-        -> Result<()>;
+    fn request_generate_d12(
+        &self,
+        mp_id: &str,
+        config_json: &str,
+        request_id: usize,
+    ) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "generate_d12",
+            serde_json::json!({"mp_id": mp_id, "config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to fetch SLURM queue (non-blocking).
-    fn request_fetch_slurm_queue(&self, cluster_id: i32, request_id: usize) -> Result<()>;
+    fn request_fetch_slurm_queue(&self, cluster_id: i32, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "fetch_slurm_queue",
+            serde_json::json!({"cluster_id": cluster_id}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to cancel a SLURM job (non-blocking).
     fn request_cancel_slurm_job(
@@ -146,7 +223,14 @@ pub trait BridgeService {
         cluster_id: i32,
         slurm_job_id: &str,
         request_id: usize,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "cancel_slurm_job",
+            serde_json::json!({"cluster_id": cluster_id, "slurm_job_id": slurm_job_id}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to adopt a SLURM job (non-blocking).
     fn request_adopt_slurm_job(
@@ -154,13 +238,31 @@ pub trait BridgeService {
         cluster_id: i32,
         slurm_job_id: &str,
         request_id: usize,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "adopt_slurm_job",
+            serde_json::json!({"cluster_id": cluster_id, "slurm_job_id": slurm_job_id}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to sync remote job status (non-blocking).
-    fn request_sync_remote_jobs(&self, request_id: usize) -> Result<()>;
+    fn request_sync_remote_jobs(&self, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "sync_remote_jobs",
+            serde_json::Value::Null,
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to fetch templates (non-blocking).
-    fn request_fetch_templates(&self, request_id: usize) -> Result<()>;
+    fn request_fetch_templates(&self, request_id: usize) -> Result<()> {
+        let rpc_request =
+            JsonRpcRequest::new("list_templates", serde_json::Value::Null, request_id as u64);
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to render a template (non-blocking).
     fn request_render_template(
@@ -168,14 +270,33 @@ pub trait BridgeService {
         template_name: &str,
         params_json: &str,
         request_id: usize,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "render_template",
+            serde_json::json!({"template_name": template_name, "params_json": params_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     // Cluster management operations
     /// Send a request to fetch all clusters (non-blocking).
-    fn request_fetch_clusters(&self, request_id: usize) -> Result<()>;
+    fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
+        let rpc_request =
+            JsonRpcRequest::new("fetch_clusters", serde_json::Value::Null, request_id as u64);
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to create a new cluster (non-blocking).
-    fn request_create_cluster(&self, config: &ClusterConfig, request_id: usize) -> Result<()>;
+    fn request_create_cluster(&self, config: &ClusterConfig, request_id: usize) -> Result<()> {
+        let json = serde_json::to_string(config)?;
+        let rpc_request = JsonRpcRequest::new(
+            "create_cluster",
+            serde_json::json!({"json_payload": json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to update a cluster (non-blocking).
     fn request_update_cluster(
@@ -183,46 +304,100 @@ pub trait BridgeService {
         cluster_id: i32,
         config: &ClusterConfig,
         request_id: usize,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        let json = serde_json::to_string(config)?;
+        let rpc_request = JsonRpcRequest::new(
+            "update_cluster",
+            serde_json::json!({"cluster_id": cluster_id, "json_payload": json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to delete a cluster (non-blocking).
-    fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()>;
+    fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "delete_cluster",
+            serde_json::json!({"cluster_id": cluster_id}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to test cluster connection (non-blocking).
-    fn request_test_cluster_connection(&self, cluster_id: i32, request_id: usize) -> Result<()>;
+    fn request_test_cluster_connection(&self, cluster_id: i32, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "test_cluster_connection",
+            serde_json::json!({"cluster_id": cluster_id}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     // Workflow operations
     /// Send a request to check workflow availability (non-blocking).
-    fn request_check_workflows_available(&self, request_id: usize) -> Result<()>;
+    fn request_check_workflows_available(&self, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "check_workflows_available",
+            serde_json::Value::Null,
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to create a convergence study (non-blocking).
-    fn request_create_convergence_study(&self, config_json: &str, request_id: usize) -> Result<()>;
+    fn request_create_convergence_study(&self, config_json: &str, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "create_convergence_study",
+            serde_json::json!({"config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to create a band structure workflow (non-blocking).
     fn request_create_band_structure_workflow(
         &self,
         config_json: &str,
         request_id: usize,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "create_band_structure_workflow",
+            serde_json::json!({"config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to create a phonon workflow (non-blocking).
-    fn request_create_phonon_workflow(&self, config_json: &str, request_id: usize) -> Result<()>;
+    fn request_create_phonon_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "create_phonon_workflow",
+            serde_json::json!({"config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to create an EOS workflow (non-blocking).
-    fn request_create_eos_workflow(&self, config_json: &str, request_id: usize) -> Result<()>;
+    fn request_create_eos_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "create_eos_workflow",
+            serde_json::json!({"config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 
     /// Send a request to launch AiiDA geometry optimization (non-blocking).
-    fn request_launch_aiida_geopt(&self, config_json: &str, request_id: usize) -> Result<()>;
-
-    /// Send a generic JSON-RPC request (thin IPC pattern).
-    ///
-    /// This method enables incremental migration from thick bridge variants
-    /// to thin JSON-RPC calls. Use for new operations without adding new
-    /// `BridgeRequest` variants.
-    fn request_rpc(&self, rpc_request: JsonRpcRequest, request_id: usize) -> Result<()>;
-
-    /// Poll for a response (non-blocking).
-    fn poll_response(&self) -> Option<BridgeResponse>;
+    fn request_launch_aiida_geopt(&self, config_json: &str, request_id: usize) -> Result<()> {
+        let rpc_request = JsonRpcRequest::new(
+            "launch_aiida_geopt",
+            serde_json::json!({"config_json": config_json}),
+            request_id as u64,
+        );
+        self.request_rpc(rpc_request, request_id)
+    }
 }
 
 /// Initialize the Python backend and return the controller object.
@@ -234,6 +409,7 @@ pub trait BridgeService {
 /// 3. ./tui/jobs.db (development)
 ///
 /// Falls back to demo mode if no database found.
+#[cfg(feature = "pyo3-bridge")]
 pub fn init_python_backend() -> Result<Py<PyAny>> {
     Python::attach(|py| {
         // Debug: Check what Python environment PyO3 sees
@@ -276,7 +452,10 @@ pub fn init_python_backend() -> Result<Py<PyAny>> {
 }
 
 /// Find the database path from environment or default locations.
-fn find_database_path() -> Option<String> {
+///
+/// Shared by the PyO3 backend init and the IPC server spawn (so the Rust side is
+/// the single source of database-path resolution). Not gated behind `pyo3-bridge`.
+pub(crate) fn find_database_path() -> Option<String> {
     use std::path::PathBuf;
 
     // 1. Environment variable (highest priority)
@@ -541,8 +720,8 @@ pub enum BridgeRequestKind {
 
 /// Maximum number of pending requests/responses before backpressure.
 /// This prevents unbounded memory growth if requests pile up faster than
-/// the Python worker can process them.
-const CHANNEL_BOUND: usize = 64;
+/// the worker can process them. Shared by both the PyO3 and IPC bridge handles.
+pub(crate) const CHANNEL_BOUND: usize = 64;
 
 /// Handle to the Python bridge worker thread.
 ///
@@ -554,6 +733,7 @@ const CHANNEL_BOUND: usize = 64;
 /// growth if the UI sends requests faster than Python can process them.
 ///
 /// When dropped, sends a Shutdown request and waits for the worker to exit.
+#[cfg(feature = "pyo3-bridge")]
 pub struct BridgeHandle {
     request_tx: SyncSender<BridgeRequest>,
     response_rx: Receiver<BridgeResponse>,
@@ -561,6 +741,7 @@ pub struct BridgeHandle {
     worker_handle: Option<thread::JoinHandle<()>>,
 }
 
+#[cfg(feature = "pyo3-bridge")]
 impl BridgeHandle {
     /// Create a new bridge handle by spawning a worker thread.
     ///
@@ -629,6 +810,7 @@ impl BridgeHandle {
     }
 }
 
+#[cfg(feature = "pyo3-bridge")]
 impl Drop for BridgeHandle {
     fn drop(&mut self) {
         // Send shutdown signal to the worker thread.
@@ -672,251 +854,11 @@ impl Drop for BridgeHandle {
 ///
 /// This allows `BridgeHandle` to be used anywhere a `BridgeService` is expected,
 /// enabling dependency injection and mock implementations for testing.
+///
+/// Only the two transport primitives are implemented here; every typed
+/// `request_*` helper is inherited from the trait's default methods.
+#[cfg(feature = "pyo3-bridge")]
 impl BridgeService for BridgeHandle {
-    fn request_fetch_jobs(&self, request_id: usize) -> Result<()> {
-        let rpc_request =
-            JsonRpcRequest::new("fetch_jobs", serde_json::Value::Null, request_id as u64);
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_fetch_job_details(&self, pk: i32, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "fetch_job_details",
-            serde_json::json!({"pk": pk}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_submit_job(&self, submission: &JobSubmission, request_id: usize) -> Result<()> {
-        let json = serde_json::to_string(submission)?;
-        let rpc_request = JsonRpcRequest::new(
-            "submit_job",
-            serde_json::json!({"json_payload": json}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_cancel_job(&self, pk: i32, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "cancel_job",
-            serde_json::json!({"pk": pk}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_fetch_job_log(&self, pk: i32, tail_lines: i32, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "fetch_job_log",
-            serde_json::json!({"pk": pk, "tail_lines": tail_lines}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_search_materials(
-        &self,
-        formula: &str,
-        limit: usize,
-        request_id: usize,
-    ) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "search_materials",
-            serde_json::json!({"formula": formula, "limit": limit}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_generate_d12(
-        &self,
-        mp_id: &str,
-        config_json: &str,
-        request_id: usize,
-    ) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "generate_d12",
-            serde_json::json!({"mp_id": mp_id, "config_json": config_json}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_fetch_slurm_queue(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "fetch_slurm_queue",
-            serde_json::json!({"cluster_id": cluster_id}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_cancel_slurm_job(
-        &self,
-        cluster_id: i32,
-        slurm_job_id: &str,
-        request_id: usize,
-    ) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "cancel_slurm_job",
-            serde_json::json!({"cluster_id": cluster_id, "slurm_job_id": slurm_job_id}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_adopt_slurm_job(
-        &self,
-        cluster_id: i32,
-        slurm_job_id: &str,
-        request_id: usize,
-    ) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "adopt_slurm_job",
-            serde_json::json!({"cluster_id": cluster_id, "slurm_job_id": slurm_job_id}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_sync_remote_jobs(&self, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "sync_remote_jobs",
-            serde_json::Value::Null,
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_fetch_templates(&self, request_id: usize) -> Result<()> {
-        let rpc_request =
-            JsonRpcRequest::new("list_templates", serde_json::Value::Null, request_id as u64);
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_render_template(
-        &self,
-        template_name: &str,
-        params_json: &str,
-        request_id: usize,
-    ) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "render_template",
-            serde_json::json!({"template_name": template_name, "params_json": params_json}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_fetch_clusters(&self, request_id: usize) -> Result<()> {
-        let rpc_request =
-            JsonRpcRequest::new("fetch_clusters", serde_json::Value::Null, request_id as u64);
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_create_cluster(&self, config: &ClusterConfig, request_id: usize) -> Result<()> {
-        let json = serde_json::to_string(config)?;
-        let rpc_request = JsonRpcRequest::new(
-            "create_cluster",
-            serde_json::json!({"json_payload": json}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_update_cluster(
-        &self,
-        cluster_id: i32,
-        config: &ClusterConfig,
-        request_id: usize,
-    ) -> Result<()> {
-        let json = serde_json::to_string(config)?;
-        let rpc_request = JsonRpcRequest::new(
-            "update_cluster",
-            serde_json::json!({"cluster_id": cluster_id, "json_payload": json}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_delete_cluster(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "delete_cluster",
-            serde_json::json!({"cluster_id": cluster_id}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_test_cluster_connection(&self, cluster_id: i32, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "test_cluster_connection",
-            serde_json::json!({"cluster_id": cluster_id}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_check_workflows_available(&self, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "check_workflows_available",
-            serde_json::Value::Null,
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_create_convergence_study(&self, config_json: &str, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "create_convergence_study",
-            serde_json::json!({"config_json": config_json}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_create_band_structure_workflow(
-        &self,
-        config_json: &str,
-        request_id: usize,
-    ) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "create_band_structure_workflow",
-            serde_json::json!({"config_json": config_json}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_create_phonon_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "create_phonon_workflow",
-            serde_json::json!({"config_json": config_json}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_create_eos_workflow(&self, config_json: &str, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "create_eos_workflow",
-            serde_json::json!({"config_json": config_json}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
-    fn request_launch_aiida_geopt(&self, config_json: &str, request_id: usize) -> Result<()> {
-        let rpc_request = JsonRpcRequest::new(
-            "launch_aiida_geopt",
-            serde_json::json!({"config_json": config_json}),
-            request_id as u64,
-        );
-        self.request_rpc(rpc_request, request_id)
-    }
-
     fn request_rpc(&self, rpc_request: JsonRpcRequest, request_id: usize) -> Result<()> {
         self.try_send_request(BridgeRequest::Rpc {
             rpc_request,
@@ -937,6 +879,7 @@ impl BridgeService for BridgeHandle {
 /// The loop is protected by `catch_unwind` to prevent the worker thread from
 /// dying if Python code panics (e.g., during GC traversal or interpreter shutdown).
 /// Panics are caught and the worker continues processing subsequent requests.
+#[cfg(feature = "pyo3-bridge")]
 fn bridge_worker_loop(
     py_controller: Py<PyAny>,
     request_rx: Receiver<BridgeRequest>,
@@ -994,6 +937,7 @@ fn bridge_worker_loop(
 ///
 /// Extracted from the worker loop to enable catch_unwind wrapping.
 /// Each response includes the `request_id` from the corresponding request.
+#[cfg(feature = "pyo3-bridge")]
 fn process_bridge_request(py_controller: &Py<PyAny>, request: BridgeRequest) -> BridgeResponse {
     match request {
         BridgeRequest::Shutdown => unreachable!("Shutdown handled in worker loop"),
@@ -1011,8 +955,9 @@ fn process_bridge_request(py_controller: &Py<PyAny>, request: BridgeRequest) -> 
 /// Route a JSON-RPC response to the appropriate typed BridgeResponse variant.
 ///
 /// This function converts generic JSON-RPC responses back to the typed enum
-/// variants that app.rs expects, maintaining backward compatibility.
-fn route_rpc_response(
+/// variants that app.rs expects, maintaining backward compatibility. It is
+/// transport-agnostic (no PyO3) and shared by both the PyO3 and IPC bridges.
+pub(crate) fn route_rpc_response(
     method: &str,
     request_id: usize,
     rpc_result: Result<JsonRpcResponse>,
@@ -1198,6 +1143,7 @@ fn route_rpc_response(
 ///
 /// This is the core of the thin IPC pattern - instead of calling individual
 /// Python methods, we serialize the request to JSON and call `dispatch`.
+#[cfg(feature = "pyo3-bridge")]
 fn dispatch_rpc(
     py_controller: &Py<PyAny>,
     rpc_request: &JsonRpcRequest,
@@ -1224,7 +1170,8 @@ fn dispatch_rpc(
     })
 }
 
-#[cfg(test)]
+// PyO3-only tests; the IPC transport is covered by tests/ipc_integration.rs.
+#[cfg(all(test, feature = "pyo3-bridge"))]
 mod tests {
     use super::*;
 

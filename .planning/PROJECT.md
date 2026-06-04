@@ -59,28 +59,30 @@ Streamlined VASP workflow — from structure to validated submission to tracked 
 
 **Migration:**
 - [ ] Remove Python TUI (Textual)
-- [ ] Replace AiiDA integration with quacc
+- [ ] Support quacc and AiiDA as co-equal workflow backends
 - [ ] Update PyO3 bridge for quacc workflow status
 
 ### Out of Scope
 
-- **Pure Rust migration** — Python backend is permanent (quacc/ASE/pymatgen ecosystem)
-- **AiiDA integration** — Using quacc's simpler approach instead
-- **CRYSTAL23/QE support for v1** — VASP users are first priority; other codes later
+- **Pure Rust migration** — Python backend is permanent (quacc/AiiDA/ASE/pymatgen ecosystem)
 - **Python TUI maintenance** — Will be deleted, not maintained alongside Rust TUI
 - **Mobile/web interface** — Desktop TUI only
 - **High-throughput (10K+ jobs)** — Focused on individual researcher workflow
+
+> Note: quacc and AiiDA are co-equal, both-supported workflow backends (neither removed).
+> CRYSTAL23, VASP, Quantum ESPRESSO, Yambo, and phonopy are all supported codes
+> (`python/crystalmath/backends/`); the v1 milestone simply leads with the VASP-via-quacc path.
 
 ## Context
 
 **Brownfield project:** Existing codebase with CLI, two TUIs (Python primary, Rust secondary), and Python backend. This project consolidates to a single Rust TUI.
 
 **Existing architecture being changed:**
-- Python TUI (Textual) is currently primary — will be deleted
-- Rust TUI is currently secondary/monitoring only — becomes the only UI
+- Python TUI (Textual) is currently primary — will be deleted (unification ratified by [ADR-006](../docs/architecture/adr-006-unify-on-rust-tui.md), which supersedes ADR-001/ADR-002)
+- Rust TUI is currently secondary/monitoring only — becomes the only UI, handling job creation, config, and workflows
 - SQLite database (`.crystal_tui.db`) — simplified storage via quacc results_to_db
-- Feature freeze on Rust TUI (ADR-002) — being lifted
-- AiiDA integration — being replaced with quacc
+- Feature freeze on Rust TUI (ADR-002) — lifted by ADR-006
+- AiiDA integration — retained as a co-equal workflow backend alongside quacc
 
 **Leveraging quacc ecosystem:**
 - quacc for VASP recipes and workflow orchestration
@@ -104,7 +106,7 @@ Streamlined VASP workflow — from structure to validated submission to tracked 
 |----------|-----------|---------|
 | Rust TUI as only UI | Cleaner, more maintainable codebase; single language for UI | ✓ Decided |
 | Python backend permanent | quacc/ASE/pymatgen ecosystem is mature; no Rust equivalents | ✓ Decided |
-| quacc over atomate2+AiiDA | Simpler setup, no PostgreSQL, workflow-engine-agnostic | ✓ Decided |
+| quacc and AiiDA co-equal backends | Support quacc (simple, no PostgreSQL) and AiiDA (provenance) as user choice | ✓ Decided |
 | Parsl/Covalent for execution | quacc-native, handles SLURM without AiiDA daemon | ✓ Decided |
 | VASP first, other codes later | First users are VASP users; CRYSTAL23/QE support deferred | ✓ Decided |
 | JSON-RPC IPC over PyO3 embedding | Avoids GIL deadlocks, cleaner process separation | — Pending |

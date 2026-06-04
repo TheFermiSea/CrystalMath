@@ -9,6 +9,13 @@ repository = "https://github.com/briansquires/crystalmath"
 keywords = ["tui", "dft", "crystal23", "quantum-chemistry"]
 categories = ["command-line-interface", "science"]
 
+[features]
+# Default keeps the legacy in-process PyO3 transport until the IPC cutover soaks.
+# Build/run the IPC transport with `--no-default-features`. See ADR-006.
+default = ["pyo3-bridge"]
+# Legacy transport: embed Python via PyO3 (requires PYO3_PYTHON at build time).
+pyo3-bridge = ["dep:pyo3"]
+
 [dependencies]
 # TUI Framework
 ratatui = "0.29"
@@ -21,8 +28,8 @@ tokio = { version = "1.42", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Python Integration
-pyo3 = { version = "0.27", features = ["auto-initialize"] }
+# Python Integration (legacy transport; gated behind the `pyo3-bridge` feature)
+pyo3 = { version = "0.27", features = ["auto-initialize"], optional = true }
 
 # Editor Widget
 tui-textarea = "0.7"
@@ -49,6 +56,9 @@ unicode-truncate = "2.0"
 
 # HTTP client for Prometheus API
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Process uid for the uid-scoped /tmp socket fallback (must match the Python server)
+libc = "0.2"
 
 
 [dev-dependencies]

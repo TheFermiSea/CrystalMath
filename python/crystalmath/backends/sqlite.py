@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from crystalmath.backends import Backend
 from crystalmath.models import (
@@ -50,17 +49,10 @@ class SQLiteBackend(Backend):
         self._init_database()
 
     def _init_database(self) -> None:
-        """Initialize connection to TUI database."""
+        """Initialize connection to the vendored database module."""
         try:
-            # Import TUI database module
-            # Need to add tui/src to path for core.database import
-            repo_root = Path(__file__).parent.parent.parent.parent  # crystalmath/
-            tui_path = repo_root / "tui" / "src"
-
-            if str(tui_path) not in sys.path:
-                sys.path.insert(0, str(tui_path))
-
-            from core.database import Database
+            # Vendored backend (ADR-006): no longer depends on the deprecated tui/ tree.
+            from crystalmath._vendor.core.database import Database
 
             self._db = Database(Path(self._db_path))
             self._available = True
@@ -78,13 +70,13 @@ class SQLiteBackend(Backend):
     def is_available(self) -> bool:
         return self._available
 
-    def get_jobs(self, limit: int = 100) -> List[JobStatus]:
+    def get_jobs(self, limit: int = 100) -> list[JobStatus]:
         """Query SQLite for job list."""
         if not self._db:
             return []
 
         jobs = self._db.get_all_jobs()[:limit]
-        results: List[JobStatus] = []
+        results: list[JobStatus] = []
 
         for job in jobs:
             created_at = None
@@ -112,7 +104,7 @@ class SQLiteBackend(Backend):
 
         return results
 
-    def get_job_details(self, pk: int) -> Optional[JobDetails]:
+    def get_job_details(self, pk: int) -> JobDetails | None:
         """Get job details from SQLite."""
         if not self._db:
             return None
@@ -242,7 +234,7 @@ class SQLiteBackend(Backend):
 
     def _write_metadata(self, submission: JobSubmission, work_dir: Path) -> None:
         """Write job metadata file."""
-        metadata: Dict[str, Any] = {
+        metadata: dict[str, Any] = {
             "dft_code": submission.dft_code.value,
             "runner_type": submission.runner_type.value,
             "mpi_ranks": submission.mpi_ranks or 1,
@@ -271,7 +263,7 @@ class SQLiteBackend(Backend):
         except Exception:
             return False
 
-    def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
+    def get_job_log(self, pk: int, tail_lines: int = 100) -> dict[str, list[str]]:
         """Get job log from work directory."""
         if not self._db:
             return {"stdout": [], "stderr": []}
@@ -282,8 +274,8 @@ class SQLiteBackend(Backend):
                 return {"stdout": [], "stderr": []}
 
             work_dir = Path(job.work_dir)
-            stdout_lines: List[str] = []
-            stderr_lines: List[str] = []
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
 
             # Try common output file names
             for stdout_name in ["stdout.log", "output.out", f"{job.name}.out"]:

@@ -1,5 +1,16 @@
 # AiiDA Backend Integration (Python Core First)
 
+> **Status: current, but not the only backend.**
+> AiiDA is **kept** as a supported workflow backend, so this plan is **not** superseded.
+> However, **quacc is a co-equal backend** alongside AiiDA — neither is removed, and the
+> project supports both. The controller/backend layer described below must therefore be
+> backend-agnostic: do **not** make `CrystalController` or the core API AiiDA-only. Treat
+> the AiiDA code in this guide as one implementation behind a clean backend interface that
+> also admits quacc (and the SQLite-backed local runner). See
+> [ADR-006: Unify on Rust TUI](../docs/architecture/adr-006-unify-on-rust-tui.md) (2026-05-31)
+> for the overall direction; the Rust/Ratatui TUI is now the primary UI consuming this core
+> over IPC.
+
 This guide focuses on the Python core API that powers the **primary Python TUI**. AiiDA remains optional and should be hidden behind a clean backend interface.
 
 ## 1. The Controller Facade (`python/crystalmath/api.py`)

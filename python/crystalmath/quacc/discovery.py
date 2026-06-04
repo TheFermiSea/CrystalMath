@@ -76,9 +76,7 @@ def discover_vasp_recipes() -> list[dict[str, Any]]:
     return recipes
 
 
-def _extract_recipes_from_module(
-    module: Any, recipes: list[dict[str, Any]]
-) -> None:
+def _extract_recipes_from_module(module: Any, recipes: list[dict[str, Any]]) -> None:
     """
     Extract recipe functions from a module.
 
@@ -117,11 +115,13 @@ def _extract_recipes_from_module(
         # Extract docstring
         docstring = inspect.getdoc(func)
 
-        recipes.append({
-            "name": name,
-            "module": module_name,
-            "fullname": f"{module_name}.{name}",
-            "docstring": docstring,
-            "signature": sig,
-            "type": recipe_type,
-        })
+        recipes.append(
+            {
+                "name": name,
+                "module": module_name,
+                "fullname": f"{module_name}.{name}",
+                "docstring": docstring,
+                "signature": sig,
+                "type": recipe_type,
+            }
+        )
