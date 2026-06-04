@@ -60,6 +60,14 @@ bleeds maintenance cost (Steensen et al. 2025).
 / `InputDeck` seam as thin per-code adapters over ASE and pymatgen, retiring all hand-rolled writers
 and the three duplicate code seams.**
 
+> **Scope (amended 2026-06-03, see Amendment below).** `CodeDeckGenerator`/`InputDeck` is the
+> **DFT/file-writing-code specialization** of the more general `Structure → TaskDocument`
+> *CalculatorStage* introduced by [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md);
+> it is **not** the universal calculation seam. A fileless MLIP run is a *peer* CalculatorStage that
+> emits zero files and must **not** be forced through deck-staging semantics. POTCAR/deck validation
+> (point 2 below) is therefore **DFT-only**. The structure object, the ASE-Calculator boundary, and
+> the OPTIMADE boundary decided here remain universal and underpin both specializations.
+
 1. **One structure object: pymatgen `Structure` (interconverting with ASE `Atoms`).** All internal
    APIs, IPC payloads, and stored documents carry `Structure` (`MSONable`, free stable JSON).
    `Atoms` is used at the ASE-calculator boundary via `pymatgen.io.ase.AseAtomsAdaptor`. No bespoke
@@ -81,8 +89,12 @@ and the three duplicate code seams.**
      CRYSTAL23 delta upstream where feasible rather than maintaining a fork.
    - `YamboDeckGenerator` / `YamboNlDeckGenerator` → ASE `SocketIOCalculator`/`FileIOCalculator`
      extension points plus a thin code-specific generator+parser (YAMBO has no first-class ASE or
-     pymatgen support; this is the one place hand-written I/O is justified, and it should be the
-     *only* one).
+     pymatgen support; this is the one place hand-written *file* I/O is justified, and it should be
+     the *only* one). **The same ASE-Calculator escape hatch is also the MLIP/foundation-model
+     insertion point** (see Amendment): an MLIP is *already* an ASE `Calculator`, so it attaches
+     here as a zero-file adapter rather than as a new seam — but, unlike YAMBO, it writes no deck and
+     is governed by `MlipCalculatorStage` of [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md),
+     not by `InputDeck` staging.
 
 3. **Presets are pymatgen `InputSet` subclasses, not a parameters dict.** The workflow-type →
    validated-preset mapping that `decks` currently hand-codes (`_VASP_WORKFLOW_PRESET`, `:54`)
@@ -168,6 +180,69 @@ solve per-code deck generation and would add a parallel model. Out of scope for 
 - **Tests:** add synthetic-POTCAR fixtures (dummy files under a temp `PMG_VASP_PSP_DIR`) so deck
   generation is CI-tested without redistributing VASP-licensed pseudopotentials; round-trip
   `Structure`↔`Atoms` in unit tests; assert each adapter delegates rather than hand-writes.
+  POTCAR/deck validation is **DFT-only** (it is meaningless for a fileless MLIP stage); MLIP
+  determinism/version-pinning testing is owned by ADR-021/ADR-022, not by this seam's deck fixtures.
+
+## Amendment (2026-06-03): SOTA alignment
+
+A redesign review (ADRs 021–024) re-centers the calculation layer. Its core finding: ADR-008 as
+originally written places a **DFT-file-writing abstraction at the center** of how CrystalMath runs a
+calculation, when DFT should be **one stage among peers**. An MLIP/foundation-model run is not a
+degenerate DFT run — it returns energy/forces/stress with **zero files** — yet under the original
+Decision the only seam available is `CodeDeckGenerator`/`InputDeck`, whose entire contract
+(`files`, `potcar_symbols`, deck staging, POTCAR validation) presumes a file-writing DFT code. This
+amendment ceeds the "center" to ADR-021 and carves the DFT-specific machinery down so a fileless
+MLIP run is never forced through deck-staging semantics. The four new ADRs slot onto seams this ADR
+already named; they **do not contradict** any decision above — they reframe it.
+
+**1. `CodeDeckGenerator`/`InputDeck` is the DFT/file-code specialization of the ADR-021
+`CalculatorStage`, not the universal calculation seam.**
+[ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) introduces `CalculatorStage`
+(`Structure → TaskDocument`) as the general calculation abstraction. `DftCalculatorStage` *wraps the
+deck generators decided here*; `MlipCalculatorStage` is a **peer** that wraps an ASE `Calculator`
+directly and emits no `InputDeck`. The locked vocabulary of this ADR (`CodeDeckGenerator`,
+`InputDeck`, `stage()`, `DeckStagingError`) is **unchanged and remains canonical for file-writing
+codes** (VASP/QE/CRYSTAL23/YAMBO); it is simply no longer the *only* way a structure becomes a
+result. atomate2's single `AseMaker` running MLIPs and quacc's `method=`-selected calculators are the
+precedent: an MLIP is invoked through the same ASE-Calculator boundary as everything else, with no
+deck (Ganose et al. 2025).
+
+**2. MLIPs attach at this ADR's existing ASE-Calculator escape hatch (008:82–85), not at a new
+seam.** The `SocketIOCalculator`/`FileIOCalculator` extension point decided above for YAMBO is
+exactly the universal ASE-`Calculator` boundary this ADR already named as covering "~40 engines."
+Because *every* foundation model (MACE-MP-0, CHGNet, ORB, SevenNet, MatterSim) ships an ASE
+`Calculator`, the entire read-path surface for MLIPs is **a registry mapping `model-id → Calculator
+factory` behind one `MlipCalculatorStage`** (Batatia et al. 2024; Deng et al. 2023). The MLIP input
+is a **typed `MlipCalcSpec`** — not an `InputDeck` — carrying `(model_id, checkpoint_hash, settings,
+torch/CUDA versions, per-property tolerance class)`; the stage calls `atoms.get_potential_energy()` /
+`.get_forces()` / `.get_stress()` and returns a `TaskDocument` with **zero files written**. Because
+the model is content-addressed by its checkpoint hash, the `MlipCalcSpec` is the natural cache key
+[ADR-022](adr-022-content-addressed-execution-cache-replay.md) hashes over the closure
+(statepoint + checkpoint + tolerance class), giving cache-and-clone for MLIP stages nearly free —
+the reproducibility anchor ADR-020 lacked for ML. GPU inference is not bitwise reproducible, so the
+key is `(statepoint + checkpoint + tolerance-class)` and the env fingerprint must include
+torch/CUDA versions (per ADR-022).
+
+**3. POTCAR/deck validation is DFT-only.** The point-2 POTCAR-assembly path
+(`PMG_VASP_PSP_DIR`/`VASP_PP_PATH`, pymatgen POTCAR keying) and the synthetic-POTCAR test fixtures
+are **scoped to file-writing DFT codes**. They are meaningless for an `MlipCalculatorStage`, which
+has no pseudopotentials, no INCAR, and no staged files. A fileless MLIP run therefore bypasses
+`InputDeck` staging, POTCAR validation, and `DeckStagingError` entirely; its preconditions
+(checkpoint availability, model-version pinning, tolerance class) are validated by
+[ADR-024](adr-024-static-typed-workflow-dag-validation.md)'s offline DAG type-checker and ADR-021's
+stage-level input/output signature, not by this seam.
+
+**Why this is coherent.** The 007–020 spine is untouched: the universal pieces this ADR decided —
+one `Structure`/`Atoms` object, the ASE-`Calculator` boundary, OPTIMADE interchange, MSONable
+round-tripping into the ADR-010 store — are exactly the pieces the general `CalculatorStage` stands
+on. DFT loses only its *privileged center*, not its implementation. The MLIP stage reuses the
+boundary already named here; the cache key reuses the content-addressing
+([ADR-022](adr-022-content-addressed-execution-cache-replay.md)) folded over this ADR's
+canonical, MSONable inputs; an agentic planner ([ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md))
+that proposes MLIP-screen → DFT-validate campaigns composes the *same* stages this ADR produces; and
+the static validator ([ADR-024](adr-024-static-typed-workflow-dag-validation.md)) type-checks the
+handoff edges between DFT and MLIP stages before submission. DFT, MLIP, and (above them) LLM-proposed
+steps become uniform citizens of one `Structure → TaskDocument` abstraction.
 
 ## References
 
@@ -185,6 +260,15 @@ solve per-code deck generation and would add a parallel model. Out of scope for 
   DOI:10.1038/s41597-020-00638-4 (arXiv:2003.12476)
 - S. K. Steensen et al., "The Interoperability Challenge in DFT Workflows Across Implementations,"
   arXiv:2511.11524 (2025).
+- Ilyes Batatia et al., "A foundation model for atomistic materials chemistry" (MACE-MP-0),
+  *J. Chem. Phys.* (2024). arXiv:2401.00096 — foundation MLIP shipped as an ASE `Calculator`; cited
+  in the Amendment as the precedent that DFT is one stage and an MLIP a zero-file peer.
+- Bowen Deng et al., "CHGNet as a pretrained universal neural network potential for charge-informed
+  atomistic modelling," *Nat. Mach. Intell.* **5**, 1031 (2023). DOI:10.1038/s42256-023-00716-3 —
+  charge-informed universal MLIP exposed through an ASE `Calculator`.
+- Janosh Riebesell et al., "Matbench Discovery — an evaluation framework for machine-learning
+  crystal-structure prediction," *Nat. Mach. Intell.* (2025) — uMLIPs as DFT pre-filters (F1
+  0.57–0.83), motivating MLIP-screen → DFT-validate campaigns over peer CalculatorStages.
 - ASE Calculators documentation (CRYSTAL14, Espresso, VASP, `FileIOCalculator`/`SocketIOCalculator`):
   https://ase-lib.org/ase/calculators/calculators.html
 - Phonopy native code interfaces (VASP/QE/CRYSTAL/ABINIT/…):

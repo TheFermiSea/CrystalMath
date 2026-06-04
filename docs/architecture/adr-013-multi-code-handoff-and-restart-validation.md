@@ -83,7 +83,10 @@ Promote `CodeHandoff` out of `integrations/atomate2_bridge.py` into a first-clas
 class CodeHandoff(BaseModel):
     source_code: str           # e.g. "vasp"
     target_code: str           # e.g. "yambo"
-    artifact: HandoffArtifact  # WAVEFUNCTION | CHARGE_DENSITY | STRUCTURE | FORCE_SET | ...
+    artifact: HandoffArtifact  # WAVEFUNCTION | CHARGE_DENSITY | STRUCTURE | FORCE_SET
+                               # | MODEL_CHECKPOINT | TRAINING_DATASET
+                               # | PREDICTED_STRUCTURE_WITH_UNCERTAINTY | ...
+                               # (ML artifacts added by the 2026-06-03 amendment, per ADR-021)
     converter: Converter | None = None   # typed, code-pair-specific (e.g. p2y for VASP→YAMBO)
     validation: RestartValidation         # REQUIRED, not Optional — see §3
 
@@ -97,7 +100,10 @@ class CodeHandoff(BaseModel):
 - `artifact` is a closed enum of code-agnostic *physical* quantities (wavefunction, charge density,
   relaxed structure, phonon force set), mirroring the common-workflows interface (Huber 2021) and
   phonopy's force-set contract. A handoff is named by *what crosses* (a wavefunction), not by which
-  code keys it lives under.
+  code keys it lives under. The 2026-06-03 amendment extends this enum with three ML artifacts
+  (`MODEL_CHECKPOINT`, `TRAINING_DATASET`, `PREDICTED_STRUCTURE_WITH_UNCERTAINTY`) so the MLIP and
+  agentic stages of [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) participate in
+  the same typed-edge contract; see the amendment below.
 - `converter` carries the code-pair-specific transform as a typed step — for VASP→YAMBO this is the
   `p2y`/`ypp` init that converts a VASP/QE ground state into YAMBO's database format (the init steps
   that beefcake2 `docs/hpc/WORKFLOW-VASP-TO-YAMBO.md` documents and that ADR-012's execution layer
@@ -129,7 +135,13 @@ checks, directly implementing PITFALLS #4's prevention list (`PITFALLS.md:136-13
    handoff from a source document whose state is not `completed` (ADR-009 status field) is rejected —
    "WAVECAR is only written when calculation completes, not mid-SCF" (`PITFALLS.md:126`). Timestamp
    is checked as a corroborating signal ("OUTCAR timestamps don't match job submission time",
-   `PITFALLS.md:144`), but the **checksum + source-completion** is authoritative.
+   `PITFALLS.md:144`), but the **checksum + source-completion** is authoritative. As of the
+   2026-06-03 amendment this comparison is no longer a bespoke per-handoff checksum: it is a lookup
+   against the global content-addressed store (CAS) decided in
+   [ADR-022](adr-022-content-addressed-execution-cache-replay.md). The hash on the source document is the
+   CAS key for the artifact, and validation becomes "does the consumed artifact resolve to the
+   source's recorded CAS key" — a hash *compare against the content store* rather than a re-hash of a
+   loose file. See the amendment below.
 3. **Parallelization consistency.** For artifacts that depend on it (VASP WAVECAR), the target's
    NBANDS/KPAR must be consistent with the values recorded on the source document
    (`PITFALLS.md:127,138`). For CRYSTAL `.f9` GUESSP restarts, the basis set and `SHRINK` grid must
@@ -140,6 +152,15 @@ target job from being submitted.** There is no "best effort" or silent-degrade p
 direct analogue of ADR-011's "no silent simulated success" rule and ADR-008's fail-fast
 `DeckStagingError`: a handoff that cannot prove its restart file is correct must fail loudly, because
 the alternative is a silently-wrong published result (`PITFALLS.md:130`).
+
+This mandatory runtime `RestartValidation` gate remains in force, but as of the 2026-06-03 amendment
+it is the **second** line of defense, not the sole guardian. The first line is the static,
+pre-submission whole-DAG type-check decided in
+[ADR-024](adr-024-static-typed-workflow-dag-validation.md) (`crystalmath validate`), which proves every
+`CodeHandoff` edge is artifact-type-compatible *before any job is queued* — catching mis-wired chains
+in seconds rather than after hours of compute. `RestartValidation` then catches what a static check
+provably cannot: runtime-only facts such as whether the source actually completed and whether the
+on-disk content hash matches its recorded CAS key. See the amendment below.
 
 ### 4. The CRYSTAL `.f9`/VASP WAVECAR/QE handoffs are the first three concrete implementations
 
@@ -240,6 +261,74 @@ validation must be a pre-submission gate, consistent with the project's fail-lou
 - Add lineage fields (`parent_job_uuids`, `restart_inputs`) to the ADR-009 TaskDocument schema if not
   already present; this ADR is the consumer that gives them teeth.
 
+## Amendment (2026-06-03): SOTA alignment
+
+This ADR holds the strongest content-addressing seed in the 007-020 set — §3 check 2 is the one place
+in the entire design where a content hash is *actually compared* as a correctness gate. The four new
+ADRs added this round (021-024) build directly on that seed without contradicting any locked decision
+here: the `CodeHandoff` typed edge, the closed `HandoffArtifact` enum, the mandatory positive
+`RestartValidation`, and the three concrete handoffs (§4) all stand. The amendment generalizes three
+points that were, by design, restart-file-specific and runtime-only.
+
+**1. The `HandoffArtifact` enum admits ML artifacts (per [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md)).**
+ADR-021 generalizes the calculation layer to a `CalculatorStage` (`Structure → TaskDocument`) of which
+DFT is one instance and an `MlipCalculatorStage` — a thin wrapper over an ASE `Calculator` keyed by a
+content-addressed model checkpoint — is a first-class peer. For MLIP and agentic stages to participate
+in the *same* typed handoff contract this ADR defines, the closed enum is extended with three
+code-agnostic ML artifacts:
+
+- `MODEL_CHECKPOINT` — a content-addressed model-weights reference (the HF repo + revision digest, not
+  the multi-GB weights), the artifact a fine-tune/Delta-ML stage emits and a surrogate stage consumes.
+- `TRAINING_DATASET` — the structure/energy/force corpus an active-learning loop accumulates and a
+  retrain stage consumes.
+- `PREDICTED_STRUCTURE_WITH_UNCERTAINTY` — a relaxed/screened structure carrying method-tagged
+  ensemble or GP uncertainty, the artifact an uncertainty-gated escalation edge (MLIP → DFT) is named
+  by.
+
+These remain physical-quantity-typed edges named by *what crosses*, exactly as wavefunctions and force
+sets are. Per-code restart invariants (NBANDS/KPAR, basis/SHRINK) stay DFT-only; the ML artifacts carry
+their own provenance invariants (checkpoint digest, uncertainty method tag) recorded on the ADR-009
+TaskDocument. POTCAR/pseudopotential validation likewise remains a DFT-only concern under ADR-021.
+
+**2. The §3.2 checksum + source-completion check is now backed by the [ADR-022](adr-022-content-addressed-execution-cache-replay.md) global CAS.**
+ADR-022 promotes this ADR's per-handoff checksum (and ADR-009's advisory `input_hash`) into *one*
+canonical content hash over the full execution closure (statepoint + calculator/model +
+executable/lock + pseudopotential + parent hashes + env fingerprint), backs `raw_paths` with a
+disk-objectstore CAS, and makes hash-hit cache-and-clone the default execution gate. The consequence
+for this ADR is direct: §3 check 2's "compare the transferred file's hash to the hash recorded on the
+source document" becomes a **lookup against the content store** — the source's recorded hash *is* the
+CAS key, and a handoff validates by confirming the consumed artifact resolves to that key. The
+consequence noted in "Negative / Tradeoffs" (hash computed once at source completion, never re-hashed
+at handoff time) is no longer a local optimization but the CAS's structural guarantee: the artifact was
+sealed into the content store under its hash at source completion, so the handoff never touches a loose
+file. ML and agentic nodes are first-class cache participants under ADR-022 — a `MODEL_CHECKPOINT` bump
+invalidates dependent surrogate handoffs, and while LLM/agent nodes are themselves un-cached, their
+deterministic child `CalculatorStage`s (and the handoffs between them) are cached.
+
+**3. The mandatory runtime `RestartValidation` gate is the SECOND line of defense behind [ADR-024](adr-024-static-typed-workflow-dag-validation.md)'s static check.**
+ADR-024 extends ADR-016's "drift is a build failure, not a runtime error" principle inward from the
+Rust↔Python wire to the scientific DAG: a pre-submission `crystalmath validate` pass statically
+type-checks *every* `CodeHandoff` edge offline — proving each edge's artifact type matches what the
+producing `CalculatorStage` emits and the consuming stage requires, and that code/calculator
+compatibility holds (only a stage that emits a WAVECAR can source a VASP→YAMBO `p2y` edge) — *before a
+single job is queued*. This demotes this ADR's runtime gate from sole guardian to backstop:
+`RestartValidation` now catches only what a static check provably cannot (source-completion state,
+on-disk-hash-vs-CAS-key match, parallelization values knowable only at runtime), while whole classes of
+mis-wired campaigns fail in seconds at `validate` time. Because ADR-021's adaptive ML-in-the-loop
+detours materialize sub-DAGs at runtime (jobflow `Response.detour`/`replace`), ADR-024's checker is
+callable both ahead-of-time and on dynamically-spawned sub-DAGs, and this ADR's runtime gate
+re-validates each materialized edge as it fires. The agentic control plane of
+[ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md) sits above this stack: an LLM/agent proposes a typed
+jobflow Flow which is *always* run through ADR-024's static validation (and this ADR's runtime gate)
+before execution — agent output is a PROPOSED Flow, never an unvalidated one, reusing the explicit-gate
+posture (`allow_stub_execution`, `allow_restart_skew`) this ADR already established in §"Negative /
+Tradeoffs".
+
+No locked decision in this ADR is reversed: `CodeHandoff` is still a typed edge, `RestartValidation` is
+still mandatory and positive, validation is still a pre-submission *blocking* gate, and the three
+concrete handoffs in §4 are unchanged. The amendment widens the enum, re-roots the checksum in a global
+CAS, and adds a static first line of defense in front of the runtime gate.
+
 ## References
 
 - S. P. Huber, E. Bosoni, M. Bercx, J. Bröder, A. V. Yakutovich, et al., "Common workflows for
@@ -270,3 +359,24 @@ validation must be a pre-submission gate, consistent with the project's fail-lou
   lineage fields), [ADR-010](adr-010-single-result-store-jobflow-maggma.md) (maggma JobStore),
   [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) (jobflow Flows), and
   [ADR-008](adr-008-structure-and-deck-io-on-ase-pymatgen.md) (per-code deck seam).
+- Amended by (2026-06-03): [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md)
+  (generalize the calculation layer to `CalculatorStage`; MLIP/foundation calculators as first-class
+  peers of DFT — source of the `MODEL_CHECKPOINT`/`TRAINING_DATASET`/`PREDICTED_STRUCTURE_WITH_UNCERTAINTY`
+  artifacts), [ADR-022](adr-022-content-addressed-execution-cache-replay.md) (content-addressed execution
+  identity, hash-hit caching, replay contract — generalizes §3.2's per-handoff checksum into the global
+  CAS), [ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md) (agentic/LLM control plane: guarded MCP
+  tool-server, generative `CandidateSource`, AI provenance — emits PROPOSED typed Flows validated by
+  this gate), and [ADR-024](adr-024-static-typed-workflow-dag-validation.md) (static typed workflow/DAG
+  validation — `crystalmath validate` becomes the first line of defense, demoting this ADR's runtime
+  `RestartValidation` to backstop).
+- A. M. Ganose, J. Riebesell, et al., "Atomate2: modular workflows for materials science," *Digital
+  Discovery* (2025). — Runs MLIPs via a single `AseMaker`; the precedent for treating an MLIP as one
+  more `CalculatorStage` (grounds the ADR-021 ML artifacts admitted to the enum).
+- I. Batatia, P. Benner, et al., "A foundation model for atomistic materials chemistry" (MACE-MP-0),
+  *J. Chem. Phys.* (2024), arXiv:2401.00096. — Canonical foundation-MLIP; an MLIP run returns
+  energy/forces/stress as a `TaskDocument` with zero restart files, motivating the model-checkpoint
+  and predicted-structure handoff artifacts.
+- cwltool reference implementation, `static_checker` module and `--validate` option,
+  https://cwltool.readthedocs.io/en/latest/autoapi/cwltool/checker/index.html. — Prior art for
+  ADR-024's pre-submission whole-DAG type-check that demotes this ADR's runtime gate to a backstop:
+  proves every source→sink edge is type-compatible before any execution.

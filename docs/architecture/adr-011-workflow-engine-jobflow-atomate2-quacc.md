@@ -72,6 +72,13 @@ Every CrystalMath workflow — `relax`, `scf`, `static`, `bands`, `dos`, `gw`, `
 time). This **replaces** the hand-rolled wait-for-completion / handoff logic in
 `high_level/runners.py` and `workflows/bands.py`.
 
+> **Scope note (see Amendment 2026-06-03):** The named workflow set and its `make_*_flow`
+> factories are the *typed building blocks*, not a closed campaign brain. They are **composed by**
+> the ADR-023 planner/campaign controller above them, and jobflow `Response(detour/replace)` is
+> a first-class dynamic-branching primitive (not merely an error-recovery mechanism). MLIP
+> screening / pre-relax / active-learning Flow patterns ([ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md))
+> join this set, with high-throughput MLIP screening given a first-class in-allocation home.
+
 ### 2. Recipes come from atomate2/quacc where they exist; thin code adapters fill the gaps
 
 - For codes atomate2/quacc support (VASP, and the pymatgen/ASE-backed common workflows), use the
@@ -132,7 +139,12 @@ DAG layer. *Why not:* quacc is deliberately thin on *multi-step DAG* semantics �
 one recipe, pick an executor," whereas the bands/EOS/phonon/VASP→YAMBO chains CrystalMath needs are
 explicit dependency DAGs with typed handoff. jobflow is the purpose-built DAG layer (Rosen et al.
 2024) and is the native target for atomate2's multi-step `Maker`s. We use quacc for *recipes* and
-jobflow for the *DAG*, which is exactly how the upstream stack composes.
+jobflow for the *DAG*, which is exactly how the upstream stack composes. *Refined by the Amendment
+(2026-06-03):* this alternative's original rejection of Parsl/Dask "except as in-allocation
+executors" is **narrowed, not reversed** — high-throughput MLIP screening is now an explicitly
+endorsed first-class use of an *in-allocation* Parsl/Dask fan-out under the
+[ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) inference backend, still beneath the
+jobflow DAG, never as the top-level orchestration model.
 
 **C. Keep a homegrown runner, rebuilt on PSI/J.** PSI/J (Hategan-Marandiuc et al. 2023) is a clean
 portable scheduler-abstraction primitive. *Why not:* it abstracts *submission*, not *workflow DAGs
@@ -190,6 +202,85 @@ executors under the ADR-012 backend, not as the orchestration model.
    paths.
 5. Keep tests green: the optional-deps matrix shrinks to "jobflow (required) + AiiDA (opt-in)."
 
+## Amendment (2026-06-03): SOTA alignment
+
+This ADR's original framing — a **closed, static enumeration** of `make_*_flow` factories
+(§1, line 68) as the workflow model, with jobflow `Response` treated as error-recovery-only
+(per [ADR-018](adr-018-error-recovery-custodian-handlers.md)) and Alternative B rejecting both
+dynamic orchestration and high-throughput screening — is too narrow for the adaptive
+ML/agentic campaigns the new ADR-021…024 set targets. The amendment below **demotes jobflow
+from "the campaign brain" to "an executable sub-DAG IR"** beneath a planner, *without changing
+the locked decision* that jobflow `Flow` is the one DAG model and quacc/atomate2 the one
+recipe layer. The Flow factories survive unchanged as the typed building blocks; what changes
+is who composes them and what `Response` is for.
+
+**1. Flow factories are building blocks composed by the ADR-023 planner — not the campaign
+brain.** A static DAG cannot be the brain of an adaptive campaign. The named factories
+(`make_{relax,scf,bands,dos,eos,phonon,gw,bse}_flow`, §1/§Migration line 181) remain the
+**typed, validated units** an upper layer assembles; they are never bypassed. The
+[ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md) planner/campaign controller sits *above* this
+layer and **emits jobflow `Flow`s by composing these factories**, exposing them to LLM agents
+through a guarded MCP tool-server over the [ADR-014](adr-014-ipc-boundary-stdio-jsonrpc-delete-pyo3.md)
+stdio JSON-RPC transport. Agent output is always a **proposed** typed `Flow`, statically
+validated by [ADR-024](adr-024-static-typed-workflow-dag-validation.md) (and the wire contract of
+[ADR-016](adr-016-wire-contract-codegen-no-drift.md)) and gated by TUI elicitation approval
+before submission — reusing the explicit-gate posture this ADR already establishes
+(`allow_stub_execution`, §5) so no agent-proposed Flow is ever executed unvalidated. This is
+the separation of planner from executable workflow that SparksMatter and MASTER demonstrate
+(the latter reporting up to ~90% fewer simulations), and that MCP-driven systems such as
+Catalyst-Agent and the Aurora work of Pham et al. already run in closed loops.
+
+**2. `Response(detour/replace)` is promoted to a first-class dynamic-branching primitive.**
+The decision text scopes dynamic DAG construction to error recovery only. This amendment
+makes jobflow's existing `Response(detour=…)` / `Response(replace=…)` the **endorsed primitive
+for ML-in-the-loop and agent-proposed sub-DAGs**, not just custodian-style recovery: a job may
+return a `Response` that materializes a new sub-Flow at run time (e.g. an uncertainty-gated
+escalation from an MLIP surrogate to a DFT confirmation, or an active-learning retrain step).
+Because such sub-DAGs are materialized at run time, ADR-024's static checker must be callable
+**both ahead-of-time and on dynamically-spawned sub-DAGs** when they are materialized; the
+detour points are the explicit, typed seams the checker is allowed to leave open.
+
+**3. MLIP screening / pre-relax / active-learning Flow patterns join the workflow set
+(ADR-021).** The named workflow enumeration (§1, line 68) is extended with MLIP-centric
+patterns realized as Flow factories over the [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md)
+`MlipCalculatorStage` (a peer of the DFT `CalculatorStage`, emitting zero files and keyed by a
+content-addressed model checkpoint per [ADR-022](adr-022-content-addressed-execution-cache-replay.md)):
+
+- **MLIP pre-relax → DFT** — a foundation-model relaxation feeds a DFT refinement (precedent:
+  atomate2 runs MLIPs through a single `AseMaker`).
+- **Surrogate screening** — high-throughput MLIP energy/force/stress evaluation as a DFT
+  pre-filter (Matbench Discovery reports F1 ≈ 0.57–0.83 for uMLIP filters), realized as a
+  fan-out (see §4 below).
+- **Uncertainty-gated escalation** — a `Response(detour)` from a surrogate to DFT when an
+  ensemble/GP variance (e.g. FLARE) exceeds a method-tagged threshold.
+- **Active learning** — a propose → compute → retrain loop (e.g. MatterSim-style) expressed as
+  `Response(detour/replace)` cycles.
+- **Δ-ML / fine-tune** — a correction or fine-tuning step over a parent checkpoint, with the
+  fine-tune parent recorded in provenance.
+
+These map onto the typed `Flow`/`Response` machinery above; the dynamic patterns (escalation,
+active learning, Δ-ML fine-tune) are exactly the open detour points of §2.
+
+**4. High-throughput MLIP screening gets a first-class in-allocation home.** Alternative B's
+original "Parsl/Dask only as in-allocation executors, never the orchestration model" is
+**narrowed rather than reversed**: high-throughput MLIP screening is now an explicitly
+endorsed first-class workload that fans out over an **in-allocation Parsl/Dask executor under
+the ADR-021 inference backend** (the narrow non-`sbatch` in-process/GPU-inference exception
+ADR-021 carves into [ADR-012](adr-012-hpc-execution-jobflow-remote-aiida-optional.md)'s
+"exactly two backends, all compute via sbatch" rule). The fan-out remains **beneath** the
+jobflow DAG and the ADR-023 planner — it is an executor choice for one screening node, never
+the top-level orchestration model — so this does not reopen Alternative E's rejection of
+Parsl/Dask *as the workflow layer*.
+
+**Net effect on the stack.** The coherent layering becomes: agentic planner
+([ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md)) → static-validated jobflow DAG
+([ADR-024](adr-024-static-typed-workflow-dag-validation.md) over this ADR) → content-addressed,
+cache-gated `CalculatorStage`s ([ADR-022](adr-022-content-addressed-execution-cache-replay.md) over
+[ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md)) → typed `TaskDocument`s with ML+AI+env
+provenance ([ADR-009](adr-009-canonical-data-model-emmet-pydantic-taskdocs.md)). jobflow remains
+the one DAG model; it is now explicitly an **executable sub-DAG IR** under a planner, with its
+already-existing dynamic `Response` capability acknowledged as the agent/ML branching primitive.
+
 ## References
 
 - Rosen, A. S. et al. (2024). "Jobflow: Computational Workflows Made Simple." *Journal of Open
@@ -222,6 +313,24 @@ executors under the ADR-012 backend, not as the orchestration model.
   arXiv:1905.02158. DOI:10.1145/3307681.3325400.
 - jobflow documentation (Job, Flow, OutputReference, JobStore):
   https://materialsproject.github.io/jobflow/
+
+*Added with the Amendment (2026-06-03):*
+
+- Batatia, I. et al. (2024). "A foundation model for atomistic materials chemistry (MACE-MP-0)."
+  *J. Chem. Phys.* arXiv:2401.00096. — Canonical foundation-MLIP; MLIP pre-relax and Δ-ML patterns.
+- Deng, B. et al. (2023). "CHGNet as a pretrained universal neural network potential for
+  charge-informed atomistic modelling." *Nature Machine Intelligence*. DOI:10.1038/s42256-023-00716-3.
+- Riebesell, J. et al. (2025). "Matbench Discovery." *Nature Machine Intelligence.* — uMLIPs as
+  DFT pre-filters (F1 ≈ 0.57–0.83), motivating the surrogate-screening Flow pattern.
+- Yang, H. et al. (2024). "MatterSim." arXiv:2405.04967. — Active-learning surrogate precedent.
+- Vandermause, J. et al. (2020). "On-the-fly active learning of interpretable Bayesian force
+  fields (FLARE)." *npj Comput. Mater.* 6, 20. — Uncertainty (GP variance) gating.
+- MatterGen (2025). *Nature.* arXiv:2312.03687. — Generative `CandidateSource` feeding MLIP
+  screening → DFT validation (ADR-023 planner).
+- Catalyst-Agent (2026). arXiv:2603.01311; Pham, et al. (2026). arXiv:2604.07681. — MCP-driven
+  agents driving materials workflows in closed loops (ADR-023 control plane).
+- SparksMatter (2025). arXiv:2508.02956; MASTER (2025). arXiv:2512.13930. — Planner separated
+  from executable workflow; MASTER reports up to ~90% fewer simulations.
 
 ## Related Issues
 

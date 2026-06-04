@@ -87,7 +87,11 @@ class ExecutionBackend(Protocol):
 ```
 
 Workflows are jobflow `Flow`s (per ADR-011); the backend submits the Flow, it does not build
-`sbatch` strings. There are **two** implementations, no more:
+`sbatch` strings. There are **two** implementations for file-code DFT/GW compute, no more — a
+**third, narrowly-scoped `MlipInferenceBackend`** is admitted by the Amendment (2026-06-03) below
+for in-process/GPU foundation-calculator inference only (never DFT, never a bare-SSH compute
+channel); the two-backend wall and the E1 "`sbatch` by construction" guarantee remain in force for
+all file-code DFT/GW compute:
 
 ### 2. `JobflowRemoteBackend` — the default
 
@@ -187,8 +191,11 @@ jobflow/atomate2 stack ADR-011 commits to.
   `known_hosts`/`asyncssh` handling in favor of the engine's tested transport.
 - **Matches firewalled-HPC reality (E2):** outbound-SSH-only polling is exactly what beefcake2 and
   real centers allow; no inbound worker-callback ports.
-- **Satisfies E1 by construction:** every compute step is a jobflow `Job` submitted via `sbatch`
-  through the daemon; there is no SSH-direct-execution path to misuse.
+- **Satisfies E1 by construction for all file-code DFT/GW compute:** every DFT/GW compute step is a
+  jobflow `Job` submitted via `sbatch` through the daemon; there is no SSH-direct-execution path to
+  misuse. The Amendment (2026-06-03) carves a single narrow exception for in-process/GPU MLIP
+  *inference* (ADR-021), which emits zero files and never runs DFT — so E1's "no bare-SSH compute
+  channel" guarantee is preserved exactly, not loosened, for file-code DFT/GW.
 - **Native to the ADR-011 stack:** jobflow-remote consumes jobflow `Flow`s and writes the same
   `JobStore`, so execution and the data model agree; the Rust TUI reads state from one store over
   IPC instead of parsing `squeue` (E3) itself.
@@ -227,6 +234,111 @@ jobflow/atomate2 stack ADR-011 commits to.
    `_vendor/core/connection_manager.py`; delete `tui/src/runners/` with `tui/` (ADR-006).
 6. Preserve F1/F2/F4 security invariants and the F5 stub-execution opt-in gate at the new seam.
 
+## Amendment (2026-06-03): SOTA alignment
+
+The redesign set adds four new ADRs (021–024) that re-center the spine on a more general
+abstraction without contradicting any locked decision here. Two of them touch this ADR directly,
+and one resolves an inconsistency the original Decision §3 already half-conceded. The original
+decision — `jobflow-remote` default, `AiiDA` opt-in, bespoke stack deleted, E1 satisfied by
+construction — **stands unchanged for all file-code DFT/GW compute.**
+
+### A1. A third backend, carved narrowly: `MlipInferenceBackend` (ADR-021)
+
+[ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) generalizes the calculation layer
+to a `CalculatorStage` (Structure → TaskDocument) in which DFT is **one** instance, not the center:
+`DftCalculatorStage` wraps the ADR-008 `CodeDeckGenerator`/`InputSet` deck path, and
+`MlipCalculatorStage` is a peer that wraps an ASE `Calculator` keyed by a content-addressed model
+checkpoint and **emits zero files**. A foundation-MLIP evaluation (MACE-MP-0, CHGNet, ORB,
+SevenNet, MatterSim) returns energy/forces/stress as an in-process — and, on GPU, in-VRAM —
+function call. The entire performance rationale for adopting foundation calculators (Riebesell et
+al. 2025: uMLIPs as DFT pre-filters, F1 0.57–0.83; pre-relax, surrogate-screen, uncertainty-gated
+escalation, active learning) is that this evaluation is *fast and local*. Forcing it through
+`sbatch` and the outbound-SSH staging daemon would destroy exactly that rationale: a millisecond
+inference call cannot pay a multi-second scheduler round-trip.
+
+The original Decision therefore stated "exactly two implementations, no more" and "every compute
+step … via `sbatch` … by construction" (§§2, Consequences/Positive). This Amendment admits a
+**third** `ExecutionBackend` implementation — `MlipInferenceBackend` — that legitimately bypasses
+`sbatch` and runs the ASE `Calculator` in process (optionally on a local/allocated GPU). The
+exception is carved as narrowly as possible so it does **not** reopen the SSH-direct-execution hole
+this ADR deliberately closed for DFT:
+
+1. **Inference only, never DFT or GW.** The backend may dispatch *only* a `MlipCalculatorStage`
+   whose `CalculatorStage` declares `emits_files = False` and whose calculator is a registered MLIP
+   (ASE `Calculator` factory keyed by a model-id → content-addressed checkpoint, per ADR-021/022).
+   Any stage that emits a deck or restart artifact (`WAVEFUNCTION`, `CHARGE_DENSITY`, `WAVECAR`,
+   `.f9`, a YAMBO databases edge) is a file-code stage and **must** route to
+   `JobflowRemoteBackend`/`AiiDABackend`. POTCAR/pseudopotential validation (ADR-013) is DFT-only
+   and does not apply here precisely because no pseudopotential exists.
+2. **No bare-SSH compute channel — ever.** `MlipInferenceBackend` runs the calculator in the local
+   Python core process (laptop or login node) or inside an existing batch allocation; it does
+   **not** open an SSH channel to a compute node to launch a process there. The thing E1 forbids — a
+   compute job reaching a compute node over bare SSH and bypassing cgroup pinning (beefcake2
+   `CLAUDE.md:6`) — has no analogue in an in-process function call. For GPU inference that must run
+   on a cluster GPU node, the *allocation* is still acquired via `sbatch` through
+   `JobflowRemoteBackend` (the Parsl/Dask in-allocation pattern of Decision §5 applies identically):
+   the MLIP runs inside that allocation, never across SSH to it.
+3. **E1 is preserved, not weakened.** With the exception scoped to file-free inference, the
+   invariant restated precisely is: *all file-code DFT/GW compute runs via `sbatch` by
+   construction; in-process MLIP inference is the only non-`sbatch` path, and it touches no compute
+   node over SSH.* The "no SSH-direct-execution path to misuse" guarantee for DFT is intact.
+
+The `ExecutionBackend` protocol (Decision §1) is already the right seam: `submit(flow, worker)` /
+`status` / `result` / `cancel` accommodate a synchronous in-process backend whose `SubmissionHandle`
+resolves immediately (or against a content-hash cache hit, see A2). Dispatch from a `Flow` to the
+right backend is a property of the `CalculatorStage` it carries (`emits_files`), validated *before*
+submission by the ADR-024 static checker — so a DFT stage can never be misrouted to the inference
+backend, and an MLIP stage can never be forced onto a needless `sbatch` round-trip.
+
+### A2. `sqlite_dos` AiiDA is the strict reference implementation of the ADR-022 caching contract
+
+Decision §3 already concedes that AiiDA 2.x ships lightweight `sqlite_dos` profiles (012:110),
+which removes the PostgreSQL/RabbitMQ premise the "AiiDA-as-default" alternative was rejected on.
+[ADR-022](adr-022-content-addressed-execution-cache-replay.md) makes content-addressed
+execution identity and **hash-hit cache-and-clone the default execution gate** — a single canonical
+content hash over the full closure (statepoint + calculator/model + executable/lock +
+pseudopotential + parent hashes + env fingerprint), ported to the maggma path (ADR-010), backing
+`raw_paths` with a disk-objectstore CAS, and adding the replay/env-fingerprint contract ADR-020
+lacks. This Amendment records the resolution of the 010/012 inconsistency the reviewer flagged:
+**AiiDA's `sqlite_dos` profile — server-free BLAKE2b node-hashing with clone-on-hit and a
+disk-objectstore CAS (Huber et al. 2020, 2022) — is the strict reference implementation of the
+ADR-022 caching contract.** The default maggma path must satisfy the *same* contract (skip-if-
+present, clone-on-hit, `is_valid_cache`/`CACHE_VERSION` invalidation); `AiiDABackend` remains opt-in
+but is now the gold-standard yardstick the default path is measured against, not merely a
+heavyweight provenance option. This is the natural backend for the in-process inference path's cache
+participation: an MLIP result is a pure function of (statepoint + checkpoint hash + tolerance-class),
+so a content-hash hit returns it without re-running the calculator, and a checkpoint bump
+invalidates dependent surrogates.
+
+### A3. Routing, validation, and provenance for the inference path
+
+- **Static routing guarantee (ADR-024).** [ADR-024](adr-024-static-typed-workflow-dag-validation.md)'s
+  `crystalmath validate` type-checks the whole DAG offline before any submission, extending ADR-016's
+  "drift is a build failure, not a runtime error" principle inward from the wire to the scientific
+  DAG. It is the mechanism that makes the A1 carve-out enforceable rather than a convention: a stage's
+  `emits_files`/declared artifact types decide its backend statically, so misrouting a file-code DFT
+  stage to `MlipInferenceBackend` (or vice versa) is a pre-submission validation failure, never a
+  runtime surprise.
+- **Agentic control plane (ADR-023).** [ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md) places a
+  guarded MCP tool-server above jobflow over the ADR-014 stdio JSON-RPC transport; agent output is
+  always a *proposed* typed `Flow` validated by ADR-016/024 and TUI-gated (reusing the
+  `allow_stub_execution`/`allow_restart_skew` explicit-gate posture) before any backend — including
+  `MlipInferenceBackend` — executes it. The non-`sbatch` inference path is thus still subject to the
+  same elicitation/approval and static-validation gates as every other compute step; it is fast, not
+  ungoverned.
+- **Provenance.** MLIP and AI provenance (model-id/checkpoint hash, fidelity lineage, uncertainty,
+  acquisition function, fine-tune parent; and for agent-proposed flows the model/prompt/agent/
+  approval record) fold into the ADR-009 `TaskDocument` schema and the ADR-022 hash, so an
+  in-process inference result is as reproducible and auditable as an `sbatch`-submitted DFT result.
+
+**Net effect on this ADR:** the seam (Decision §1), the default (`jobflow-remote`, §2), the opt-in
+(`AiiDA`, §3), the deletion of the bespoke stack (§4), and the Parsl/Dask in-allocation reservation
+(§5) are all unchanged. Only the *count and scope* of `ExecutionBackend` implementations changes:
+from "exactly two" to "two file-code DFT/GW backends plus one narrowly-scoped, file-free,
+no-bare-SSH MLIP-inference backend (ADR-021)," with the E1 `sbatch`-by-construction guarantee held
+intact for all DFT/GW compute and `sqlite_dos` AiiDA named as the reference implementation of the
+ADR-022 caching contract the default path must meet.
+
 ## References
 
 - Jobflow-remote documentation (Matgenix) — outbound-SSH daemon model; the workflow DB is not
@@ -246,6 +358,21 @@ jobflow/atomate2 stack ADR-011 commits to.
   *Concurrency Computat.: Pract. Exper.* 27(17), 5037–5059 (2015). DOI:10.1002/cpe.3505
 - A. S. Rosen et al., "Jobflow: Computational Workflows Made Simple," *JOSS* 9(93), 5995 (2024).
   DOI:10.21105/joss.05995
+- I. Batatia et al., "A foundation model for atomistic materials chemistry (MACE-MP-0),"
+  *J. Chem. Phys.* (2024). arXiv:2401.00096 — canonical foundation-MLIP; the in-process ASE
+  `Calculator` whose fast evaluation motivates the Amendment's `MlipInferenceBackend` (A1).
+- B. Deng et al., "CHGNet as a pretrained universal neural network potential for charge-informed
+  atomistic modelling," *Nat. Mach. Intell.* 5, 1031–1041 (2023). DOI:10.1038/s42256-023-00716-3 —
+  a peer foundation calculator behind the same ADR-021 `MlipCalculatorStage`.
+- J. Riebesell et al., "Matbench Discovery — A framework to evaluate machine learning crystal
+  stability predictions," *Nat. Mach. Intell.* (2025) — uMLIPs as DFT pre-filters (F1 0.57–0.83),
+  the screening rationale for fast file-free inference (A1).
+- A. M. Ganose et al., "Atomate2: modular workflows for materials science," *Digital Discovery*
+  (2025) — precedent for running MLIPs through one ASE `AseMaker`, the prior art for treating an
+  MLIP as a `CalculatorStage` peer of DFT (ADR-021).
+- S. P. Huber, "Automated reproducible workflows and data provenance with AiiDA," *Nat. Rev. Phys.*
+  4, 367 (2022). DOI:10.1038/s42254-022-00463-1 — AiiDA 2.x disk-objectstore and `sqlite_dos`
+  profiles; the server-free reference implementation of the ADR-022 caching contract (A2).
 - quacc workflow-engine support matrix (Dask/Parsl/Prefect/Covalent/Jobflow; HPC/server/monitoring
   trade-offs). https://quantum-accelerators.github.io/quacc/user/basics/wflow_overview.html
 - Friction catalog §2 (three SLURM-over-SSH implementations; transport fragmentation) and

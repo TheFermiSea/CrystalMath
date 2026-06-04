@@ -94,7 +94,9 @@ class TaskDocument(BaseModel):                 # the emmet-core pattern, our own
     model_config = ConfigDict(extra="forbid")  # validate on write; reject unknown keys
 
     schema_version: str = "1"                  # bumped on breaking field changes
-    code: DftCode                              # crystal | vasp | qe | yambo | phonopy
+                                               # (bumped to "2" by the 2026-06-03 amendment below)
+    code: CodeClass                            # crystal | vasp | qe | yambo | phonopy
+                                               # | mlip (open enum; see Amendment / ADR-021)
     state: JobState                            # the ONE canonical enum (see §3)
 
     # --- typed scientific results (no more key_results blob) ---
@@ -114,7 +116,8 @@ class ProvenanceDoc(BaseModel):
     code_version: str | None                   # parsed from output header
     structure_uuid: str                        # identity of the input structure
     parent_job_uuids: list[str] = []           # lineage edges (AiiDA "input" links)
-    raw_paths: dict[str, str] = {}             # content-addressed raw input/output files
+    raw_paths: dict[str, CasRef] = {}          # typed content-addressed references (ADR-022 CAS;
+                                               # was advisory dict[str,str] — see Amendment below)
 ```
 
 ```python
@@ -161,9 +164,11 @@ concept as document fields** rather than its ORM:
   inputs are detectable and a result is bound to the exact input that produced it.
 - `parent_job_uuids` — the lineage edges; an SCF → bands chain records the SCF job's uuid,
   giving a traversable DAG without a graph database.
-- `raw_paths` — **content-addressed** paths (hash-named) to the raw input/output files in an
+- `raw_paths` — **content-addressed** references to the raw input/output files in an
   object store, mirroring AiiDA's disk-objectstore so raw provenance survives even when the
-  document is migrated between stores.
+  document is migrated between stores. *(Amended 2026-06-03: these are now typed `CasRef`
+  values backed by a real disk-objectstore CAS per [ADR-022](adr-022-content-addressed-execution-cache-replay.md),
+  not advisory `dict[str,str]` strings — see Amendment below.)*
 
 The multi-code handoff contract (the VASP→YAMBO keystone, CRYSTAL `.f9`/VASP `WAVECAR`
 passing) is expressed as **typed edges between TaskDocuments**: the consumer's
@@ -237,6 +242,10 @@ OPTIMADE export and MSONable round-tripping that pydantic-over-pymatgen gives us
 - **Free interchange.** TaskDocuments serialize via MSONable/pymatgen, enabling OPTIMADE export
   and clean handoff between codes.
 - **One state enum** kills the six-way `JobState`/`JobStatus` confusion.
+- **Provenance is now sufficient for the ML/agentic/determinism layers.** Per the 2026-06-03
+  amendment below, `ProvenanceDoc` carries ML, AI, and environment-fingerprint provenance, so
+  ADR-021/022/023 have a canonical place to persist what they produce and ADR-022's content
+  hash is computable. This bumps `schema_version` to `"2"`.
 
 ### Negative / Tradeoffs
 - **Schema-maintenance burden.** CRYSTAL/QE/YAMBO need bespoke TaskDoc subclasses and parsers,
@@ -259,6 +268,135 @@ OPTIMADE export and MSONable round-tripping that pydantic-over-pymatgen gives us
    fields with checksum validation.
 6. Persist documents into the ADR-010 maggma store; ensure the AiiDA backend round-trips into
    the same documents.
+
+## Amendment (2026-06-03): SOTA alignment
+
+This amendment **preserves the original decision** — one versioned pydantic `TaskDocument` per
+code, validated on write, with first-class provenance — and **extends** it so the TaskDocument can
+serve as the canonical record for the ML, agentic, and determinism layers introduced by the new
+ADR set ([ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md),
+[ADR-022](adr-022-content-addressed-execution-cache-replay.md),
+[ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md),
+[ADR-024](adr-024-static-typed-workflow-dag-validation.md)). The original ADR is the canonical
+*record*, but as written it lacked every field those layers must persist: model-checkpoint
+identity (for ADR-021/022 caching), uncertainty/acquisition (for active learning), AI provenance
+(for ADR-023), and an environment fingerprint (for ADR-020/022 replay comparability). Without
+these the new ADRs have nowhere to persist their provenance and the ADR-022 content hash cannot be
+computed. This is a **breaking, additive schema change: `schema_version` is bumped `"1"` → `"2"`.**
+
+### A. Open the closed code enum (was `DftCode`, 009:97 → `CodeClass`)
+
+The fixed `DftCode = crystal | vasp | qe | yambo | phonopy` enum is **renamed to `CodeClass` and
+opened** to admit MLIP / foundation-model calculators as first-class peers of DFT, per
+[ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md). DFT loses its privileged center:
+an MLIP run is a `CalculatorStage` peer of a DFT stage (ADR-021), and POTCAR/pseudopotential
+validation (ADR-008/013) becomes a **DFT-only** concern rather than a property of every document.
+`DftCode` is retained as a narrowed alias for the DFT subset where POTCAR/restart logic legitimately
+applies. New members (e.g. `mlip`) are added without breaking the closed-enum guarantee for the DFT
+subset.
+
+### B. New `MlipTaskDoc` subclass
+
+Add an `MlipTaskDoc(TaskDocument)` subclass alongside `CrystalTaskDoc`/`VaspTaskDoc`/etc., following
+the identical §1 pattern. An MLIP/foundation-model run emits **zero files** and returns
+energy/forces/stress as a pure function of (statepoint, checkpoint, settings, library versions),
+so `MlipTaskDoc` carries the typed scientific results already on the base plus the ML provenance in
+§C. It is the document a `MlipCalculatorStage` (a thin wrapper over an ASE `Calculator` keyed by a
+content-addressed checkpoint, per ADR-021) produces.
+
+### C. Extend `ProvenanceDoc` (009:111-118) with ML, AI, and environment provenance
+
+`ProvenanceDoc` gains three new typed sub-structures. These are the fields ADR-022's canonical
+content hash is computed over, and the fields ADR-023's audit trail requires.
+
+```python
+class MlProvenance(BaseModel):                  # populated for MlipTaskDoc (ADR-021)
+    model_uuid: str                             # stable identity of the model used
+    model_checkpoint_hash: str                  # content hash of the weights/checkpoint (ADR-022 cache key)
+    model_version: str | None = None            # registry digest (e.g. HF repo + revision), NOT multi-GB weights
+    registry_digest: str | None = None          # immutable pin of the model registry entry
+    training_set_lineage: list[str] = []         # dataset provenance edges for the checkpoint
+    fidelity_lineage: list[str] = []             # Δ-ML / multi-fidelity ancestry (which fidelities composed)
+    uncertainty: float | None = None            # ensemble/GP uncertainty for the prediction
+    uncertainty_method: str | None = None       # tag: how `uncertainty` was computed (ensemble | GP-variance | ...)
+    acquisition_function: str | None = None     # active-learning acquisition that selected this statepoint
+    fine_tune_parent: str | None = None         # uuid/hash of the parent checkpoint this was fine-tuned from
+
+class AiProvenance(BaseModel):                   # populated when an LLM/agent produced/modified an input (ADR-023)
+    model: str | None = None                     # LLM/agent model identity + version
+    prompt: str | None = None                    # prompt (or its content hash) that produced the artifact
+    tool_call: str | None = None                 # the MCP tool verb invoked (ADR-023 guarded tool-server)
+    agent_identity: str | None = None            # which agent/campaign controller acted
+    human_approval: str | None = None            # TUI-gated elicitation approval record (who/when)
+
+class EnvironmentFingerprint(BaseModel):         # recorded on EVERY document (ADR-020/022 replay comparability)
+    executable_hash: str | None = None           # hash of the code/binary actually run
+    pseudopotential_hash: str | None = None      # POTCAR/pseudopotential/basis hash (DFT-only)
+    mpi_version: str | None = None
+    blas_version: str | None = None
+    lapack_version: str | None = None
+    torch_version: str | None = None             # for MLIP/GPU inference stages
+    cuda_version: str | None = None
+    thread_count: int | None = None              # OMP_NUM_THREADS
+    rank_count: int | None = None                # MPI ranks
+    compiler: str | None = None                  # compiler + flags (FP non-associativity sources)
+    compiler_flags: str | None = None
+
+class ProvenanceDoc(BaseModel):
+    input_hash: str
+    code_name: str
+    code_version: str | None
+    structure_uuid: str
+    parent_job_uuids: list[str] = []
+    raw_paths: dict[str, CasRef] = {}            # see §D
+    # --- new (schema_version "2") ---
+    ml: MlProvenance | None = None               # ADR-021
+    ai: AiProvenance | None = None               # ADR-023
+    env: EnvironmentFingerprint | None = None    # ADR-020 / ADR-022
+```
+
+Rationale for each group:
+- **ML provenance** gives the active-learning loop (ADR-021) and the cache (ADR-022) what they need:
+  `model_checkpoint_hash` is a first-class ADR-022 cache key — a checkpoint bump must invalidate
+  dependent surrogates — and `uncertainty`/`uncertainty_method`/`acquisition_function` let
+  uncertainty-gated escalation and acquisition-driven selection persist their decisions.
+  `uncertainty` is **always method-tagged** because an ensemble σ and a GP variance are not
+  comparable. Per ADR-022, the registry **digest** (HF repo + revision) is hashed, never the
+  multi-GB weights.
+- **AI provenance** makes every LLM/agent-produced or -modified input auditable (ADR-023) and folds
+  into the ADR-022 execution hash. Because closed-model versions drift, agent steps are **not
+  bitwise-cacheable**: agent nodes are un-cached, but their deterministic child stages are cached.
+- **Environment fingerprint** is the field ADR-020's replay contract and ADR-022's hash both
+  require. Floating-point non-associativity (MPI rank / OMP thread counts, GPU atomics, BLAS/LAPACK
+  vendor, compiler flags, FMA contraction) makes bitwise reproducibility unachievable across
+  heterogeneous hardware, so two runs are only comparable when their fingerprints are known. GPU
+  MLIP inference is likewise not bitwise-reproducible, hence `torch_version`/`cuda_version` are
+  captured and the ADR-022 reuse key is (statepoint + checkpoint + tolerance-class).
+
+### D. Re-type `raw_paths` from advisory `dict[str,str]` to typed CAS references (ADR-022)
+
+`raw_paths` (009:117, 164-166) was an **advisory** `dict[str, str]` of "content-addressed
+(hash-named)" paths with no decided algorithm, no store, and no dedup contract. It is re-typed to
+`dict[str, CasRef]`, where `CasRef` is a **typed reference into the real content-addressed store**
+decided by [ADR-022](adr-022-content-addressed-execution-cache-replay.md) (a
+disk-objectstore CAS with a decided hash algorithm and dedup contract). This is what makes ADR-013's
+per-handoff checksum a lookup into a global CAS rather than a one-off comparison, and what gives
+ADR-021's model checkpoints a place to live as content-addressed artifacts. MSONable round-tripping
+(009:149) and the maggma `additional_stores` model (ADR-010) are preserved.
+
+### Integration thesis (why this stays coherent with 007-020)
+
+The 007-020 spine is intact: this remains "one versioned TaskDocument per code, validated on
+write." The four new ADRs re-center the set without contradicting any locked decision by treating
+**DFT as one instance of a more general abstraction** rather than the abstraction itself. ADR-021's
+`CalculatorStage` (Structure → TaskDocument) generalizes ADR-008's `CodeDeckGenerator`/`InputDeck`
+into the DFT-and-file-code specialization, with `MlipCalculatorStage` as a zero-file peer; this
+ADR's revised schema is what both specializations write. ADR-022 turns the identity layer real by
+hashing the full closure (statepoint + calculator/model + executable/lock + pseudopotential +
+parent hashes + the §C environment fingerprint) and backing `raw_paths` with a CAS. ADR-023's
+agentic control plane folds its AI provenance (§C) into the same schema and the ADR-022 hash.
+ADR-024 statically type-checks the DAG before submission, re-validating the ML/agent sub-DAGs that
+materialize at runtime. DFT, MLIP, and LLM steps become uniform citizens of one TaskDocument.
 
 ## References
 
@@ -287,3 +425,31 @@ OPTIMADE export and MSONable round-tripping that pydantic-over-pymatgen gives us
 - Friction Catalog §7 ("Three-way storage split with no canonical job record"): six
   job-state/status types and the `key_results` blob — evidence in `python/crystalmath/models.py`,
   `python/crystalmath/_vendor/core/database.py`, `python/crystalmath/integrations/jobflow_store.py`.
+
+### Added by the 2026-06-03 amendment (ML / AI / determinism provenance)
+
+- Batatia, I. et al., "A foundation model for atomistic materials chemistry (MACE-MP-0),"
+  *J. Chem. Phys.* (2024), arXiv:2401.00096. *(Canonical foundation-MLIP; DFT as one stage;
+  source of the Δ-ML / fidelity-lineage concept in `MlProvenance`.)*
+- Deng, B. et al., "CHGNet as a pretrained universal neural network potential for
+  charge-informed atomistic modelling," *Nat. Mach. Intell.* (2023),
+  DOI:10.1038/s42256-023-00716-3. *(Charge-informed universal MLIP shipped as an ASE Calculator.)*
+- Riebesell, J. et al., "Matbench Discovery — A framework to evaluate machine learning
+  crystal stability predictions," *Nat. Mach. Intell.* (2025). *(uMLIPs as DFT pre-filters;
+  motivates surrogate-screening and uncertainty/acquisition fields.)*
+- Ganose, A. M. et al., "Atomate2," *Digital Discovery* (2025), DOI:10.1039/d5dd00019j.
+  *(Precedent for running MLIPs via one `AseMaker` — the `CalculatorStage`/`MlipTaskDoc` pattern.)*
+- Huber, S. P. et al., "AiiDA 1.0," *Scientific Data* 7, 300 (2020),
+  DOI:10.1038/s41597-020-00638-4. *(BLAKE2b node-hash caching incl. parent-input hashes — the
+  model ADR-022's content hash and the `CasRef`-backed `raw_paths` re-type build on.)*
+- Shanmugavelu, S. et al., "Impacts of floating-point non-associativity on reproducibility
+  for HPC and deep learning applications," *SC24-W* (2024),
+  DOI:10.1109/SCW63240.2024.00028, arXiv:2408.05148. *(Why bitwise reproducibility is
+  unachievable across heterogeneous hardware — motivates `EnvironmentFingerprint`.)*
+- Laguna, I., "Varity: Quantifying Floating-Point Variations in HPC Systems Through
+  Randomized Testing," *IEEE IPDPS* (2020), DOI:10.1109/IPDPS47924.2020.00070.
+  *(Identical inputs diverge across compilers and CPU/GPU — grounds the compiler/flags and
+  torch/CUDA fields of `EnvironmentFingerprint`.)*
+- MatterGen, "A generative model for inorganic materials design," *Nature* (2025),
+  arXiv:2312.03687. *(Reference generative `CandidateSource` whose outputs ADR-023 records via
+  `AiProvenance`.)*

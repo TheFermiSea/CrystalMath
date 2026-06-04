@@ -1,13 +1,20 @@
-# CrystalMath Redesign — Master Index (ADR-007 … ADR-020)
+# CrystalMath Redesign — Master Index (ADR-007 … ADR-024)
 
 **Status:** Proposed (the whole set)
 **Date:** 2026-06-03
 **Governing ADR:** [ADR-007 — Redesign Overview](adr-007-redesign-overview-adopt-ecosystem.md)
 
 This document is the single entry point to the free-rein redesign captured in ADR-007 through
-ADR-020. It states the north-star vision, lists every redesign ADR with its status and
+ADR-024. It states the north-star vision, lists every redesign ADR with its status and
 supersession, gives a dependency-ordered reading path, and narrates how the pieces fit. The
 normative content lives in the ADRs themselves; this index is a map, not a decision.
+
+ADR-007–020 are the original spine; **ADR-021–024 add a SOTA / autonomous-workflow layer** that
+re-centers the calculation seam on a code-agnostic `CalculatorStage` (DFT and MLIP/foundation
+calculators as peers), makes content-addressed execution a first-class enforced gate, adds an
+agentic control plane, and proves the whole DAG well-typed before submission. ADR-007 is amended to
+govern 008–024; ADR-008/009/010/011/012/013/020 carry `Amendment (2026-06-03)` sections recorded in
+the [Amendments log](#amendments-log) below.
 
 ---
 
@@ -58,7 +65,7 @@ no-ops. The redesign makes the decision.
 
 | ADR | Title (short) | Status | Supersedes | Depends on |
 |-----|---------------|--------|------------|------------|
-| [007](adr-007-redesign-overview-adopt-ecosystem.md) | Redesign overview — adopt the ecosystem, collapse N-way facades to one | Proposed | none | none (governs 008–020) |
+| [007](adr-007-redesign-overview-adopt-ecosystem.md) | Redesign overview — adopt the ecosystem, collapse N-way facades to one | Proposed | none | none (governs 008–024; amended 2026-06-03 for the SOTA layer) |
 | [008](adr-008-structure-and-deck-io-on-ase-pymatgen.md) | Structure + deck I/O on pymatgen + ASE; `CodeDeckGenerator` becomes a thin adapter | Proposed | none | 007 |
 | [009](adr-009-canonical-data-model-emmet-pydantic-taskdocs.md) | Canonical result schema — emmet-style versioned pydantic `TaskDocument`s + provenance fields | Proposed | none | 008 |
 | [010](adr-010-single-result-store-jobflow-maggma.md) | One canonical result store — jobflow `JobStore` over maggma | Proposed | none | 009 |
@@ -73,10 +80,21 @@ no-ops. The redesign makes the decision.
 | [019](adr-019-delete-phase3-protocols-aspiration-layer.md) | Delete the unimplemented `protocols.py`/`high_level` "Phase 3" aspiration layer; keep the type aliases | Proposed | none | 007 (relates to 011) |
 | [020](adr-020-reproducibility-and-golden-file-testing.md) | Reproducibility spine — golden-file + property/metamorphic tests, real-DFT parser fixtures (extends 017's testing) | Proposed | none | 008, 009, 017 |
 
+**SOTA / autonomous-workflow layer (added 2026-06-03):**
+
+| ADR | Title (short) | Status | Supersedes | Depends on |
+|-----|---------------|--------|------------|------------|
+| [021](adr-021-calculatorstage-mlip-foundation-calculators.md) | Generalize the calculation layer to `CalculatorStage`; MLIP/foundation calculators as first-class peers of DFT (DFT is one instance) | Proposed | none (amends 008/009/011/012/013/020) | 008, 009, 011, 012 |
+| [022](adr-022-content-addressed-execution-cache-replay.md) | Content-addressed execution identity, hash-hit cache-and-clone as the default gate, two-tier caching-vs-replay contract | Proposed | none (enforces/generalizes 009 `input_hash`, 013 checksum; amends 010) | 009, 010, 013 |
+| [023](adr-023-agentic-control-plane-mcp-ai-provenance.md) | Agentic/LLM control plane — guarded MCP tool-server above jobflow, generative `CandidateSource`, first-class AI provenance | Proposed | none (amends 011 static-factory framing, 019 "single answer") | 011, 014, 016, 018, 021, 024 |
+| [024](adr-024-static-typed-workflow-dag-validation.md) | Static typed workflow/DAG validation — `crystalmath validate` type-checks the whole multi-code DAG offline before any submission | Proposed | none (extends 016 inward to the scientific DAG) | 016, 013, 011, 021 |
+
 **Supersession relationships to the pre-redesign ADRs (001–006):**
 
-- ADR-007 supersedes nothing; it is the umbrella that *governs* 008–020 and is consistent with the
-  ADR-006 direction (single Rust TUI over IPC, Python core as source of truth).
+- ADR-007 supersedes nothing; it is the umbrella that *governs* 008–024 and is consistent with the
+  ADR-006 direction (single Rust TUI over IPC, Python core as source of truth). Its 2026-06-03
+  amendment widens the frozen five-code taxonomy to a **code-class** taxonomy (DFT/file-codes +
+  phonopy + MLIP/foundation as a peer class) and adds four load-bearing layers (021–024).
 - **ADR-014 supersedes [ADR-003](adr-003-ipc-boundary-design.md)** — it keeps ADR-003's JSON-RPC
   decision but changes the transport from a UDS *listener* to a spawned-child *stdio* stream and
   fixes ADR-003's two named bugs (the `/tmp` socket-path divergence and the auto-start race).
@@ -123,6 +141,11 @@ flowchart TD
     A017["ADR-017 · Packaging + testing<br/>two artifacts / pixi"]:::plat
     A020["ADR-020 · Reproducibility spine<br/>golden-file + property tests"]:::plat
 
+    A021["ADR-021 · CalculatorStage<br/>MLIP/DFT peers"]:::sota
+    A022["ADR-022 · Content-addressed<br/>execution / cache-replay"]:::sota
+    A023["ADR-023 · Agentic control plane<br/>MCP + AI provenance"]:::sota
+    A024["ADR-024 · Static DAG validation<br/>crystalmath validate"]:::sota
+
     A007 --> A008
     A008 --> A009
     A009 --> A010
@@ -151,10 +174,36 @@ flowchart TD
     A009 --> A020
     A014 -. relates to .-> A015
 
+    %% SOTA / autonomous-workflow layer (021–024)
+    A008 --> A021
+    A009 --> A021
+    A011 --> A021
+    A012 --> A021
+    A009 --> A022
+    A010 --> A022
+    A013 --> A022
+    A021 -. caches .-> A022
+    A011 --> A023
+    A014 --> A023
+    A016 --> A023
+    A018 --> A023
+    A021 --> A023
+    A024 --> A023
+    A016 --> A024
+    A013 --> A024
+    A011 --> A024
+    A021 --> A024
+    A021 -. amends .-> A007
+    A021 -. amends .-> A008
+    A022 -. amends .-> A010
+    A023 -. amends .-> A011
+    A024 -. extends .-> A016
+
     classDef existing fill:#e8e8e8,stroke:#888,color:#222;
     classDef overview fill:#ffe9b3,stroke:#d49a00,color:#222;
     classDef sci fill:#cfe8ff,stroke:#1f6fb2,color:#0a2540;
     classDef plat fill:#d6f5d6,stroke:#2e8b2e,color:#0a2a0a;
+    classDef sota fill:#f3d6f5,stroke:#9b2e8b,color:#2a0a2a;
 ```
 
 The same graph as an ASCII sketch:
@@ -181,6 +230,16 @@ The same graph as an ASCII sketch:
    Cross-cutting hardening:                              020 Reproducibility spine (extends 017; needs 008,009)
    018 Error recovery — custodian handlers (needs 011,012; relates to 013)
    019 Delete Phase-3 protocols/high_level aspiration layer (needs 007; relates to 011)
+
+   SOTA / AUTONOMOUS-WORKFLOW LAYER (021–024; stacked on the spine, amend 007–013/020):
+     021 CalculatorStage — MLIP/foundation calculators as peers of DFT   (needs 008,009,011,012; amends 008)
+            │  DFT is now ONE CalculatorStage, not the center; POTCAR/deck validation → DFT-only
+     022 Content-addressed execution identity + hash-hit cache/replay     (needs 009,010,013; amends 010)
+            │  closure hash IS identity; cache-and-clone is the DEFAULT gate; disk-objectstore CAS
+     023 Agentic control plane — guarded MCP tool-server ABOVE jobflow    (needs 011,014,016,018,021,024; amends 011,019)
+            │  CampaignController composes 011 factories; CandidateSource; AI provenance → 009 + 022 hash
+     024 Static typed DAG validation — `crystalmath validate`            (needs 016,013,011,021)
+               extends 016 inward to the science; 013 RestartValidation demoted to runtime backstop
 ```
 
 **Recommended reading order:**
@@ -210,6 +269,23 @@ The same graph as an ASCII sketch:
    than extending them: 018 swaps the bespoke ADAPTIVE recovery for custodian handlers beneath the
    engine, 019 deletes the dead `protocols.py`/`high_level` "Phase 3" layer, and 020 is the
    golden-file/property-testing reproducibility spine that 017's testing section references.
+5. **SOTA / autonomous-workflow layer, in order:**
+   **[021](adr-021-calculatorstage-mlip-foundation-calculators.md)** →
+   **[022](adr-022-content-addressed-execution-cache-replay.md)** →
+   **[024](adr-024-static-typed-workflow-dag-validation.md)** →
+   **[023](adr-023-agentic-control-plane-mcp-ai-provenance.md)**. Read 021 first — it generalizes the
+   calculation seam to `CalculatorStage` so DFT and MLIP/foundation calculators are peers, and it is
+   the precondition every other ADR in this layer leans on (its typed I/O signature is what 024
+   reads, its checkpoint hash is what 022 folds into the closure, its `MlipCalculatorStage` is the
+   cheap inner loop 023 composes). Then 022 makes content-addressing an *enforced* default execution
+   gate (hash-hit cache-and-clone, disk-objectstore CAS, two-tier caching-vs-replay), then 024 adds
+   the offline `crystalmath validate` whole-DAG type-check that must pass before any submission, and
+   finally 023 stacks the agentic/MCP control plane on top — a `CampaignController` that composes the
+   011 factories, a guarded MCP tool-server over the 014 transport, and AI provenance folded into 009
+   and the 022 hash. Read 023 last because it depends on all three (it screens against 021, caches
+   via 022, and is gated by 024). These four **amend** the spine (007/008/009/010/011/012/013/020)
+   rather than extending it linearly: they re-center DFT as one calculator among peers, not the
+   center.
 
 **Note on 014 ↔ 015.** These two genuinely co-need each other (the IPC boundary needs config to
 resolve the server invocation; config exposes itself over the IPC dispatch table via `config.get`).
@@ -292,6 +368,41 @@ outright (keeping just the load-bearing `WorkflowType`/`DFTCode`/`ResourceRequir
 canned-DFT parser fixtures (no DFT in CI) — the deeper testing spine that ADR-017's testing section
 references, turning "did this change the physics?" into a CI-answered question.
 
+Stacked on this spine, a **SOTA / autonomous-workflow layer** (ADR-021–024) re-centers the system
+without contradicting a locked decision — the reframe is that **DFT is one instance of a more general
+abstraction, not the abstraction itself.** ADR-021 generalizes the calculation seam to a
+code-agnostic `CalculatorStage` (`Structure → TaskDocument`): ADR-008's `CodeDeckGenerator`/`InputDeck`
+becomes `DftCalculatorStage` (file-writing, deck-staged, POTCAR-validated, `sbatch`-executed) and an
+`MlipCalculatorStage` — a thin wrapper over any ASE-native MLIP/foundation calculator (MACE-MP-0,
+CHGNet, SevenNet, MatterSim, ORB) keyed by a content-addressed checkpoint hash — is a **co-equal
+peer** that returns energy/forces/stress in-process with zero files, so POTCAR/deck validation narrows
+to the DFT stage and a third, narrowly-carved `MlipInferenceBackend` joins jobflow-remote/AiiDA for
+queue-free GPU inference (inference only, never DFT — ADR-012's "all *DFT* compute via `sbatch`"
+invariant is preserved). ADR-022 then makes **content-addressed execution real**: ADR-009's advisory
+`input_hash` and ADR-013's per-edge checksum are promoted into one canonical content hash over the
+full execution closure (statepoint + calculator/model + executable/lock + pseudopotential + parent
+*content* hashes + env fingerprint), and **hash-hit cache-and-clone becomes the default pre-execution
+gate** — AiiDA's caching contract ported to the maggma path with a disk-objectstore CAS backing
+`raw_paths`, a two-tier split between a coarse scientific-reuse hash and a strict replay/env-fingerprint
+hash, and `sqlite_dos` AiiDA as the opt-in strict reference implementation (this also resolves the old
+ADR-010/012 "AiiDA needs PostgreSQL" inconsistency). ADR-024 extends ADR-016's "drift is a build
+failure, not a runtime error" discipline inward from the wire to the science: `crystalmath validate`
+type-checks the **whole** multi-code DAG offline before any submission (artifact-type match,
+code/calculator compatibility, static parallelization satisfiability), modeled on `cwltool`'s
+`static_checker`, demoting ADR-013's runtime `RestartValidation` from sole guardian to a second-line
+backstop for facts only the run can reveal. Finally ADR-023 adds the **agentic control plane** above
+jobflow: a `CampaignController` that *composes* (never bypasses) ADR-011's typed `make_*_flow`
+factories and emits jobflow `Response(detour/replace)` for the propose→MLIP-screen→DFT-validate→retrain
+loop, exposed to LLM agents through a guarded **MCP tool-server** over the ADR-014 stdio JSON-RPC
+transport with a closed set of typed verbs and TUI-gated elicitation approval, a pluggable generative
+`CandidateSource` (MatterGen reference impl), and first-class **AI provenance** (model/prompt/tool-call/
+agent-identity/human-approval) folded into the ADR-009 schema and the ADR-022 hash — so an agent's
+output is always a *proposed* typed Flow, validated by 016/024 and never executed unvalidated, with the
+agent node un-cached but its deterministic child stages content-addressed and memoized. The four are
+orthogonal: 021 owns *what computes*, 022 owns *whether it re-computes*, 024 owns *whether the DAG is
+well-typed before it runs*, and 023 owns *who composes the DAG* — and jobflow is thereby demoted from
+the campaign brain to a static-validated executable IR beneath a planner.
+
 The net effect is large-scale **deletion plus delegation**: ~3.3k LOC of bespoke SLURM/SSH, the
 984-LOC jobflow bridge, the 1,185-LOC PyO3 bridge, the `_vendor/` fork (33 files), the deprecated
 `tui/` package, the bespoke ADAPTIVE recovery, and the `protocols.py`/`high_level` "Phase 3" layer all
@@ -322,11 +433,71 @@ In dependency terms:
 Steps 1–3 are independently shippable; 4–6 depend on them. No data migration is needed (zero users):
 every store/transport swap is a cutover, not a dual-write.
 
+The SOTA layer (021–024) sequences *after* the spine it amends, and is itself ordered 021 → 022 → 024
+→ 023: stand up `CalculatorStage` + the model registry (021) so every stage declares a typed I/O
+signature; make the closure content hash + cache-and-clone gate + disk-objectstore CAS the default
+(022); land `crystalmath validate` as a mandatory pre-submission gate reading those signatures (024);
+then add the `CampaignController` + guarded MCP tool-server + AI provenance (023), reframing the
+free-text `ai/service.py` into the gated MCP server. Like the spine, each step is a cutover, not a
+dual-write.
+
+## Amendments log
+
+The SOTA layer (ADR-021–024) **amends** seven spine ADRs in place via dated `Amendment (2026-06-03)`
+sections; none reverses a locked decision. Summary:
+
+- **[ADR-007](adr-007-redesign-overview-adopt-ecosystem.md)** — frozen five-code taxonomy (007:18)
+  widened to a **code-class** taxonomy admitting MLIP/foundation calculators as a peer class; the
+  9-point "one of each layer" target gains four new load-bearing layers (CalculatorStage,
+  content-addressed identity/CAS, agentic control plane + AI provenance, static DAG validator). DFT
+  is now **one CalculatorStage, not the center.**
+- **[ADR-008](adr-008-structure-and-deck-io-on-ase-pymatgen.md)** — `CodeDeckGenerator`/`InputDeck`
+  reframed as the **DFT/file-code specialization** of the ADR-021 `CalculatorStage`; the ASE
+  `SocketIO`/`FileIO` calculator hatch (008:82-85) opened for a zero-file MLIP adapter returning
+  energy/forces/stress via a typed `MlipCalcSpec`; POTCAR/deck validation scoped DFT-only.
+- **[ADR-009](adr-009-canonical-data-model-emmet-pydantic-taskdocs.md)** — closed `DftCode` enum
+  (009:97) opened to a `CodeClass` admitting MLIPs; `MlipTaskDoc` subclass added; `ProvenanceDoc`
+  (009:111-118) extended with ML provenance (model/checkpoint hash, version/registry digest, training
+  + fidelity lineage, method-tagged uncertainty, acquisition function, fine-tune parent), AI
+  provenance (model/prompt/tool-call/agent-identity/human-approval), and an environment fingerprint;
+  `raw_paths` re-typed from advisory `dict[str,str]` to typed CAS references (ADR-022). `schema_version`
+  bump.
+- **[ADR-010](adr-010-single-result-store-jobflow-maggma.md)** — the `additional_store` blob seam
+  (010:79-88) decided to **be** a content-addressed dedup store (disk-objectstore, SHA-256, hash-named),
+  implementing the ADR-022 hash-hit cache-and-clone gate as the **default** execution contract; the
+  ADR-012 AiiDA-default inconsistency resolved (the PostgreSQL premise is refuted by `sqlite_dos`,
+  which becomes the opt-in strict reference impl of the same caching contract the maggma default now
+  satisfies).
+- **[ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md)** — Flow factories kept as typed
+  building blocks but **composed by the ADR-023 planner/campaign controller above them**, not the
+  campaign brain; jobflow `Response(detour/replace)` promoted from error-recovery-only to a
+  first-class dynamic-branching primitive; MLIP screening/pre-relax/active-learning Flow patterns
+  (ADR-021) added, with high-throughput MLIP screening given an in-allocation Parsl/Dask home under
+  the inference backend.
+- **[ADR-012](adr-012-hpc-execution-jobflow-remote-aiida-optional.md)** — "exactly two backends / all
+  compute via `sbatch` by construction" (012:90-91,102-104) amended to admit a **third**, narrowly
+  carved in-process/GPU `MlipInferenceBackend` (inference only, never DFT, never bare-SSH compute), so
+  E1's "`sbatch` by construction" still holds for all file-code DFT/GW compute; `sqlite_dos` AiiDA
+  noted as the strict reference impl of the ADR-022 caching contract.
+- **[ADR-013](adr-013-multi-code-handoff-and-restart-validation.md)** — closed `HandoffArtifact` enum
+  (013:86,98-100) extended with ML artifacts (`MODEL_CHECKPOINT`, `TRAINING_DATASET`,
+  `PREDICTED_STRUCTURE_WITH_UNCERTAINTY`); the per-handoff checksum (013:128-132,230) re-rooted in the
+  ADR-022 global CAS (a hash compare against the content store); runtime `RestartValidation` demoted to
+  the **second** line of defense behind ADR-024's static pre-submission DAG type-check.
+- **[ADR-020](adr-020-reproducibility-and-golden-file-testing.md)** — byte-exact golden-file testing
+  (020:59-75,135-141) scoped to **deterministic deck generation only, not DFT/MLIP outputs**;
+  bitwise-vs-scientific conflation replaced with per-property scientific tolerances and a mandatory
+  environment fingerprint (ADR-009/022) on every comparison; ReFrame adopted as the scheduler-agnostic
+  HPC regression layer; ML-determinism strategy added (model-version pinning, checkpoint-hash golden
+  tests, GPU-inference tolerance classes). Paired with ADR-024 as its test-time complement.
+
 ---
 
 ## Provenance of this Index
 
-- Canonical ADRs: `adr-007` … `adr-020` in this directory (all dated 2026-06-03, all **Proposed**).
+- Canonical ADRs: `adr-007` … `adr-024` in this directory (all dated 2026-06-03, all **Proposed**).
+  ADR-021–024 are the SOTA / autonomous-workflow layer; ADR-008/009/010/011/012/013/020 carry
+  `Amendment (2026-06-03)` sections (see the [Amendments log](#amendments-log)).
 - Upstream (pre-redesign) ADRs referenced: [003](adr-003-ipc-boundary-design.md),
   [004](adr-004-editor-lsp-strategy.md), [005](adr-005-unified-configuration.md),
   [006](adr-006-unify-on-rust-tui.md).

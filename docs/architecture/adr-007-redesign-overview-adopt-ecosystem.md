@@ -15,7 +15,11 @@
 
 ## Context
 
-CrystalMath is a multi-code DFT manager (CRYSTAL23, VASP, Quantum ESPRESSO, YAMBO, phonopy):
+CrystalMath is a multi-code computational-materials manager. The original frozen taxonomy was a
+flat five-code list (CRYSTAL23, VASP, Quantum ESPRESSO, YAMBO, phonopy); the
+[Amendment (2026-06-03)](#amendment-2026-06-03-sota-alignment) below generalizes it to a *code-class*
+taxonomy in which DFT/file-codes are **one class** and MLIP/foundation calculators are a **peer
+class** (see [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md)). Concretely the codes are:
 today a Rust/Ratatui TUI (`src/`) talks over an IPC boundary ([ADR-003](adr-003-ipc-boundary-design.md))
 to a Python core (`python/crystalmath/`) exposed by `crystalmath-server`, with PyO3
 (`src/bridge.rs`) as the legacy transport being cut over to IPC ([ADR-006](adr-006-unify-on-rust-tui.md)).
@@ -86,13 +90,20 @@ on a coherent stack, and CrystalMath is reinventing every layer of it:
 
 **Adopt, don't reinvent.** Every CrystalMath facade collapses to *one default* grounded in the
 ecosystem stack above; the rest are demoted to genuinely-optional plugins behind a single stable
-seam, or deleted. The target architecture has exactly one of each layer:
+seam, or deleted. The target architecture has exactly one of each layer. *(Amended 2026-06-03 — the
+[Amendment](#amendment-2026-06-03-sota-alignment) below recasts the calculation layer so that **DFT
+is one `CalculatorStage`, not the center**, with MLIP/foundation calculators as a peer instance, and
+adds four new load-bearing layers — items 10–13.)*
 
 1. **One structure object** — pymatgen `Structure` / ASE `Atoms` (MSONable, round-trippable).
 2. **One per-code I/O seam** — the existing `CodeDeckGenerator`/`InputDeck` vocabulary
    (`decks/__init__.py`, locked in `CONTEXT.md`), re-implemented as **thin adapters over ASE
    FileIO/Socket calculators and pymatgen `InputSet`s** rather than hand-rolled POSCAR/d12/pw.in
    writers. `vasp/generator.py`, `_vendor/core/codes/`, and `quacc/potcar.py` collapse into it.
+   *(Amended 2026-06-03: `CodeDeckGenerator`/`InputDeck` is now the DFT-and-file-code specialization
+   of a more general `Structure → TaskDocument` **`CalculatorStage`** — see
+   [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) and item 10 below. The MLIP peer
+   (`MlipCalculatorStage`) emits zero files and POTCAR validation becomes DFT-only.)*
 3. **One workflow model** — jobflow `Flow`s, using atomate2/quacc recipes where they exist and a
    thin code-specific `Maker` for CRYSTAL23/YAMBO where they don't.
 4. **One canonical result store** — jobflow `JobStore` over maggma; default to a serverless local
@@ -112,6 +123,30 @@ seam, or deleted. The target architecture has exactly one of each layer:
 9. **One config resolver** — pydantic-settings (layered XDG-TOML + project-TOML + env) in the Python
    core; the Rust TUI and the Bash CLI read *resolved* values from it and never parse TOML
    independently, killing the socket-path mismatch ([ADR-003](adr-003-ipc-boundary-design.md) ⚠️).
+
+*The following four layers are added by the [Amendment (2026-06-03)](#amendment-2026-06-03-sota-alignment);
+they re-center the spine without contradicting items 1–9.*
+
+10. **One calculation abstraction** — a single `CalculatorStage` (`Structure → TaskDocument`), with
+    `DftCalculatorStage` (wrapping the item-2 deck generators) and `MlipCalculatorStage` (a thin
+    wrapper over an ASE `Calculator` keyed by a content-addressed checkpoint, emitting zero files) as
+    co-equal **instances**. DFT is one stage, not the center
+    ([ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md)).
+11. **One execution identity / CAS** — a canonical content-hash over the full closure (statepoint +
+    calculator/model + executable/lock + pseudopotential + parent hashes + env fingerprint) is the
+    **default execution gate**: hash-hit ⇒ cache-and-clone rather than re-run; raw artifacts are
+    backed by a disk-objectstore CAS. Promotes item-5's advisory `input_hash` and ADR-013's
+    per-handoff checksum into one enforced identity ([ADR-022](adr-022-content-addressed-execution-cache-replay.md)).
+12. **One agentic control plane + AI-provenance surface** — a planner/campaign controller *above*
+    jobflow that emits typed jobflow `Flow`s (item 3's factories remain the building blocks it
+    composes, never bypassed), exposed to LLM agents through a guarded MCP tool-server over the
+    item-7 stdio JSON-RPC transport with TUI-gated approval; agent/model/prompt/acquisition/approval
+    provenance folds into the item-5 schema and the item-11 hash
+    ([ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md)).
+13. **One static DAG validator** — `crystalmath validate` type-checks every ADR-013 handoff edge
+    *offline before submission*, extending ADR-016's "drift is a build failure, not a runtime error"
+    principle inward from the wire to the scientific DAG and demoting ADR-013's runtime
+    `RestartValidation` to a backstop ([ADR-024](adr-024-static-typed-workflow-dag-validation.md)).
 
 **The dependency-ordered ADR set this overview governs:**
 
@@ -222,12 +257,151 @@ SLURM-queue, editor screens). Named honestly as the "simplest thing that works" 
   emmet-style schemas; we own those, ideally contributing upstream.
 - **Two opt-in engines remain** (jobflow-remote default, AiiDA heavyweight), so the `ExecutionBackend`
   protocol must be genuinely stable — but this is *two behind one seam*, not five behind a facade.
+- **Four new layers (items 10–13) widen the umbrella** (Amendment 2026-06-03). Generalizing the
+  calculation layer to `CalculatorStage` reopens item-2 vocabulary; admitting an in-process/GPU MLIP
+  inference backend carves a *narrow non-sbatch exception* into ADR-012's "all compute via sbatch by
+  construction" invariant (inference only, never DFT); and the agentic control plane (item 12)
+  reintroduces non-determinism that the spine worked to eliminate — bounded by reusing the
+  explicit-gate posture (`allow_stub_execution`, `allow_restart_skew`) so agent output is always a
+  *proposed* typed `Flow` validated by items 12–13 and never executed unvalidated. These are detailed,
+  with citations, in the [Amendment](#amendment-2026-06-03-sota-alignment).
 
 ### Migration impact
 - Sequenced and trigger-gated (table above); steps 1–3 ship independently, 4–6 follow. Quality gates
   (the three CI lanes, synthetic-POTCAR fixtures, an extras matrix that exercises each `skipif` path) must
   stay green at each step. Issues tracked in `bd` (beads). No data migration is needed — there are zero
   users — so each store/transport swap is a cutover, not a dual-write.
+
+## Amendment (2026-06-03): SOTA alignment
+
+This amendment keeps the entire 007–020 spine intact and adds **four orthogonal layers** stacked on
+it, introduced by **ADR-021–024**. None of the locked decisions in items 1–9 is reversed. The
+reframing is that **DFT is one instance of a more general abstraction, not the abstraction itself**.
+Without this amendment the four new ADRs read as orphans outside the north star: the original
+nine-layer list and the frozen five-code taxonomy (007:18, cited downstream by
+[009](adr-009-canonical-data-model-emmet-pydantic-taskdocs.md),
+[011](adr-011-workflow-engine-jobflow-atomate2-quacc.md),
+[013](adr-013-multi-code-handoff-and-restart-validation.md),
+[020](adr-020-reproducibility-and-golden-file-testing.md)) enumerate exactly the layers the system
+owns, and the new ADRs introduce layers — ML calculation, content-addressing as first-class, agentic
+control, static validation — that those nine do not name.
+
+### What changes in the taxonomy
+
+The frozen five-code list becomes a **code-class** taxonomy:
+
+- **DFT / file-codes** (CRYSTAL23, VASP, Quantum ESPRESSO, YAMBO) and **phonopy** — file-emitting
+  stages that round-trip decks through a real executable; POTCAR/pseudopotential validation lives
+  here and *only* here.
+- **MLIP / foundation calculators** (e.g. MACE-MP-0, CHGNet, MatterSim, ORB, SevenNet) — a **peer
+  class**, not a sub-case of DFT. An MLIP run returns energy/forces/stress with **zero files**, as a
+  pure function of (statepoint, checkpoint hash, settings, library versions). Every such model ships
+  an ASE `Calculator`, so the universal boundary item 2 already named (the `SocketIOCalculator`
+  escape hatch) is exactly the seam — no new seam is invented.
+
+The keystone is **[ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md)**'s `CalculatorStage`: item
+2's `CodeDeckGenerator`/`InputDeck` is recast as the DFT-and-file-code specialization of a generic
+`Structure → TaskDocument` stage, with `MlipCalculatorStage` (a thin wrapper over an ASE `Calculator`
+keyed by a content-addressed checkpoint) as a co-equal peer. This composes cleanly because every
+existing seam already speaks the right vocabulary: the ASE `Calculator` boundary (item 2 / ADR-008),
+the MSONable round-tripping `TaskDocument` (item 5 / ADR-009), jobflow `Response(detour/replace)` for
+dynamic sub-DAGs (item 3 / ADR-011), and the `ExecutionBackend` protocol (item 6 / ADR-012).
+
+### The four new layers and how they slot onto the spine
+
+1. **[ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) — generalize the CALCULATION layer**
+   (items 2/3/5/6, i.e. ADR-008/009/011/012) so MLIPs are first-class. DFT loses its privileged
+   center; POTCAR validation becomes DFT-only; and an in-process/GPU inference backend joins
+   jobflow-remote/AiiDA under a **narrowly-carved non-sbatch exception** to ADR-012's
+   "all compute via sbatch by construction" invariant (inference only, never DFT). The TaskDocument
+   gains MLIP provenance (model + checkpoint hash, fidelity lineage, uncertainty with a method tag,
+   acquisition function, fine-tune parent), and the five common MLIP usage modes — pre-relax,
+   surrogate-screen, uncertainty-gated escalation, active learning, Δ-ML/fine-tune — map onto jobflow
+   `Response(detour/replace)`.
+
+2. **[ADR-022](adr-022-content-addressed-execution-cache-replay.md) — make the IDENTITY layer real.**
+   The 007–020 set *records* content addressing but never *enforces* it (item 5's `input_hash` is
+   advisory; ADR-013's checksum fires only per-handoff). ADR-022 promotes both into **one canonical
+   content-hash over the full closure** (statepoint + calculator/model + executable/lock +
+   pseudopotential + parent hashes + env fingerprint) and makes **hash-hit cache-and-clone the
+   default execution gate** — AiiDA's caching contract ported to the maggma path, with AiiDA's
+   `sqlite_dos` (server-free) profile as the strict reference implementation. This resolves the
+   internal 010/012 inconsistency (ADR-010 rejected AiiDA-default for needing PostgreSQL; ADR-012
+   already admits the lightweight `sqlite_dos` profile exists). Raw artifacts are backed by a
+   disk-objectstore CAS, and a **replay / env-fingerprint contract** (per-property scientific
+   tolerances, not byte-equality) closes the gap ADR-020 leaves open across heterogeneous HPC.
+   Crucially, ML and agentic nodes are **first-class cache participants**: a checkpoint bump
+   invalidates dependent surrogates; LLM/agent nodes are themselves un-cached, but their
+   deterministic child stages are cached.
+
+3. **[ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md) — add the CONTROL layer ABOVE jobflow.** A
+   planner/campaign controller emits jobflow `Flow`s (item 3's `Flow` factories remain the typed
+   building blocks the agent composes, **never bypassed**), exposed to LLM agents through a guarded
+   **MCP tool-server** over the item-7 stdio JSON-RPC transport, with TUI-gated elicitation approval.
+   It reuses the spine's explicit-gate posture (`allow_stub_execution`, `allow_restart_skew`) so
+   agent output is always a **proposed typed `Flow`** validated by ADR-016/024 and **never executed
+   unvalidated**. A generative `CandidateSource` (e.g. a diffusion structure generator) is pluggable;
+   AI provenance (model / prompt / agent identity / acquisition / approval) folds into the item-5
+   schema and the ADR-022 hash. This layer also fills the opening ADR-018 leaves — an LLM-diagnosis
+   step *above* the custodian catalogue when no `ErrorHandler` matches.
+
+4. **[ADR-024](adr-024-static-typed-workflow-dag-validation.md) — add the STATIC-VALIDATION layer.** It extends
+   ADR-016's "drift is a build failure, not a runtime error" principle inward from the wire to the
+   scientific DAG: `crystalmath validate` type-checks every ADR-013 `CodeHandoff` edge **offline,
+   before any submission** (artifact-type match, calculator/code compatibility, static
+   resource/parallelization constraints), demoting ADR-013's runtime `RestartValidation` from sole
+   guardian to **backstop**, and re-validating dynamically-materialized ML/agent sub-DAGs when they
+   are spawned via jobflow `Response.detour`.
+
+### Resulting coherent stack
+
+> agentic planner (ADR-023) → static-validated jobflow DAG (ADR-024 over ADR-011) →
+> content-addressed cache-gated `CalculatorStage`s (ADR-022 over ADR-021) → typed `TaskDocument`s
+> with full ML + AI + env provenance (ADR-009 revised) → one store and one CAS (ADR-010 revised).
+
+In this stack DFT, MLIP, and LLM steps are **uniform citizens**, and determinism is an **enforced
+execution contract on the default path**, not a test-side aspiration. The four ADRs are orthogonal:
+021 owns *what computes*, 022 owns *whether it re-computes*, 023 owns *who composes the DAG*, and 024
+owns *whether the DAG is well-typed before it runs*.
+
+### Amendment references
+
+- E. Batatia et al., "A foundation model for atomistic materials chemistry (MACE-MP-0)," *J. Chem.
+  Phys.* (2024), arXiv:2401.00096. — Canonical foundation-MLIP; DFT as one stage; source of Δ-ML.
+- B. Deng et al., "CHGNet as a pretrained universal neural network potential for charge-informed
+  atomistic modelling," *Nat. Mach. Intell.* 5, 1031 (2023), DOI:10.1038/s42256-023-00716-3.
+- J. Riebesell et al., "Matbench Discovery," *Nat. Mach. Intell.* (2025). — uMLIPs as DFT
+  pre-filters (F1 0.57–0.83), grounding the surrogate-screen mode of ADR-021.
+- A. M. Ganose et al., "Atomate2: modular workflows for materials science," *Digital Discovery*
+  (2025), DOI:10.1039/d5dd00019j. — MLIPs run via one `AseMaker`; precedent for `CalculatorStage`.
+- S. P. Huber et al., "AiiDA 1.0," *Scientific Data* 7, 300 (2020),
+  DOI:10.1038/s41597-020-00638-4, arXiv:2003.12476. — BLAKE2b node-hash caching with clone-on-hit;
+  the content-addressed execution contract ADR-022 adopts as default.
+- S. P. Huber, "Automated reproducible workflows and data provenance with AiiDA," *Nat. Rev. Phys.*
+  4, 367 (2022), DOI:10.1038/s42254-022-00463-1. — AiiDA 2.x disk-objectstore and server-free
+  `sqlite_dos` profiles, refuting ADR-010's PostgreSQL premise (ADR-022 reference impl).
+- P. Di Tommaso et al., "Nextflow enables reproducible computational workflows," *Nat. Biotechnol.*
+  35, 316 (2017), DOI:10.1038/nbt.3820. — Task-hash cache-and-resume as mainstream non-AiiDA prior
+  art for ADR-022.
+- S. Shanmugavelu et al., "Impacts of floating-point non-associativity on reproducibility for HPC
+  and deep learning applications," *SC24-W* (2024), DOI:10.1109/SCW63240.2024.00028,
+  arXiv:2408.05148. — Bitwise reproducibility is unachievable under parallel FP non-associativity;
+  the empirical basis for ADR-022's per-property tolerances over byte-equality.
+- I. Laguna, "Varity: Quantifying Floating-Point Variations in HPC Systems Through Randomized
+  Testing," *IEEE IPDPS* (2020), DOI:10.1109/IPDPS47924.2020.00070. — Identical inputs diverge
+  across compilers and CPU/GPU; motivates the env fingerprint on every TaskDocument.
+- cwltool reference implementation, `static_checker` module / `--validate`:
+  https://cwltool.readthedocs.io/en/latest/autoapi/cwltool/checker/index.html — Prior art for
+  ADR-024: whole-document source→sink type checking before execution.
+- C. Maydeu-Maymounkov, "Koji: Automating pipelines with mixed-semantics data sources,"
+  arXiv:1901.01908 (2019). — Recursive causal hashing over inputs+transformation, computable before
+  the resource exists; grounds ADR-022's closure hash including parent hashes.
+- C. Zhao et al. (MatterGen), "A generative model for inorganic materials design," *Nature* 639, 624
+  (2025), arXiv:2312.03687. — Reference diffusion generator; the pluggable `CandidateSource` of
+  ADR-023.
+- S. Soiland-Reyes, S. Leo et al., "Recording provenance of workflow runs with RO-Crate," *PLOS ONE*
+  19(9), e0309210 (2024), DOI:10.1371/journal.pone.0309210, arXiv:2312.07852. — W3C-PROV-aligned
+  portable provenance bundle that can carry ADR-024's validation result and ADR-023's AI provenance.
 
 ## References
 

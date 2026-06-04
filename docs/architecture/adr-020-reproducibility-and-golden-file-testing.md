@@ -58,6 +58,10 @@ packaging/CI matrix that ADR-017 stands up.
 
 ### 1. Golden-file deck regression with `pytest-regressions`
 
+> **Scope (sharpened by the 2026-06-03 amendment):** byte-exact golden-file testing applies **only
+> to deterministic deck/input generation** — a pure function of inputs. It is **never** applied to
+> DFT/MLIP *outputs*, which are not bitwise reproducible across heterogeneous HPC (see Amendment).
+
 Decks are deterministic, so test them by **full-file diff against a checked-in baseline**, not by
 substring assertion. Adopt `pytest-regressions` and assert every file in
 `InputDeck.files` plus the `potcar_symbols` list and `metadata` against a stored golden artifact,
@@ -115,7 +119,10 @@ hand-written stubs:
   from the default CI matrix**, runs one tiny real CRYSTAL23 SCF (the `TESTBED/mgo_test1` MgO deck)
   end-to-end on a self-hosted/macOS-arm64 runner to catch binary/toolchain rot that fixtures
   cannot. It is informational, not a required check, and rides the pixi-pinned compiled prefix that
-  ADR-017 stands up.
+  ADR-017 stands up. **The 2026-06-03 amendment moves this opt-in live-DFT layer onto ReFrame** (the
+  scheduler-agnostic HPC regression framework) so the same test can sweep MPI-rank / thread counts
+  and assert *per-property scientific tolerances* rather than ad-hoc pytest plumbing — see the
+  Amendment for the seam between pytest (§1–§2, deterministic) and ReFrame (live numerics).
 
 ### 4. Ratchet coverage on the matrix ADR-017 defines
 
@@ -133,12 +140,29 @@ prefix). This ADR adds the coverage discipline that runs *on* that matrix:
 
 ### 5. Reproducibility is content-pinned, not hoped
 
-Determinism (§2) plus golden files (§1) plus real-output parser truth (§3) make the deck→run→parse
-path **content-addressable**: the same structure and parameters always yield the same bytes, and the
-same output always yields the same `TaskDocument` (ADR-009) fields. This is the test-side complement
-to ADR-009's first-class provenance fields (input hash, code+version, content-addressed raw-file
-paths): provenance *records* what ran; this spine *proves* that what ran is reproducible. FAIR
-reproducibility (Wilkinson 2016) becomes a CI-enforced property, not a README aspiration.
+> **Corrected by the 2026-06-03 amendment.** The original framing below conflated two distinct
+> reproducibility regimes by calling the *entire* deck→run→parse path "content-addressable" as one
+> byte-exact test property. That holds only for the **deterministic ends** — deck generation and the
+> parse function — and **not** for the run in the middle, whose DFT/MLIP numerics are not bitwise
+> reproducible across compilers/MPI/BLAS/GPU/FMA. The amendment splits these into (a) byte-exact
+> golden tests on the deterministic ends and (b) **per-property scientific tolerances** plus an
+> **environment fingerprint** on the run. Read the two paragraphs below through that lens.
+
+Determinism (§2) plus golden files (§1) make the **deterministic ends** of the pipeline —
+deck generation (a pure function of inputs) and the parser (a pure function of an output file) —
+**content-addressable**: the same structure and parameters always yield the same deck bytes, and the
+same output file always yields the same `TaskDocument` (ADR-009) fields. This is byte-exact and CI-
+enforced.
+
+The **run itself is not** byte-reproducible across heterogeneous HPC, so the deck→run→parse path as
+a whole is reproducible only under **per-property scientific tolerances** (total energy, forces,
+stresses, band gaps) gated on a matching **environment fingerprint** (ADR-009/022) — see the
+Amendment. This is the test-side complement to ADR-009's first-class provenance fields (input hash,
+code+version, content-addressed raw-file paths) and to the content-addressed execution identity that
+[ADR-022](adr-022-content-addressed-execution-cache-replay.md) makes the default execution gate:
+provenance *records* what ran; this spine *proves* that what ran is reproducible within the regime
+appropriate to it. FAIR reproducibility (Wilkinson 2016) becomes a CI-enforced property, not a
+README aspiration.
 
 ## Consequences
 
@@ -168,6 +192,11 @@ reproducibility (Wilkinson 2016) becomes a CI-enforced property, not a README as
   and refreshed when a supported code's output format changes.
 - **The coverage floor adds friction** to large deletions until tests catch up; this is intended —
   it is the point of the ratchet.
+- **Per-property scientific tolerances are physics judgments, not constants** (Amendment): each
+  curated tolerance (energy, forces, stresses, gaps) must be tight enough to catch a real regression
+  yet loose enough to survive legitimate hardware/MPI/BLAS noise — real per-code domain work, and a
+  second test framework (ReFrame) alongside pytest. The payoff is that the determinism critique is
+  answered honestly rather than by a byte-equality assertion that cannot hold on real HPC.
 
 ## Alternatives Considered
 
@@ -190,6 +219,48 @@ reproducibility (Wilkinson 2016) becomes a CI-enforced property, not a README as
   deeper verification contract that ADR-018 (handler fixtures) and ADR-009 (schema truth) both
   depend on. Keeping it standalone lets those ADRs cite it directly while ADR-017 references it as
   the testing spine beneath its matrix.
+
+## Amendment (2026-06-03): SOTA alignment — four reproducibility regimes, not one
+
+The original Decision (§1, §5) called the whole `deck → run → parse` path "content-addressable" and
+golden-file-tested as a single byte-exact property. A SOTA review flagged that this **conflates
+bitwise reproducibility with scientific reproducibility** and does not confront the
+nondeterminism of real HPC execution (compiler, MPI, BLAS/LAPACK, GPU/CUDA, FMA/reduction order,
+thread/rank counts). This amendment splits the one claim into **four distinct regimes**, each with
+its own test instrument, and connects the spine to the content-addressed execution contract of
+[ADR-022](adr-022-content-addressed-execution-cache-replay.md).
+
+1. **Byte-exact (deterministic ends).** Deck/input generation and the output parser are pure
+   functions of their inputs and *are* bitwise reproducible. These keep the §1 golden-file
+   (`pytest-regressions`) and §3 canned-output-fixture treatment. This is the only regime where
+   `==`-on-bytes is a correct oracle.
+2. **Schema-exact (typed structure).** Every `TaskDocument` (ADR-009) must validate against its
+   pydantic schema and round-trip MSONable↔store losslessly. Tested by schema/round-trip property
+   tests (§2), independent of the numerical values inside.
+3. **Numerical (within-environment).** Given a **matching environment fingerprint** (ADR-009's new
+   `environment_fingerprint`: executable hash, pseudopotential/POTCAR hash, MPI/BLAS/LAPACK +
+   torch/CUDA versions, compiler+flags, thread/rank counts), a re-run reproduces scalar outputs to
+   a **tight, regime-appropriate tolerance**. This is the regime ADR-022's cache-and-clone relies
+   on: a content-hash hit asserts *the inputs and environment are identical*, so reuse is sound.
+4. **Scientific (cross-environment).** Across *different* environments the same physics must agree
+   only to **per-property scientific tolerances** (total energy, forces, stresses, band gaps — each
+   a documented physics judgment, not a global constant). This is asserted by the opt-in live layer,
+   now carried on **ReFrame** (the scheduler-agnostic HPC regression framework), which can sweep
+   MPI-rank/thread counts and assert per-property tolerances that ad-hoc `pytest` plumbing cannot.
+
+**Consequences of the split.** (a) Golden files are scoped to regimes 1–2 and never assert on raw
+DFT/MLIP numerics. (b) The `environment_fingerprint` becomes a required field on every run document
+(ADR-009 revision) and a component of the ADR-022 content hash — so "reproducible" is always
+qualified by the fingerprint it was measured under. (c) The §3 live smoke test is promoted from an
+informational `pytest` job to a ReFrame regression that is still off the default required matrix but
+gives real cross-environment numbers. (d) MLIP/foundation-calculator stages (ADR-021) enter the
+same four-regime discipline: their *deck-equivalent* inputs are byte-tested, their model checkpoint
+is content-addressed (ADR-022), and their predicted energies/forces get per-property tolerances like
+any other calculator.
+
+This amendment changes no positive claim of the original ADR; it makes each claim **true in the
+regime it actually holds**, and stops the spine from promising bitwise reproducibility of a quantity
+(a parallel DFT run) that no honest HPC system delivers.
 
 ## References
 
@@ -223,6 +294,8 @@ reproducibility (Wilkinson 2016) becomes a CI-enforced property, not a README as
 - **pytest-cov** / `coverage.py` — coverage measurement and `--cov-fail-under` ratchet; §4.
 - **pixi** (prefix.dev) — the bit-reproducible conda-forge/HPC environment that ADR-017 stands up
   and on which §3's live smoke test runs.
+- **ReFrame** (`github.com/reframe-hpc/reframe`) — scheduler-agnostic HPC regression-testing
+  framework; carries the amendment's cross-environment scientific-tolerance smoke layer (regime 4).
 
 ### In-repo
 
