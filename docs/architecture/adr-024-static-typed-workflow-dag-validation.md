@@ -7,6 +7,7 @@
 **Depends on:** [ADR-016](adr-016-wire-contract-codegen-no-drift.md) (the static-validation template — pydantic-as-source-of-truth → generated/checked artifact → CI failure), [ADR-013](adr-013-multi-code-handoff-and-restart-validation.md) (the typed `CodeHandoff` edge + `HandoffArtifact` enum this checker type-checks), [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) (the jobflow `Flow` whose `OutputReference` edges are walked), [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) (every `CalculatorStage` — DFT and MLIP — declares the typed input/output signature this pass reads)
 **Backstopped by:** [ADR-013](adr-013-multi-code-handoff-and-restart-validation.md) runtime `RestartValidation` gate (demoted from sole guardian to second-line backstop for values only knowable at run time)
 **Pairs with:** [ADR-020](adr-020-reproducibility-and-golden-file-testing.md) (revised — the test-time/physics complement; this ADR draws the crisp compile-time/test-time boundary)
+**Depends on (Amendment 2026-06-03):** [ADR-025](adr-025-campaign-acquisition-strategy.md) (the `AcquisitionStrategy`/`CampaignStrategy` whose uncertainty-gated escalation detours are the §5 open-detour points re-validated on materialization), [ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) (the trust-gate attribute — escalation policy / acceptance mode — an MLIP stage must declare in its typed signature for §3 to refuse an un-gated MLIP→publish edge), [ADR-027](adr-027-model-dataset-registry-lineage.md) (the content-addressed `TRAINING_DATASET`/`MODEL_CHECKPOINT` identity the §2 ML-artifact type-checks require)
 **Invoked by:** [ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md) (the `validate_workflow` MCP verb runs this pass on agent-proposed Flows before the `submit_campaign` gate)
 
 ## Context
@@ -273,6 +274,88 @@ submits an edge the checker cannot prove sound.
    under ADR-020's test suite, keeping the §6 boundary: 024 fixtures assert *structural* rejection,
    not physics.
 
+## Amendment (2026-06-03): consensus-review fixes
+
+A two-reviewer consensus pass surfaced one structural gap and several missing ML edges. The gap:
+024 as written proves a *submitted* Flow well-typed, but jobflow jobs are **arbitrary Python**
+(ADR-011), so a campaign can smuggle in a raw `@job` or a `Response(detour|replace)` sub-DAG that
+the static pass never typed. Without a run-time enforcement boundary, the static pass is *advisory* —
+trivially bypassable by any unsigned job. This amendment makes the guarantee real and extends the
+type-check to the ML edges ADR-021/026/027 introduce. It is **surgical**: it does not re-open the
+§2 proofs, the §4 demotion, or the §6 boundary; it states the enforcement boundary the original
+Decision left implicit and adds the ML-artifact cases the closed-enum checks must now cover.
+
+### A. Enforcement boundary — the executor rejects unsigned/unvalidated jobs (extends §1, §3)
+
+§1 establishes `crystalmath validate` as a pre-submission gate, but a static pass over a `Flow` is
+only *sound* if nothing can execute that the pass did not type. Because jobflow jobs are arbitrary
+Python, a raw `@job`, a hand-authored detour, or an agent-emitted sub-DAG could carry no validated
+signature and still reach the scheduler — making the static guarantee advisory rather than binding.
+
+**The executor MUST reject any stage that does not carry a validated, signed signature.** When
+`validate_flow` passes, it stamps each stage's typed `(inputs, outputs)` signature with a signature
+token (a content hash over the typed signature + the validation report, signed by the validator).
+`crystalmath submit` and every ADR-012 `ExecutionBackend` **refuse to queue a Flow or sub-DAG any of
+whose stages lacks a valid signature token** — a raw/detour job with no validated signature is
+rejected at the queue boundary, never silently executed. This is the run-time analogue of the §1
+pre-submission gate and the §5 on-materialization gate: the static pass decides well-typedness, and
+the executor *enforces* that only what the pass blessed can run. Without this boundary 024's
+guarantee is bypassable; with it, "validated" is a precondition the scheduler cannot skip. The single
+explicit, logged override (the `allow_*` escape hatch of §1/Alternative E) is the *only* way an
+unsigned edge reaches the queue, and it is recorded as such.
+
+### B. §2 proofs extend to ML artifacts (extends §2 proofs 1–2, lines 93–107)
+
+The closed-enum **artifact-type match** (proof 1) and the **`(source_code, artifact, converter)`
+compatibility** check (proof 2) now cover the ML artifacts ADR-021/026/027 add to the `HandoffArtifact`
+vocabulary — `MODEL_CHECKPOINT`, `TRAINING_DATASET`, and `PREDICTED_STRUCTURE_WITH_UNCERTAINTY`:
+
+- A stage that does not declare `MODEL_CHECKPOINT` in its outputs cannot source a `MODEL_CHECKPOINT`
+  edge; a fine-tune/training stage that requires a `TRAINING_DATASET` input cannot be fed a bare
+  `STRUCTURE`; an inference stage emitting `PREDICTED_STRUCTURE_WITH_UNCERTAINTY` must declare it.
+- **A fine-tune stage sourced from a `TRAINING_DATASET` that is not content-addressed (not an ADR-027
+  registry/CAS-resolved dataset identity) fails validation.** Proof 1's type-compatibility check is
+  thereby strengthened for ML edges: the dataset must resolve through ADR-027's `ModelIdentifier`-class
+  dataset identity over the ADR-022 CAS, so a training edge fed from a mutable, non-content-addressed
+  path is statically refused — the same closed-enum, decidable check as the DFT artifact edges.
+
+### C. Trust-gate attribute is part of an MLIP stage's typed signature (extends §3, lines 117–127)
+
+§3 requires every `CalculatorStage` to declare a typed `(inputs, outputs)` signature. **An MLIP stage
+on a trust-bearing path MUST additionally declare its ADR-025/026 trust-gate attribute — its
+escalation policy (ADR-025) and acceptance mode / applicability-domain gate (ADR-026) — as part of
+that typed signature.** `crystalmath validate` then *statically* refuses an **un-gated MLIP→publish
+edge**: an `MlipCalculatorStage` whose `PREDICTED_STRUCTURE_WITH_UNCERTAINTY` (or any
+trust-bearing surrogate output) flows toward a publish/commit sink without a declared trust-gate
+attribute is a validation failure, not a run-time surprise. This keeps the surrogate-trust *policy*
+(measured, per ADR-026; consumed at the escalation boundary, per ADR-025) out of LLM prompts and inert
+provenance strings and inside the typed signature the type-checker reads — making "is this surrogate
+trusted enough to publish?" a decidable, signed declaration rather than an asserted one. These
+attributes are pydantic, so they ride ADR-016's codegen-no-drift discipline like the rest of the
+signature.
+
+### D. ADR-025's uncertainty-gated escalation detours are the §5 open-detour points (extends §5)
+
+§5's "open detour points" — typed placeholders the ahead-of-time pass accepts and the
+on-materialization pass discharges — are **exactly** ADR-025's uncertainty-gated escalation detours.
+When ADR-025's `CampaignStrategy` consumes an ADR-026 `UncertaintyEstimate` and an OOD/applicability
+candidate crosses the escalation threshold, it emits a `Response(detour)` routing that candidate to
+DFT. That detour is materialized at run time and so is re-validated on materialization (§5): the
+on-materialization pass discharges the open-detour placeholder against the concrete escalation sub-DAG
+before its DFT jobs are queued. An OOD candidate must hit DFT and can never skip it — the static
+discipline survives ADR-025's adaptive, uncertainty-driven campaigns precisely because the detour it
+emits is re-typed and (per Amendment A) signature-enforced before execution.
+
+### Why (amendment rationale)
+
+These changes make static validation **enforceable** rather than advisory: the executor-rejects-
+unsigned-jobs boundary (A) closes the arbitrary-Python bypass that would otherwise let a raw or detour
+job run untyped, and the ML-edge extensions (B–D) ensure an **un-gated** MLIP→publish edge or a
+**non-content-addressed** training edge fails at *validate-time*, not after compute is spent. They
+consume the three new ADRs (025 campaign/acquisition policy, 026 measured surrogate trust, 027 model/
+dataset identity) without re-litigating any locked 024 decision — 024 merely type-checks and enforces
+the typed objects those ADRs define.
+
 ## References
 
 - cwltool reference implementation — `static_checker` module and the `--validate` option:
@@ -314,3 +397,15 @@ submits an edge the checker cannot prove sound.
   pass reads), [ADR-020](adr-020-reproducibility-and-golden-file-testing.md) (the test-time/physics
   complement; §6 boundary), [ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md) (the
   `validate_workflow` MCP verb that invokes this pass).
+- CrystalMath internal (Amendment 2026-06-03):
+  [ADR-025](adr-025-campaign-acquisition-strategy.md) (the pluggable scientific brain — typed
+  `AcquisitionStrategy.score` over an `UncertaintyEstimate` + `CampaignStrategy` loop with budget/
+  convergence/stopping and DFT-budget control; its uncertainty-gated escalation detours are the §5
+  open-detour points re-validated on materialization, Amendment D),
+  [ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) (measured-not-asserted
+  surrogate trust — `EvaluationHarness`, calibrated `UncertaintyEstimate`, OOD/applicability-domain
+  gate, escalation thresholds; supplies the trust-gate attribute an MLIP stage declares in its typed
+  signature, Amendment C),
+  [ADR-027](adr-027-model-dataset-registry-lineage.md) (navigable `ModelRegistry`/`DatasetRegistry`
+  over the ADR-022 CAS and the single unified `ModelIdentifier`; supplies the content-addressed
+  `MODEL_CHECKPOINT`/`TRAINING_DATASET` identity the §2 ML-artifact type-checks require, Amendment B).

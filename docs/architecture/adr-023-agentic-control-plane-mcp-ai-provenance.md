@@ -4,7 +4,7 @@
 **Date:** 2026-06-03
 **Deciders:** Project maintainers
 **Supersedes:** none — *amends* [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md)'s static-Flow-factory framing (the campaign brain moves above the factories; the factories stay) and [ADR-019](adr-019-delete-phase3-protocols-aspiration-layer.md)'s "decks + jobflow are the single answer to *how do I run a workflow*" claim (an agentic composition entry point is admitted above that answer)
-**Depends on:** [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) (the `make_*_flow` factories the agent composes and the jobflow `Response` detour/replace primitive it emits), [ADR-014](adr-014-ipc-boundary-stdio-jsonrpc-delete-pyo3.md) (the stdio JSON-RPC transport the MCP tool-server rides), [ADR-016](adr-016-wire-contract-codegen-no-drift.md) (wire-contract validation of the proposed-Flow schemas), [ADR-018](adr-018-error-recovery-custodian-handlers.md) (the custodian handler catalogue the LLM-diagnosis step sits above), [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) (the `CalculatorStage` — DFT and MLIP — the generative loop screens and validates against), [ADR-024](adr-024-static-typed-workflow-dag-validation.md) (the offline DAG type-checker that gates every proposed Flow before submission)
+**Depends on:** [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) (the `make_*_flow` factories the agent composes and the jobflow `Response` detour/replace primitive it emits), [ADR-014](adr-014-ipc-boundary-stdio-jsonrpc-delete-pyo3.md) (the stdio JSON-RPC transport the MCP tool-server rides), [ADR-016](adr-016-wire-contract-codegen-no-drift.md) (wire-contract validation of the proposed-Flow schemas), [ADR-018](adr-018-error-recovery-custodian-handlers.md) (the custodian handler catalogue the LLM-diagnosis step sits above), [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) (the `CalculatorStage` — DFT and MLIP — the generative loop screens and validates against), [ADR-024](adr-024-static-typed-workflow-dag-validation.md) (the offline DAG type-checker that gates every proposed Flow before submission), [ADR-025](adr-025-campaign-acquisition-strategy.md) (the pluggable `AcquisitionStrategy`+`CampaignStrategy` the `CampaignController` is *configured with* — campaign policy lives here, not in this ADR), [ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) (the measured-trust gate whose `UncertaintyEstimate`/OOD escalation threshold the MLIP-screen→DFT-validate step obeys), [ADR-027](adr-027-model-dataset-registry-lineage.md) (the unified `ModelIdentifier` resolving the agent/generative model identity in `AIProvenance` and the fetched/pinned MatterGen model)
 **Writes into:** [ADR-009](adr-009-canonical-data-model-emmet-pydantic-taskdocs.md) (AI provenance folded into the `ProvenanceDoc` schema), hashed by [ADR-022](adr-022-content-addressed-execution-cache-replay.md) (AI provenance becomes part of the content-address closure)
 
 ## Context
@@ -27,19 +27,22 @@ running job materializing new sub-DAGs from runtime evidence — but ADR-011 res
 gave the loop no first-class home (its Alternative B even denied high-throughput screening one). The
 campaign controller that decides *what to compose next* is missing.
 
-**The field has already built and validated this layer, and standardized its interface.** Agentic
-materials systems now drive real workflow engines in closed loops through Model Context Protocol (MCP)
-tool-servers: Catalyst-Agent (arXiv:2603.01311) and Pham et al. on the Aurora autonomous-laboratory stack
-(arXiv:2604.07681) are existence proofs of LLM agents submitting and steering materials calculations
-through MCP servers. SparksMatter (arXiv:2508.02956) and MASTER (arXiv:2512.13930 — reporting up to ~90%
-fewer simulations to reach a target) establish the architecture that makes this safe and efficient: the
-*planner* is separated from the *executable workflow* — the agent proposes a typed, inspectable plan; a
-deterministic engine executes it. On the generative side, MatterGen (Zeni et al., *Nature* 2025;
-arXiv:2312.03687) is the reference diffusion model that *proposes* novel structures conditioned on target
-properties — but its outputs are hypotheses, not results: they require DFT validation, which is precisely
-the screen→validate loop above. And on provenance, Kosmos (arXiv:2511.02824) shows that once an agent
-touches an artifact, *which* model, prompt, tool-call, agent identity, and human approval produced or
-modified it must travel *with* the artifact, or the result is unauditable.
+**The separation this layer requires — a planner that proposes, a deterministic engine that executes — is
+the established pattern, not a novelty.** The Model Context Protocol (modelcontextprotocol.io) standardizes a
+typed tool/elicitation vocabulary for exactly this kind of agent↔engine seam, and CrystalMath already speaks
+its transport (ADR-014's JSON-RPC-over-stdio was chosen *because* it is the LSP/MCP pattern). On the
+generative side, MatterGen (Zeni et al., *Nature* 2025; arXiv:2312.03687) is the reference diffusion model
+that *proposes* novel structures conditioned on target properties — but its outputs are hypotheses, not
+results: they require DFT validation, which is precisely the screen→validate loop above. And on provenance,
+the discipline an autonomous agent demands is plain: once an agent touches an artifact, *which* model,
+prompt, tool-call transcript, agent identity, and human approval produced or modified it must travel *with*
+the artifact, or the result is unauditable.
+
+> **Citation note (2026-06-03):** an earlier draft of this paragraph cited several agentic-materials papers
+> (Catalyst-Agent, Pham/Aurora, SparksMatter, MASTER, Kosmos) by arXiv ID. Those identifiers could not be
+> verified against the known-canonical set and have been removed rather than risk a fabricated or mislabeled
+> reference; the architectural argument stands on the planner/executor separation and the verified anchors
+> (MatterGen, jobflow, Matbench Discovery, the MCP spec) alone. See the Amendment below.
 
 **CrystalMath already has an un-guarded version of exactly the wrong shape.** `python/crystalmath/ai/service.py`
 is today a free-text Anthropic chat client (`ai/service.py:31` `AIService`, `:11` `from anthropic import Anthropic`)
@@ -78,6 +81,12 @@ above ADR-018's custodian catalogue, and first-class AI provenance on every arti
 
 ### 1. A campaign controller composes ADR-011 factories; it never builds raw flows
 
+> **Refined by Amendment §2 (2026-06-03).** The `CampaignController` is **configured with** an ADR-025
+> `AcquisitionStrategy` + `CampaignStrategy` and holds **no** embedded acquisition/convergence/stopping/
+> escalation policy; the §1 MLIP-screen→DFT-validate step obeys **ADR-026's** trust/OOD gate (an out-of-domain
+> candidate must hit DFT, never skip). This ADR keeps the *mechanism*; the *policy* lives in ADR-025 and the
+> *trust decision* in ADR-026.
+
 The new layer is `crystalmath.control` (a `CampaignController`). Its sole output is a **proposed jobflow
 `Flow`** assembled *only* from ADR-011's typed `make_*_flow` factories and from ADR-021 `CalculatorStage`s —
 it has no API to emit a raw `Job` or hand-written deck. Adaptive loops are expressed as the controller
@@ -95,6 +104,11 @@ called directly by `api.py`. It does **not** reopen ADR-011 Alternative B's reje
 execution still goes to the ADR-012 `ExecutionBackend`; the controller only decides *which Flows to build*.
 
 ### 2. A guarded MCP tool-server over the ADR-014 transport, with typed verbs only
+
+> **Superseded in part by Amendment §1 (2026-06-03).** The core is now a Python **Agent → proposed typed
+> Flow → TUI approval → ADR-024 validation → execution** seam; the MCP tool-server below is **one optional
+> adapter** over that seam, not the agent's only interface. The six-verb table remains the adapter's surface
+> and the typed-schema-only / no-free-text-deck / no-raw-shell guarantees still hold for the seam itself.
 
 The agent never sees Python objects or free text on the submission path. It sees an **MCP tool-server**
 (`crystalmath.control.mcp`) riding the [ADR-014](adr-014-ipc-boundary-stdio-jsonrpc-delete-pyo3.md) stdio
@@ -160,6 +174,12 @@ re-run.
 
 ### 6. AI provenance is first-class, folded into ADR-009 and hashed by ADR-022
 
+> **Superseded by Amendment §3–§4 (2026-06-03).** The record below is upgraded to **audit-grade**: it adds a
+> `transcript_cas_key` (the full redacted prompt/tool-call transcript stored in the ADR-022 CAS, not just a
+> hash) and a `redaction_policy_id`; `model_id`/`model_version` strings are replaced by an ADR-027
+> `ModelIdentifier`; and `acquisition_function: str` becomes a typed ADR-025 strategy reference. See
+> Amendment §3–§4 for the corrected `AIProvenance`.
+
 Every artifact an agent produces or modifies carries an `AIProvenance` record, added to ADR-009's
 `ProvenanceDoc`:
 
@@ -207,15 +227,16 @@ flexibility — the agent writes any DAG. *Why not:* it discards every safety pr
 `Job` bypasses ADR-008's `CodeDeckGenerator` (the agent could emit arbitrary deck bytes), bypasses ADR-013's
 typed handoff edges, and is not guaranteed to be ADR-024-checkable. Constraining the agent to *compose* the
 typed `make_*_flow` factories (§1) is what makes its output statically validatable and keeps ADR-011's typed
-building blocks load-bearing. The planner-separated-from-executable-workflow architecture (SparksMatter
-arXiv:2508.02956; MASTER arXiv:2512.13930) is precisely this constraint.
+building blocks load-bearing. The planner-separated-from-executable-workflow architecture — an agent that
+proposes a typed, inspectable plan that a deterministic engine executes — is precisely this constraint.
 
 **C. A custom JSON/REST agent API instead of MCP.** We could expose the verbs over a bespoke HTTP API. *Why
-not:* MCP is the converged standard the materials-agent literature already drives workflows through
-(Catalyst-Agent arXiv:2603.01311; Pham et al. arXiv:2604.07681), and ADR-014 *already* chose JSON-RPC over
-stdio *because it is the LSP/MCP pattern* (`adr-014…` title). Riding the existing transport with the MCP
-tool/elicitation vocabulary is strictly less new surface than a parallel REST stack, and gives us
-elicitation-based approval (§3) for free rather than reinventing an approval protocol.
+not:* MCP is a converged, documented standard for typed agent↔engine tool surfaces
+(modelcontextprotocol.io), and ADR-014 *already* chose JSON-RPC over stdio *because it is the LSP/MCP
+pattern* (`adr-014…` title). Riding the existing transport with the MCP tool/elicitation vocabulary is
+strictly less new surface than a parallel REST stack, and gives us elicitation-based approval (§3) for free
+rather than reinventing an approval protocol. (Per Amendment 1, MCP is one *optional adapter* over the
+Agent→proposed-Flow→approval seam, not the only entry point.)
 
 **D. Auto-apply LLM-proposed patches when no custodian handler matches (closed-loop self-healing).**
 Fully autonomous recovery. *Why not:* it reintroduces exactly the non-determinism and silent-mutation the
@@ -231,10 +252,13 @@ reference implementation while leaving enumeration/substitution/future-diffusion
 used for `RestartValidation`.
 
 **F. No control layer — leave campaigns as manual sequences of ADR-011 factory calls.** *Why not:* it leaves
-the active-learning / generative-screening loop (the highest-value, highest-compute-savings use case —
-MASTER reports up to ~90% fewer simulations, arXiv:2512.13930) with no home, exactly the gap ADR-011
+the active-learning / generative-screening loop (the highest-value, highest-compute-savings use case — an
+MLIP pre-filter lets the campaign spend scarce DFT budget only on the survivors, the regime where active
+learning earns its keep; Matbench Discovery, arXiv:2308.14920) with no home, exactly the gap ADR-011
 Alternative B left open. The screen→validate→retrain loop is genuinely *dynamic* (its shape depends on
 results) and cannot be a static factory composition; it needs a controller emitting `Response` detours.
+Per Amendment 1, that controller is *configured with* an ADR-025 strategy object rather than holding the
+acquisition/stopping policy itself.
 
 ## Consequences
 
@@ -246,8 +270,10 @@ results) and cannot be a static factory composition; it needs a controller emitt
 - **Agent output is safe by construction.** Every proposed Flow is composed from typed factories (§1), wire-checked
   by ADR-016, statically DAG-checked by ADR-024, and human-approved via MCP elicitation (§3) before a single
   job queues — the agent can never execute unvalidated, and never emits raw deck text or shell.
-- **Standardized, not bespoke.** Riding ADR-014's transport with MCP verbs aligns with the existence-proof
-  materials-agent stacks (Catalyst-Agent, Aurora) and adds *less* new surface than a parallel API.
+- **Standardized, not bespoke.** Riding ADR-014's transport with the MCP tool/elicitation vocabulary
+  (modelcontextprotocol.io) reuses a documented, converged standard and adds *less* new surface than a
+  parallel API — and, per Amendment 1, MCP is an *optional adapter* over the same Agent→proposed-Flow→approval
+  seam the TUI uses directly.
 - **Full auditability.** AI provenance (model/prompt/tool-call/agent/acquisition/approval) on every artifact
   (§6), folded into ADR-009 and hashed by ADR-022, means "which model and which human produced this result?"
   is always answerable — and a model/prompt change correctly invalidates downstream caches.
@@ -255,7 +281,7 @@ results) and cannot be a static factory composition; it needs a controller emitt
   failures no handler matches (§5), without reopening the silent-self-heal anti-pattern.
 - **Generative screening pays off the cache.** Active-learning loops re-evaluate near-identical structures;
   with ADR-022 caching the deterministic child stages (and only the agent node un-cached), the loop reuses
-  prior DFT/MLIP work — the regime where MASTER's compute savings are realized.
+  prior DFT/MLIP work — the regime where MLIP-pre-filtered active learning realizes its compute savings.
 
 ### Negative / Tradeoffs
 - **Bitwise agent replay is impossible.** Closed-model versions drift; the same prompt may yield a different
@@ -277,15 +303,24 @@ results) and cannot be a static factory composition; it needs a controller emitt
 ### Migration impact
 1. Add `crystalmath.control` (`CampaignController`) that composes ADR-011 `make_*_flow` factories and emits
    `Response` detours; implement the propose→MLIP-screen→DFT-validate→retrain coordinator over ADR-021
-   `CalculatorStage`s.
-2. Add `crystalmath.control.mcp` — the guarded MCP tool-server over the ADR-014 transport — exposing the six
-   typed verbs (§2); wire `submit_campaign` to MCP elicitation rendered by the Ratatui TUI.
+   `CalculatorStage`s. **Configure** the controller with an ADR-025 `AcquisitionStrategy` + `CampaignStrategy`
+   (no embedded policy) and route the screen→validate escalation through ADR-026's trust/OOD gate (Amendment
+   §2).
+1a. Add `crystalmath.control.agent` — the in-process **Agent → proposed typed Flow → TUI approval →
+   ADR-024 validation → execution** seam (Amendment §1). This is the core; it is testable with no MCP server
+   present.
+2. Add `crystalmath.control.mcp` as an **optional adapter** over the §1a seam (Amendment §1) — the guarded MCP
+   tool-server over the ADR-014 transport, exposing the six typed verbs (§2) to external MCP clients; the
+   approval gate is the seam's, reused, not a second submission path.
 3. **Delete/reframe** `python/crystalmath/ai/service.py`'s free-text `AIService`: its diagnosis capability moves
    behind the gated LLM-diagnosis step (§5); its parameter-suggestion capability moves behind typed
    `generate_deck` (§2). No un-gated free-text path remains.
-4. Add the `CandidateSource` protocol with a MatterGen reference implementation behind an optional extra (§4).
-5. Extend ADR-009's `ProvenanceDoc` with `AIProvenance` (§6) and include it in the ADR-022 content-address
-   closure; mark agent nodes un-cached, child stages cached.
+4. Add the `CandidateSource` protocol with a MatterGen reference implementation behind an optional extra (§4),
+   resolving MatterGen as a **fetched/pinned ADR-027 `ModelIdentifier`** (Amendment §4), not an ad-hoc import.
+5. Extend ADR-009's `ProvenanceDoc` with the **audit-grade** `AIProvenance` (§6 as corrected by Amendment
+   §3–§4: `transcript_cas_key` + `redaction_policy_id`, `ModelIdentifier`, typed `acquisition_strategy` ref)
+   and include it — transcript CAS key and all — in the ADR-022 content-address closure; mark agent nodes
+   un-cached, child stages cached.
 6. Slot the LLM-diagnosis fallback above the ADR-018 custodian catalogue, gated and never auto-applied (§5).
 
 ## References
@@ -297,25 +332,20 @@ results) and cannot be a static factory composition; it needs a controller emitt
 - Rosen, A. S., Ganose, A. M., et al. (2024). "Jobflow: Computational Workflows Made Simple." *Journal of Open
   Source Software* 9(93), 5995. DOI:10.21105/joss.05995. — `Response(detour/replace)` dynamic-DAG primitive the
   `CampaignController` emits for the adaptive loop (§1).
-- "Catalyst-Agent: an LLM agent driving catalysis workflows through an MCP tool-server" (2026),
-  arXiv:2603.01311. — Existence proof of an agent driving materials workflows through MCP servers in a closed
-  loop (motivates §2).
-- Pham, et al. (2026). Agentic control of the Aurora autonomous-laboratory materials workflow stack via MCP,
-  arXiv:2604.07681. — Existence proof of MCP-mediated agentic materials workflows (motivates §2).
-- "SparksMatter: a planner-agent architecture for materials discovery" (2025), arXiv:2508.02956. — Planner
-  separated from executable workflow; the architecture §1 adopts (agent proposes a typed plan, a deterministic
-  engine executes it).
-- "MASTER: multi-agent scientific workflow planning with up to ~90% fewer simulations" (2025),
-  arXiv:2512.13930. — Quantifies the compute savings of planner-separated agentic search; motivates the
-  screen→validate→retrain loop (§1) and the cache-participation argument.
-- "Kosmos: per-artifact AI provenance for autonomous scientific discovery" (2025), arXiv:2511.02824. — The
-  case for recording model/prompt/tool-call/agent/approval *with* each artifact; the basis for `AIProvenance`
-  (§6).
-- Anthropic. "Model Context Protocol (MCP) specification" (tools, elicitation). https://modelcontextprotocol.io/
-  — The tool-server + elicitation (form-mode approval) vocabulary §2–§3 layer over the ADR-014 transport.
-- Riebesell, J., et al. (2025). "Matbench Discovery." *Nature Machine Intelligence*. — uMLIPs as DFT
-  pre-filters (F1 0.57–0.83), the quantitative basis for the MLIP-screen step of the loop (§1; see also
-  ADR-021).
+- Model Context Protocol specification. https://modelcontextprotocol.io/specification — The tool-server +
+  elicitation vocabulary §2–§3 layer over the ADR-014 transport; the elicitation page is the basis for the
+  form-mode human-approval gate (§3).
+- Riebesell, J., Goodall, R. E. A., et al. (2024). "Matbench Discovery." arXiv:2308.14920. — uMLIPs as DFT
+  pre-filters on OOD discovery splits (F1 leaderboard ~0.57–0.82), the quantitative basis for the MLIP-screen
+  step of the loop (§1; see also ADR-021 and the measured-trust gate of ADR-026).
+
+> **Removed references (2026-06-03):** the prior draft cited "Catalyst-Agent" (arXiv:2603.01311), "Pham et al.
+> / Aurora" (arXiv:2604.07681), "SparksMatter" (arXiv:2508.02956), "MASTER" (arXiv:2512.13930), and "Kosmos"
+> (arXiv:2511.02824). None could be verified against the known-canonical set; several carried future-dated or
+> mislabeled identifiers and one ("MASTER, ~90% fewer simulations") an unverifiable quantitative claim. Per the
+> project's citation-integrity invariant these are deleted rather than reworded around a possibly-fabricated ID.
+> The architectural claims they supported (planner/executor separation; per-artifact AI provenance; MLIP-as-DFT-
+> pre-filter compute savings) are retained on the strength of the verified anchors above.
 - Depends on/amends: [ADR-009](adr-009-canonical-data-model-emmet-pydantic-taskdocs.md) (AI provenance in
   `ProvenanceDoc`), [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) (the composed factories; amends
   its static-factory framing), [ADR-014](adr-014-ipc-boundary-stdio-jsonrpc-delete-pyo3.md) (the MCP transport),
@@ -323,8 +353,174 @@ results) and cannot be a static factory composition; it needs a controller emitt
   [ADR-018](adr-018-error-recovery-custodian-handlers.md) (LLM-diagnosis above the catalogue),
   [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) (the MLIP/DFT `CalculatorStage`s the loop
   screens and validates against), [ADR-022](adr-022-content-addressed-execution-cache-replay.md) (AI provenance in
-  the hash; agent nodes un-cached, children cached), [ADR-024](adr-024-static-typed-workflow-dag-validation.md) (offline
-  DAG validation gating every proposed Flow).
+  the hash, now including the transcript CAS key; agent nodes un-cached, children cached),
+  [ADR-024](adr-024-static-typed-workflow-dag-validation.md) (offline DAG validation gating every proposed
+  Flow; its executor-rejects-unsigned-jobs boundary is what makes approval enforceable),
+  [ADR-025](adr-025-campaign-acquisition-strategy.md) (the `AcquisitionStrategy`+`CampaignStrategy` the
+  controller is configured with — *answers "what next / when to spend DFT budget"*),
+  [ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) (measured surrogate trust:
+  `EvaluationHarness`, calibrated `UncertaintyEstimate`, applicability-domain/OOD gate, escalation thresholds
+  — *answers "is the surrogate trustworthy enough to act on"*), [ADR-027](adr-027-model-dataset-registry-lineage.md)
+  (`ModelRegistry`/`DatasetRegistry` over the ADR-022 CAS and the single unified `ModelIdentifier` — *answers
+  "what exactly is this model/dataset and where did it come from"*).
 - CrystalMath internal: `python/crystalmath/ai/service.py:31` (`AIService`, the free-text LLM client reframed
-  into the guarded MCP server); `python/crystalmath/server/` (the ADR-014 JSON-RPC server the MCP tool-server
-  rides); `python/crystalmath/control/` (new — `CampaignController` + `control.mcp` tool-server).
+  into the guarded Agent + optional MCP adapter); `python/crystalmath/server/` (the ADR-014 JSON-RPC server the
+  MCP adapter rides); `python/crystalmath/control/` (new — `CampaignController` + `control.agent` core +
+  `control.mcp` optional adapter).
+
+## Amendment (2026-06-03): consensus-review fixes
+
+This amendment is **surgical**: it preserves the original Decision (a planner/campaign layer above the
+ADR-011 factories that emits *proposed, validated* Flows under human approval, with first-class AI
+provenance). It re-centers four things the two-reviewer consensus flagged as over-engineered or under-
+specified, and wires this ADR to the three new ADRs added this round (025/026/027). The locked decisions of
+ADR-011/021/022/024 are **consumed, not re-litigated**.
+
+The single principle behind all four fixes: *pull every implicit scientific-judgment policy out of LLM
+prompts and inert provenance strings and make it a typed, testable, pluggable object — then cross-reference
+it, do not re-embed it.*
+
+### 1. Re-center: the core is a Python **Agent → proposed typed Flow → TUI approval → ADR-024 validation → execution**. MCP is **one optional adapter** behind that seam, not the center.
+
+The original §2–§3 placed a closed-verb MCP tool-server at the architectural center. For a zero-user system,
+standing up a six-verb closed MCP server *as the primary surface* is over-engineering. The corrected shape:
+
+- **The seam is the core, and it is plain Python.** `crystalmath.control.agent` is an `Agent` whose only
+  output is a **proposed typed `Flow`** (composed from ADR-011 `make_*_flow` factories and ADR-021
+  `CalculatorStage`s, exactly as §1 specifies). That proposed Flow flows through one fixed pipeline:
+
+  ```
+  Agent.propose() → ProposedFlow
+       → TUI yes/no/edit approval (the §3 elicitation panel, rendered directly by the Ratatui TUI)
+       → ADR-024 static DAG validation  (+ ADR-016 wire check)
+       → executor (ADR-012), which rejects any unsigned/unapproved job per ADR-024's enforcement boundary
+  ```
+
+  This pipeline exists and is testable **with no MCP server present at all** — a local agent, a CLI driver,
+  or the TUI itself can drive `Agent.propose()` directly.
+
+- **MCP is demoted to an optional transport adapter over that same seam.** `crystalmath.control.mcp` is
+  *one* adapter that lets an *external* MCP client reach `Agent.propose()` and the approval pipeline; it adds
+  no policy and no second submission path. The six verbs of the original §2 table are retained as the
+  adapter's surface (they remain useful as a typed external API), but they are now described as
+  "the optional MCP adapter's verbs," not "the agent's only interface." The TUI approval gate (§3) is the
+  *same* gate whether the proposal arrives via the in-process Agent or via the MCP adapter — approval is a
+  property of the seam, not of MCP.
+
+- **Why:** removes the over-engineering (MCP-as-center with a single adapter for zero users) while keeping
+  every safety property — the proposal is *always* a typed Flow, *always* statically validated, *always*
+  human-approved before execution, regardless of transport. ADR-024's **executor-rejects-unsigned-jobs**
+  boundary (cross-referenced here) is what makes the approval gate enforceable rather than advisory: an
+  unapproved/unsigned Flow is rejected at execution, so no adapter — present or future — can bypass it.
+
+**Reads-as-superseding §2–§3:** wherever §2–§3 say "the agent never sees Python objects … it sees an MCP
+tool-server," read instead "the agent yields a proposed typed Flow into the in-process approval seam; an
+optional MCP adapter exposes that seam to external clients." The typed-schema-only, no-free-text-deck,
+no-raw-shell guarantees of §2 are unchanged and apply to the seam itself.
+
+### 2. Delegate campaign logic to **ADR-025**: the `CampaignController` is *configured with* a strategy; it holds no embedded acquisition/escalation policy.
+
+The original §1/§4 left the controller as the implicit holder of "what to propose next" and "when to spend
+DFT budget." That scientific-judgment policy is now a typed, pluggable object owned by **ADR-025**:
+
+- The `CampaignController` is **configured with** an ADR-025 `AcquisitionStrategy` (scores candidates over an
+  ADR-026 `UncertaintyEstimate`) **and** an ADR-025 `CampaignStrategy` (the loop's budget / convergence /
+  stopping rules and DFT-budget control). The controller *runs the loop*; it does **not** contain the
+  acquisition function, the stopping criterion, or any escalation threshold.
+- The **MLIP-screen → DFT-validate** step of §1 obeys **ADR-026's trust gate**, not an ad-hoc controller
+  threshold. A candidate that ADR-026's applicability-domain / OOD check flags as out-of-domain **must** be
+  escalated to DFT — it can never skip validation on a controller-local heuristic. The escalation boundary is
+  one-directional and explicit: §1's loop **consumes** ADR-026's `UncertaintyEstimate` + escalation threshold
+  at exactly the screen→validate boundary.
+- The `acquisition_function: str | None` field in the original §6 `AIProvenance` is **superseded** by a typed
+  reference to the ADR-025 strategy that selected the candidate (see §4 of this amendment for the record
+  shape); a free string is no longer the system of record for *which* acquisition policy ran.
+
+**Why:** moves the campaign brain to ADR-025 so the controller is *configured-with* a strategy rather than
+*being* the policy holder. This ADR keeps only the **mechanism** (composing factories, emitting `Response`
+detours, gating submission); the **policy** (acquisition/convergence/stopping/DFT-budget) lives in ADR-025
+and the **trust decision** in ADR-026.
+
+### 3. Make AI provenance **audit-grade**: store the actual prompt/tool-call **transcript** in the ADR-022 CAS, not just a hash.
+
+The original §6 recorded only a `prompt_hash`. A hash proves *that* a prompt was used but is useless for
+*auditing what the agent actually did* — you cannot review a decision you cannot read. Corrected:
+
+- `AIProvenance` carries a **`transcript_cas_key`** alongside `prompt_hash`. The full prompt + tool-call
+  transcript (the messages, the tool calls and their typed arguments, the model's responses) is written into
+  the **ADR-022 content-addressed store** and referenced by its CAS key. The `prompt_hash` remains for fast
+  equality/cache-invalidation; the `transcript_cas_key` makes the decision **reviewable**.
+- **Redaction policy (stated, not implied):** secrets and credentials (API keys, tokens, SSH material) are
+  **redacted before** the transcript is written to the CAS — redaction happens pre-hash, so the stored object
+  and its CAS key are over the redacted transcript. User-supplied structure/target data is retained (it is
+  scientific input, part of the audit trail). The redaction transform is itself recorded (a
+  `redaction_policy_id`) so a reviewer knows *what class* of content was removed. Nothing un-redacted is ever
+  written to the CAS.
+- The transcript CAS key is **folded into the ADR-022 content-address closure** for the agent node's
+  provenance exactly as `prompt_hash` was, so the audit record travels with the artifact and a changed
+  transcript correctly participates in cache identity.
+
+**Why:** "which model and which human produced this, and *what was actually said*" must be answerable from
+the store, not merely attested by a hash. This is the audit-grade upgrade the consensus required.
+
+### 4. Adopt the unified **`ModelIdentifier`** (ADR-027) for the agent/generative model identity, and fetch/pin MatterGen as an ADR-027 model.
+
+The original §6 used loose `model_id: str` + `model_version: str` strings. These are replaced by ADR-027's
+**single unified `ModelIdentifier`**, the same identity type used across 025/026/027:
+
+- `AIProvenance.model` is a `ModelIdentifier` (ADR-027) — it resolves the agent/generative model and its
+  pinned version through ADR-027's `ModelRegistry`, eliminating the free-string `model_id@version` and the
+  floating-"latest" risk the original §7 only forbade by convention.
+- The §4 **MatterGen** `CandidateSource` resolves MatterGen as a **fetched/pinned ADR-027 model** (a
+  `ModelIdentifier` into the `ModelRegistry` over the ADR-022 CAS), not an ad-hoc import or rev string. Its
+  checkpoint identity is therefore the same kind of object as every other model in the system, and a
+  checkpoint bump invalidates dependent caches through the normal ADR-022 closure.
+
+The corrected §6 record (superseding lines 167–168 and the `acquisition_function` string of the original):
+
+```python
+class AIProvenance(BaseModel):
+    model: ModelIdentifier          # ADR-027 — agent/generative model + pinned version, registry-resolved
+    prompt_hash: str                # fast equality / cache key for the exact prompt/template
+    transcript_cas_key: str         # ADR-022 CAS key of the redacted prompt+tool-call transcript (§3)
+    redaction_policy_id: str        # which redaction transform was applied before hashing (§3)
+    tool_call: str                  # which seam verb / adapter verb (§2, §1-of-amendment)
+    agent_identity: str             # which agent/role issued it
+    acquisition_strategy: StrategyRef | None  # ADR-025 strategy that selected the candidate (was a free str)
+    human_approval: ApprovalRecord  # who approved at which tier, when (§3)
+```
+
+**Why:** a single typed identity for every model/dataset (resolved through ADR-027) makes provenance,
+caching, and trust evaluation agree on *what exactly* a model is — no parallel string conventions to drift.
+
+### 5. Citation-integrity fixes (correctness invariant)
+
+Treated as a correctness invariant, not a stylistic note. The following changes were applied inline and in
+the References section:
+
+- **Removed** the five unverifiable/fabrication-risk references — "Catalyst-Agent" (arXiv:2603.01311),
+  "Pham et al. / Aurora" (arXiv:2604.07681), "SparksMatter" (arXiv:2508.02956), "MASTER" (arXiv:2512.13930,
+  whose "~90% fewer simulations" quantitative claim was likewise unverifiable), and "Kosmos"
+  (arXiv:2511.02824). Two were mislabeled/wrong-title and four were future-dated relative to the verifiable
+  record. Per the project rule, an unverifiable citation is **deleted**, not reworded around a possibly-
+  fabricated identifier; the architectural claims stand on the verified anchors.
+- **Corrected** the MCP reference to point at the **specification/elicitation** page
+  (modelcontextprotocol.io/specification) where the form-mode human-approval gate (§3) is defined, rather than
+  the bare site root.
+- **Anchored** the MLIP-pre-filter compute-savings claim on **Matbench Discovery** (Riebesell et al.,
+  arXiv:2308.14920; F1 leaderboard ~0.57–0.82) — a known-canonical source — rather than the removed "MASTER"
+  figure.
+- Retained the canonical anchors already present: **MatterGen** (Zeni et al., *Nature* 2025,
+  arXiv:2312.03687) and **jobflow** (Rosen et al., JOSS 2024).
+
+Verifiability tags for the citations now in this ADR: MatterGen — *canonical*; jobflow — *canonical*;
+Matbench Discovery — *canonical*; MCP specification/elicitation — *docs-url*. No *uncertain* citation
+remains.
+
+### Net effect on the Decision
+
+The Decision is unchanged in spirit and stricter in form: a Python **Agent yields a proposed typed Flow**;
+the **TUI approves**; **ADR-024 validates** and its executor **rejects unsigned jobs**; **ADR-022** hashes
+the closure **including an audit-grade transcript**; campaign **policy** lives in **ADR-025**, surrogate
+**trust** in **ADR-026**, model **identity** in **ADR-027**; and **MCP is one optional adapter** over the
+seam, no longer its center.

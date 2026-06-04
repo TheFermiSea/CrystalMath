@@ -277,7 +277,10 @@ serve as the canonical record for the ML, agentic, and determinism layers introd
 ADR set ([ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md),
 [ADR-022](adr-022-content-addressed-execution-cache-replay.md),
 [ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md),
-[ADR-024](adr-024-static-typed-workflow-dag-validation.md)). The original ADR is the canonical
+[ADR-024](adr-024-static-typed-workflow-dag-validation.md);
+later refined by [ADR-025](adr-025-campaign-acquisition-strategy.md),
+[ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md),
+[ADR-027](adr-027-model-dataset-registry-lineage.md) — see Amendment 2). The original ADR is the canonical
 *record*, but as written it lacked every field those layers must persist: model-checkpoint
 identity (for ADR-021/022 caching), uncertainty/acquisition (for active learning), AI provenance
 (for ADR-023), and an environment fingerprint (for ADR-020/022 replay comparability). Without
@@ -311,16 +314,17 @@ content hash is computed over, and the fields ADR-023's audit trail requires.
 
 ```python
 class MlProvenance(BaseModel):                  # populated for MlipTaskDoc (ADR-021)
-    model_uuid: str                             # stable identity of the model used
-    model_checkpoint_hash: str                  # content hash of the weights/checkpoint (ADR-022 cache key)
-    model_version: str | None = None            # registry digest (e.g. HF repo + revision), NOT multi-GB weights
-    registry_digest: str | None = None          # immutable pin of the model registry entry
-    training_set_lineage: list[str] = []         # dataset provenance edges for the checkpoint
-    fidelity_lineage: list[str] = []             # Δ-ML / multi-fidelity ancestry (which fidelities composed)
-    uncertainty: float | None = None            # ensemble/GP uncertainty for the prediction
-    uncertainty_method: str | None = None       # tag: how `uncertainty` was computed (ensemble | GP-variance | ...)
-    acquisition_function: str | None = None     # active-learning acquisition that selected this statepoint
-    fine_tune_parent: str | None = None         # uuid/hash of the parent checkpoint this was fine-tuned from
+    model: ModelIdentifier                      # the ONE unified model identity (ADR-027); see note below.
+                                                # Weights live ONCE in the ADR-022 CAS (model.weights_cas_key);
+                                                # identity is model.immutable_revision / registry digest, NOT the
+                                                # multi-GB weights. (Amendment 2 replaces the contradictory
+                                                # model_uuid/model_checkpoint_hash/model_version/registry_digest quad.)
+    training_set_lineage: list[DatasetRef] = []  # ADR-027 dataset_id Merkle-manifest refs (navigable, not str)
+    fidelity_lineage: list[DatasetRef] = []      # Δ-ML / multi-fidelity ancestry as ADR-027 navigable refs
+    uncertainty: UncertaintyEstimate | None = None  # ADR-026 estimate (method-tagged + calibration); see note
+    uncertainty_method: str | None = None       # legacy tag; trust semantics now decided in ADR-025/026 (see note)
+    acquisition_function: str | None = None      # active-learning acquisition that selected this statepoint (ADR-025)
+    fine_tune_parent: ModelRef | None = None     # ADR-027 parent-model DAG edge (navigable ref, not uuid/hash str)
 
 class AiProvenance(BaseModel):                   # populated when an LLM/agent produced/modified an input (ADR-023)
     model: str | None = None                     # LLM/agent model identity + version
@@ -357,12 +361,13 @@ class ProvenanceDoc(BaseModel):
 
 Rationale for each group:
 - **ML provenance** gives the active-learning loop (ADR-021) and the cache (ADR-022) what they need:
-  `model_checkpoint_hash` is a first-class ADR-022 cache key — a checkpoint bump must invalidate
-  dependent surrogates — and `uncertainty`/`uncertainty_method`/`acquisition_function` let
+  the model **identity** (its `immutable_revision` / registry digest, per the unified
+  `ModelIdentifier` of Amendment 2 / ADR-027) is a first-class ADR-022 cache key — a model-revision
+  bump must invalidate dependent surrogates — and `uncertainty`/`acquisition_function` let
   uncertainty-gated escalation and acquisition-driven selection persist their decisions.
   `uncertainty` is **always method-tagged** because an ensemble σ and a GP variance are not
-  comparable. Per ADR-022, the registry **digest** (HF repo + revision) is hashed, never the
-  multi-GB weights.
+  comparable. Per ADR-022, the registry **digest** (HF repo + revision) is the cache key, never the
+  multi-GB weights — which live once in the ADR-022 CAS under `model.weights_cas_key`.
 - **AI provenance** makes every LLM/agent-produced or -modified input auditable (ADR-023) and folds
   into the ADR-022 execution hash. Because closed-model versions drift, agent steps are **not
   bitwise-cacheable**: agent nodes are un-cached, but their deterministic child stages are cached.
@@ -383,6 +388,63 @@ disk-objectstore CAS with a decided hash algorithm and dedup contract). This is 
 per-handoff checksum a lookup into a global CAS rather than a one-off comparison, and what gives
 ADR-021's model checkpoints a place to live as content-addressed artifacts. MSONable round-tripping
 (009:149) and the maggma `additional_stores` model (ADR-010) are preserved.
+
+### Amendment 2 (2026-06-03): consensus-review fixes
+
+A two-reviewer consensus pass surfaced a latent **silent-wrong-cache** contradiction in the §C
+`MlProvenance` block and a set of inert lineage strings. This amendment makes **surgical
+clarifications plus one re-type inside the existing `schema_version "2"`** — there is **no further
+version bump** — and wires §C into the three new policy ADRs added this round:
+[ADR-025](adr-025-campaign-acquisition-strategy.md) (Campaign & Acquisition Strategy — the pluggable
+scientific brain: typed `AcquisitionStrategy` + `CampaignStrategy` with budget/convergence/stopping
+and DFT-budget control),
+[ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) (Trustworthy MLIP Evaluation &
+Applicability Domain — measured-not-asserted surrogate trust: benchmark harness, calibrated
+uncertainty, OOD/applicability-domain gate, escalation thresholds), and
+[ADR-027](adr-027-model-dataset-registry-lineage.md) (Model & Dataset Registry + Lineage — navigable
+registries over the ADR-022 CAS; the single unified `ModelIdentifier`).
+
+1. **Unify model identity on `ModelIdentifier` (ADR-027); kill the weights-vs-digest contradiction.**
+   The original §C carried a contradictory quad —
+   `model_uuid` / `model_checkpoint_hash` / `model_version` / `registry_digest` — whose line-315
+   comment ("content hash of the weights/checkpoint") **directly contradicted**
+   [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md):115 and
+   [ADR-022](adr-022-content-addressed-execution-cache-replay.md) §F: hashing multi-GB weights and
+   hashing a registry digest are **different identities**, and using one where the other is expected
+   is a silent-wrong-cache bug (a checkpoint that round-trips to the same bytes but a different
+   registry revision, or vice versa, mis-hits the cache). The quad is **replaced by a single
+   `model: ModelIdentifier`** field carrying
+   `{registry_uri, model_id, immutable_revision, weights_cas_key, code_package_version}` per ADR-027.
+   The decided semantics: **weights live exactly once in the ADR-022 CAS** under `weights_cas_key`;
+   **identity for caching is the `immutable_revision` / registry digest**, *not* the GB-scale weights.
+   This is the same principle already applied to `raw_paths` in §D.
+
+2. **Re-type the inert lineage strings into ADR-027 navigable registry references.**
+   `training_set_lineage` (009:318) and `fidelity_lineage` (009:319) were `list[str]` — opaque,
+   non-navigable. They are re-typed to `list[DatasetRef]`, where a `DatasetRef` resolves an ADR-027
+   `dataset_id` to a Merkle-manifest entry in the `DatasetRegistry`. `fine_tune_parent` (009:323) is
+   re-typed from a bare uuid/hash `str` to a `ModelRef` — an ADR-027 **parent-model DAG edge** into
+   the `ModelRegistry`. This mirrors the §D `raw_paths` → `CasRef` re-type: lineage stops being a
+   string you cannot follow and becomes an edge you can traverse.
+
+3. **Delegate uncertainty trust semantics to ADR-025/026.** Beside `uncertainty_method` (009:321),
+   note that the **trust semantics** — `calibration_method`, `in_domain`/applicability-domain
+   membership, and `escalation` thresholds — are **decided in
+   [ADR-025](adr-025-campaign-acquisition-strategy.md)/[ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md),
+   not here**. Accordingly `uncertainty` is re-typed from a bare `float` to an ADR-026
+   `UncertaintyEstimate`, which carries the method tag, calibration, and OOD/applicability-domain
+   signal as one object. `uncertainty_method` is retained as a legacy tag for back-compat but is
+   subsumed by `UncertaintyEstimate`. ADR-009 remains the **record** of the estimate; ADR-026 owns
+   *how it is measured and calibrated* and ADR-025 owns *how it drives acquisition/escalation*. The
+   one-directional coupling is explicit: ADR-025 consumes ADR-026's `UncertaintyEstimate` + escalation
+   threshold at the escalation boundary (an OOD candidate must hit DFT, never skip the surrogate
+   gate), and both resolve model identity through ADR-027's `ModelIdentifier`.
+
+These are clarifications plus one re-type **inside** the already-bumped `schema_version "2"`. No
+field is removed from the persisted schema in a way that changes the version contract: the
+replaced `MlProvenance` quad and the `str`/`float` lineage types had not shipped (this ADR is
+*Proposed*), so consolidating them onto `ModelIdentifier`/`DatasetRef`/`ModelRef`/`UncertaintyEstimate`
+is part of the same `"2"` definition.
 
 ### Integration thesis (why this stays coherent with 007-020)
 

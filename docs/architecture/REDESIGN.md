@@ -1,20 +1,23 @@
-# CrystalMath Redesign — Master Index (ADR-007 … ADR-024)
+# CrystalMath Redesign — Master Index (ADR-007 … ADR-027)
 
 **Status:** Proposed (the whole set)
 **Date:** 2026-06-03
 **Governing ADR:** [ADR-007 — Redesign Overview](adr-007-redesign-overview-adopt-ecosystem.md)
 
 This document is the single entry point to the free-rein redesign captured in ADR-007 through
-ADR-024. It states the north-star vision, lists every redesign ADR with its status and
+ADR-027. It states the north-star vision, lists every redesign ADR with its status and
 supersession, gives a dependency-ordered reading path, and narrates how the pieces fit. The
 normative content lives in the ADRs themselves; this index is a map, not a decision.
 
 ADR-007–020 are the original spine; **ADR-021–024 add a SOTA / autonomous-workflow layer** that
 re-centers the calculation seam on a code-agnostic `CalculatorStage` (DFT and MLIP/foundation
 calculators as peers), makes content-addressed execution a first-class enforced gate, adds an
-agentic control plane, and proves the whole DAG well-typed before submission. ADR-007 is amended to
-govern 008–024; ADR-008/009/010/011/012/013/020 carry `Amendment (2026-06-03)` sections recorded in
-the [Amendments log](#amendments-log) below.
+agentic control plane, and proves the whole DAG well-typed before submission. **ADR-025–027 add a
+trust/acquisition cluster** that pulls the three scientific-judgment policies ADR-021 left implicit
+out into typed, pluggable objects: *what the campaign should do next and when to spend DFT budget*
+(025), *whether a surrogate is trustworthy enough to act on* (026), and *what exactly a model/dataset
+is and where it came from* (027). ADR-007 is amended to govern 008–027; ADR-008/009/010/011/012/013/020
+carry `Amendment (2026-06-03)` sections recorded in the [Amendments log](#amendments-log) below.
 
 ---
 
@@ -89,12 +92,22 @@ no-ops. The redesign makes the decision.
 | [023](adr-023-agentic-control-plane-mcp-ai-provenance.md) | Agentic/LLM control plane — guarded MCP tool-server above jobflow, generative `CandidateSource`, first-class AI provenance | Proposed | none (amends 011 static-factory framing, 019 "single answer") | 011, 014, 016, 018, 021, 024 |
 | [024](adr-024-static-typed-workflow-dag-validation.md) | Static typed workflow/DAG validation — `crystalmath validate` type-checks the whole multi-code DAG offline before any submission | Proposed | none (extends 016 inward to the scientific DAG) | 016, 013, 011, 021 |
 
+**Trust / acquisition cluster (added 2026-06-03):** extracts the three scientific-judgment policies
+ADR-021 §4-5 left implicit into typed, pluggable objects; none reverses a locked decision.
+
+| ADR | Title (short) | Status | Supersedes | Depends on |
+|-----|---------------|--------|------------|------------|
+| [025](adr-025-campaign-acquisition-strategy.md) | Campaign & Acquisition Strategy — pluggable typed `AcquisitionStrategy` + `CampaignStrategy` (budget/convergence/stopping + DFT-budget control); the 023 controller is *configured-with* it | Proposed | none (extracts the campaign/acquisition *policy* 021 §4-5 / 023 §1,§4 left implicit) | 021, 026, 023, 011 |
+| [026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) | Trustworthy MLIP Evaluation & Applicability Domain — measured-not-asserted surrogate trust: `EvaluationHarness`, calibrated `UncertaintyEstimate`, OOD/applicability-domain gate, escalation thresholds | Proposed | none (decides the MLIP-trust *policy* 021 §4-5 left implicit; supplies the per-property tolerance/escalation contract 020 regime-4 gestures at) | 021, 027, 020 |
+| [027](adr-027-model-dataset-registry-lineage.md) | Model & Dataset Registry + Lineage — navigable `ModelRegistry`/`DatasetRegistry` over the 022 CAS; the single unified `ModelIdentifier` | Proposed | none (makes 009's lineage fields navigable; resolves 022's `model_version` to concrete weights) | 022, 009, 021 |
+
 **Supersession relationships to the pre-redesign ADRs (001–006):**
 
-- ADR-007 supersedes nothing; it is the umbrella that *governs* 008–024 and is consistent with the
+- ADR-007 supersedes nothing; it is the umbrella that *governs* 008–027 and is consistent with the
   ADR-006 direction (single Rust TUI over IPC, Python core as source of truth). Its 2026-06-03
   amendment widens the frozen five-code taxonomy to a **code-class** taxonomy (DFT/file-codes +
-  phonopy + MLIP/foundation as a peer class) and adds four load-bearing layers (021–024).
+  phonopy + MLIP/foundation as a peer class) and adds four load-bearing layers (021–024), with the
+  trust/acquisition cluster (025–027) extracting the scientific-judgment policies those layers expose.
 - **ADR-014 supersedes [ADR-003](adr-003-ipc-boundary-design.md)** — it keeps ADR-003's JSON-RPC
   decision but changes the transport from a UDS *listener* to a spawned-child *stdio* stream and
   fixes ADR-003's two named bugs (the `/tmp` socket-path divergence and the auto-start race).
@@ -145,6 +158,10 @@ flowchart TD
     A022["ADR-022 · Content-addressed<br/>execution / cache-replay"]:::sota
     A023["ADR-023 · Agentic control plane<br/>MCP + AI provenance"]:::sota
     A024["ADR-024 · Static DAG validation<br/>crystalmath validate"]:::sota
+
+    A025["ADR-025 · Campaign &<br/>Acquisition Strategy"]:::trust
+    A026["ADR-026 · Trustworthy MLIP eval<br/>+ applicability domain"]:::trust
+    A027["ADR-027 · Model/Dataset registry<br/>+ ModelIdentifier"]:::trust
 
     A007 --> A008
     A008 --> A009
@@ -199,11 +216,27 @@ flowchart TD
     A023 -. amends .-> A011
     A024 -. extends .-> A016
 
+    %% trust / acquisition cluster (025–027)
+    A021 --> A025
+    A026 --> A025
+    A023 --> A025
+    A011 --> A025
+    A021 --> A026
+    A027 --> A026
+    A020 --> A026
+    A022 --> A027
+    A009 --> A027
+    A021 --> A027
+    A025 -. configures .-> A023
+    A026 -. trust gate .-> A025
+    A027 -. identity .-> A022
+
     classDef existing fill:#e8e8e8,stroke:#888,color:#222;
     classDef overview fill:#ffe9b3,stroke:#d49a00,color:#222;
     classDef sci fill:#cfe8ff,stroke:#1f6fb2,color:#0a2540;
     classDef plat fill:#d6f5d6,stroke:#2e8b2e,color:#0a2a0a;
     classDef sota fill:#f3d6f5,stroke:#9b2e8b,color:#2a0a2a;
+    classDef trust fill:#ffd9c2,stroke:#cc5a1f,color:#2a140a;
 ```
 
 The same graph as an ASCII sketch:
@@ -240,6 +273,16 @@ The same graph as an ASCII sketch:
             │  CampaignController composes 011 factories; CandidateSource; AI provenance → 009 + 022 hash
      024 Static typed DAG validation — `crystalmath validate`            (needs 016,013,011,021)
                extends 016 inward to the science; 013 RestartValidation demoted to runtime backstop
+
+   TRUST / ACQUISITION CLUSTER (025–027; extracts the scientific-judgment policies 021 §4-5 left implicit):
+     027 Model & Dataset registry — the unified `ModelIdentifier`         (needs 022,009,021)
+            │  navigable registries over the 022 CAS; digest (not weight bytes) is identity → 022/026
+     026 Trustworthy MLIP eval + applicability domain                     (needs 021,027,020)
+            │  measured (not asserted) trust: EvaluationHarness, calibrated UncertaintyEstimate, OOD gate
+            │  → 025 reads {calibration, in_domain, benchmark} at the escalation boundary
+     025 Campaign & Acquisition Strategy — the pluggable scientific brain (needs 021,026,023,011)
+               typed AcquisitionStrategy + CampaignStrategy (budget/convergence/stopping + DFT budget);
+               the 023 CampaignController is CONFIGURED-WITH it — campaign policy lives here, not in 023
 ```
 
 **Recommended reading order:**
@@ -286,6 +329,23 @@ The same graph as an ASCII sketch:
    via 022, and is gated by 024). These four **amend** the spine (007/008/009/010/011/012/013/020)
    rather than extending it linearly: they re-center DFT as one calculator among peers, not the
    center.
+6. **Trust / acquisition cluster, in order:**
+   **[027](adr-027-model-dataset-registry-lineage.md)** →
+   **[026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md)** →
+   **[025](adr-025-campaign-acquisition-strategy.md)**. This cluster extracts the three
+   scientific-judgment policies ADR-021 §4-5 left as inert provenance strings and prompts into typed,
+   testable, pluggable objects. Read 027 first — it defines the single unified `ModelIdentifier` over
+   the ADR-022 CAS (digest, not weight bytes, is identity) that 025/026 both resolve model identity
+   through. Then 026 makes surrogate trust *measured, not asserted* (an `EvaluationHarness` on
+   Matbench-Discovery-style OOD splits, a calibrated `UncertaintyEstimate`, an applicability-domain /
+   OOD gate, escalation thresholds), so ADR-021 §5's `uncertainty` field becomes an ADR-026
+   `UncertaintyEstimate`. Finally 025 is the pluggable scientific brain — a typed `AcquisitionStrategy`
+   over an `UncertaintyEstimate` plus a `CampaignStrategy` loop with budget / convergence / stopping
+   and DFT-budget control — that the ADR-023 `CampaignController` is *configured-with* rather than
+   containing. The coupling is one-directional: 025 consumes 026's `UncertaintyEstimate` / escalation
+   threshold (an OOD candidate must hit DFT, never skip); both 025 and 026 resolve identity through
+   027. The cluster **delegates policy out of** 021/023 and re-litigates none of their locked
+   mechanism decisions.
 
 **Note on 014 ↔ 015.** These two genuinely co-need each other (the IPC boundary needs config to
 resolve the server invocation; config exposes itself over the IPC dispatch table via `config.get`).
@@ -403,6 +463,32 @@ orthogonal: 021 owns *what computes*, 022 owns *whether it re-computes*, 024 own
 well-typed before it runs*, and 023 owns *who composes the DAG* — and jobflow is thereby demoted from
 the campaign brain to a static-validated executable IR beneath a planner.
 
+Stacked beside that layer, a **trust / acquisition cluster** (ADR-025–027) makes the three
+scientific-judgment policies ADR-021 §4-5 left implicit into typed, pluggable objects the rest of the
+system *consumes* rather than re-implements — so no acceptance gate, escalation threshold, or model
+identity is ever an inert provenance string or an LLM-prompt sentence. ADR-027 defines the single
+unified **`ModelIdentifier`** over the ADR-022 CAS — `{registry_uri, model_id, immutable_revision,
+weights_cas_key, code_package_version}`, where the *digest, not the weight bytes, is identity* — and
+navigable `ModelRegistry`/`DatasetRegistry` that turn ADR-009's previously inert lineage fields into
+resolvable references; this is the one model-identity used everywhere (009's `MlProvenance`, 021's
+`MODEL_REGISTRY` row, 022's `scientific_reuse_key`, 023's `AIProvenance`). ADR-026 then makes surrogate
+trust **measured, not asserted**: an `EvaluationHarness` reports per-property metrics on
+Matbench-Discovery-style **out-of-distribution** splits (real universal-MLIP F1 0.57-0.82, corrected
+from the earlier optimistic 0.83), a calibrated `UncertaintyEstimate` (deep-ensemble baseline wrapped
+in distribution-free conformal prediction), and an explicit applicability-domain / OOD gate (`in_domain`),
+so ADR-021 §5's method-tagged `uncertainty` field *becomes* an ADR-026 object and the escalation rule
+is a testable policy — *trust the surrogate to skip-or-precede DFT iff (conformal interval width <
+per-property tolerance) AND `in_domain`, else escalate to DFT.* ADR-025 is then the pluggable
+**scientific brain**: a typed `AcquisitionStrategy.score` over an `UncertaintyEstimate` plus a
+`CampaignStrategy` loop owning budget / convergence / stopping and DFT-budget control, emitting
+ADR-011 `Response(detour/replace)` sub-DAGs — and the ADR-023 `CampaignController` is *configured-with*
+this strategy object rather than containing the campaign logic, so the agentic controller holds no
+embedded acquisition/escalation policy. The coupling is explicit and one-directional: 025 consumes
+026's `UncertaintyEstimate`/escalation threshold at the escalation boundary (an OOD candidate must hit
+DFT, never skip), and both 025 and 026 resolve model identity through 027 — the cluster delegates
+*policy* out of 021/023 and *identity* out of 009/022, re-litigating none of their locked mechanism
+decisions.
+
 The net effect is large-scale **deletion plus delegation**: ~3.3k LOC of bespoke SLURM/SSH, the
 984-LOC jobflow bridge, the 1,185-LOC PyO3 bridge, the `_vendor/` fork (33 files), the deprecated
 `tui/` package, the bespoke ADAPTIVE recovery, and the `protocols.py`/`high_level` "Phase 3" layer all
@@ -491,13 +577,44 @@ sections; none reverses a locked decision. Summary:
   HPC regression layer; ML-determinism strategy added (model-version pinning, checkpoint-hash golden
   tests, GPU-inference tolerance classes). Paired with ADR-024 as its test-time complement.
 
+### Round-3 amendments (2026-06-03): trust/acquisition cluster + citation-integrity pass
+
+The trust/acquisition cluster (ADR-025–027) was added this round to extract the scientific-judgment
+policies the SOTA layer exposed but left implicit, and a citation-integrity pass corrected the
+reference sets of ADR-021/022/023. None reverses a locked decision.
+
+- **ADR-025/026/027 added** as the trust/acquisition cluster (status **Proposed**); ADR-021 §4-5's
+  implicit surrogate-trust, campaign/acquisition, and model-identity policies are now consumed via
+  cross-reference (021's `uncertainty` field becomes an ADR-026 `UncertaintyEstimate`; 023's
+  `CampaignController` is *configured-with* an ADR-025 strategy; 009/021/022/023 resolve model
+  identity through ADR-027's single unified `ModelIdentifier`).
+- **020-vs-022 cache-hit contradiction resolved**: ADR-022 Tier-1 is renamed **`scientific_reuse_key`**
+  (governs *reuse*, excludes rank/thread/BLAS), Tier-2 is **`replay_hash`** (full environment identity,
+  governs *bitwise reproduction*); a Tier-1 hit with a Tier-2 mismatch is a legitimate reuse flagged
+  non-bitwise, superseding any ADR-020 phrasing that implied a hit asserts bitwise identity.
+- **ADR-023 campaign logic moved to ADR-025**: the `CampaignController` holds no embedded
+  acquisition/convergence/stopping/escalation policy; it is configured with an ADR-025 strategy object.
+- **Citation-integrity fixes** (per the project's no-fabrication invariant): Matbench Discovery F1
+  corrected from the wrong `0.57-0.83` to the real **`0.57-0.82`** across ADR-021/023/026
+  (Riebesell et al., arXiv:2308.14920); FLARE kept at the correct canonical arXiv:1904.02042 (npj
+  Comput. Mater. 2020). ADR-022 dropped the two future-dated fabrication-risk arXiv refs
+  (Bissuel/Uehlein) and the tangential Bazel-CI paper, anchoring the hermetic Merkle action-cache claim
+  to the **Bazel remote caching docs** (bazel.build/remote/caching) and the env-fingerprint/replay-hash
+  claim to canonical FP-non-associativity work (Shanmugavelu SC24-W arXiv:2408.05148; Laguna IPDPS20)
+  plus tool docs (pixi/conda-lock/OCI digests). ADR-023 removed five unverifiable future-dated agentic
+  citations (Catalyst-Agent, Pham/Aurora, SparksMatter, MASTER, Kosmos) and the unverifiable "~90%
+  fewer simulations" claim, retaining the architectural argument on the verified anchors (MatterGen,
+  jobflow, Matbench Discovery) and citing the **MCP elicitation spec page**
+  (modelcontextprotocol.io/specification) for the form-mode approval gate.
+
 ---
 
 ## Provenance of this Index
 
-- Canonical ADRs: `adr-007` … `adr-024` in this directory (all dated 2026-06-03, all **Proposed**).
-  ADR-021–024 are the SOTA / autonomous-workflow layer; ADR-008/009/010/011/012/013/020 carry
-  `Amendment (2026-06-03)` sections (see the [Amendments log](#amendments-log)).
+- Canonical ADRs: `adr-007` … `adr-027` in this directory (all dated 2026-06-03, all **Proposed**).
+  ADR-021–024 are the SOTA / autonomous-workflow layer; ADR-025–027 are the trust/acquisition cluster;
+  ADR-008/009/010/011/012/013/020 carry `Amendment (2026-06-03)` sections (see the
+  [Amendments log](#amendments-log)).
 - Upstream (pre-redesign) ADRs referenced: [003](adr-003-ipc-boundary-design.md),
   [004](adr-004-editor-lsp-strategy.md), [005](adr-005-unified-configuration.md),
   [006](adr-006-unify-on-rust-tui.md).

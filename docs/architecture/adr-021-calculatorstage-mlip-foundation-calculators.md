@@ -5,7 +5,7 @@
 **Deciders:** Project maintainers
 **Supersedes:** none (refactors and amends ADR-008's calculation-layer vocabulary; the 007-020 spine stays intact)
 **Depends on:** [ADR-008](adr-008-structure-and-deck-io-on-ase-pymatgen.md) (one `Structure` object + per-code deck seam over ASE/pymatgen), [ADR-009](adr-009-canonical-data-model-emmet-pydantic-taskdocs.md) (emmet-style versioned `TaskDocument` + lineage fields), [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) (jobflow `Flow`/`Response` as the one orchestration model), [ADR-012](adr-012-hpc-execution-jobflow-remote-aiida-optional.md) (the `ExecutionBackend` seam)
-**Consumed by:** [ADR-022](adr-022-content-addressed-execution-cache-replay.md) (the checkpoint hash this ADR introduces is a primary input to the canonical content hash), [ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md) (MLIP screening is the cheap inner loop an agentic planner composes), [ADR-024](adr-024-static-typed-workflow-dag-validation.md) (each `CalculatorStage`'s declared input/output type signature is what the static checker reads)
+**Consumed by:** [ADR-022](adr-022-content-addressed-execution-cache-replay.md) (the checkpoint hash this ADR introduces is a primary input to the canonical content hash), [ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md) (MLIP screening is the cheap inner loop an agentic planner composes), [ADR-024](adr-024-static-typed-workflow-dag-validation.md) (each `CalculatorStage`'s declared input/output type signature is what the static checker reads), [ADR-025](adr-025-campaign-acquisition-strategy.md) (consumes the MLIP mechanism + `UncertaintyEstimate` to decide *what to run next* and *when to spend DFT budget*), [ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) (owns the MLIP *trust policy*: calibration, applicability-domain gate, escalation thresholds, and the `UncertaintyEstimate` type this ADR's mechanism emits), [ADR-027](adr-027-model-dataset-registry-lineage.md) (owns the `ModelIdentifier` and the model/dataset registry this ADR's `MODEL_REGISTRY` row resolves to)
 
 ## Context
 
@@ -29,7 +29,7 @@ reorganized around them.** A foundation MLIP — MACE-MP-0 (Batatia et al. 2024)
 (Neumann et al. 2024) — is a *pre-trained model checkpoint* that, given a `Structure`, returns
 energy / forces / stress **in-process, on a GPU, in milliseconds, writing zero files.** Matbench
 Discovery (Riebesell et al. 2025) establishes the production use case: universal MLIPs are now
-*DFT pre-filters* with discovery F1 in the 0.57-0.83 range, screening millions of candidates so
+*DFT pre-filters* with discovery F1 in the 0.57-0.82 range, screening millions of candidates so
 that only the promising few reach a DFT verifier. The ecosystem CrystalMath already adopts has
 absorbed this: atomate2 (Ganose et al. 2025) runs *every* MLIP through a single `ForceFieldStaticMaker`/
 `AseMaker` that wraps an ASE `Calculator`, and quacc exposes the same models via a `method=` argument
@@ -110,12 +110,17 @@ class MlipCalculatorStage:                # a CalculatorStage peer of DftCalcula
         )                                  # energy/forces/stress; NO files written
 ```
 
-- The registry maps `model_id -> Calculator` factory keyed by a **content-addressed checkpoint
-  hash** — the digest of the model registry entry (e.g. the HuggingFace repo id + pinned revision,
-  *not* the multi-gigabyte weights themselves). MACE, CHGNet, SevenNet, MatterSim, and ORB each
-  ship an ASE `Calculator`; registering one is adding a `(model_id, factory, checkpoint_hash)`
-  row, not a new code seam. This realizes ADR-008's `SocketIOCalculator`/`FileIOCalculator` hatch
-  (`adr-008...:82-85`) for the calculator-that-is-a-model-checkpoint case.
+- A `MODEL_REGISTRY` entry **is an [ADR-027](adr-027-model-dataset-registry-lineage.md)
+  `ModelIdentifier` resolution**: the registry resolves a model's identity to an ASE `Calculator`
+  factory. The **digest, not the weight bytes, is the identity** — the content-addressed digest of
+  the model registry entry (e.g. the HuggingFace repo id + pinned revision), *not* the
+  multi-gigabyte weights themselves (cf. the corrected
+  `adr-009-canonical-data-model-emmet-pydantic-taskdocs.md:315`). MACE, CHGNet, SevenNet, MatterSim,
+  and ORB each ship an ASE `Calculator`; registering one is adding a registry entry that resolves a
+  `ModelIdentifier`, not a new code seam. This realizes ADR-008's
+  `SocketIOCalculator`/`FileIOCalculator` hatch (`adr-008...:82-85`) for the
+  calculator-that-is-a-model-checkpoint case. **Checkpoint acquisition / pin / verify and dataset
+  identity are decided in ADR-027**, not here; this ADR consumes the resolved `ModelIdentifier`.
 - The MLIP "deck" is a typed `MlipCalcSpec` (model id, dispersion/cutoff settings, dtype,
   device) — **config only, no file**. An MLIP run is a pure function of
   `(statepoint, checkpoint_hash, settings, library_versions)`, which is precisely the content key
@@ -143,7 +148,7 @@ factories, not a new engine:
 | Mode | Pattern | jobflow mechanism |
 |---|---|---|
 | **Pre-relax** | MLIP geometry relaxation feeding a DFT static/relax | static `Flow` edge (`OutputReference`) |
-| **Surrogate-screen** | MLIP filters N candidates; only the top-k reach DFT | static fan-out `Flow` (Matbench F1 0.57-0.83) |
+| **Surrogate-screen** | MLIP filters N candidates; only the top-k reach DFT | static fan-out `Flow` (Matbench F1 0.57-0.82) |
 | **Uncertainty-gated escalation** | run MLIP; if ensemble/GP variance exceeds a threshold, escalate to DFT | **`Response(detour)`** (FLARE GP-variance gate, Vandermause et al. 2020) |
 | **Active learning** | propose → MLIP-evaluate → label uncertain points with DFT → retrain | **`Response(detour/replace)`** loop |
 | **Delta-ML / fine-tune** | fine-tune a foundation checkpoint on DFT labels; emit a new checkpoint | **`Response(replace)`** emitting a new `model_id` (`MODEL_CHECKPOINT` artifact) |
@@ -159,9 +164,16 @@ promoted to a first-class calculation pattern. These dynamic detour points are e
 ADR-009's schema gains an `MlipTaskDoc` subclass and extends `ProvenanceDoc` so an ML result is as
 auditable as a DFT one:
 
-- `model_id`, `checkpoint_hash`, `model_version`, `training_provenance`
-- `uncertainty` (method-tagged — ensemble spread vs. GP variance are not interchangeable)
-- `acquisition_function` and `fine_tune_parent` (the parent checkpoint a Delta-ML run descends from)
+- `model: ModelIdentifier` — the single unified [ADR-027](adr-027-model-dataset-registry-lineage.md)
+  `ModelIdentifier` (carrying model id, pinned revision, content-addressed digest, and dataset
+  lineage), replacing the bespoke `model_id`/`checkpoint_hash`/`model_version`/`training_provenance`
+  fields with one resolved identity object
+- `uncertainty: UncertaintyEstimate` — the method-tagged
+  [ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) `UncertaintyEstimate`
+  (ensemble spread vs. GP variance are not interchangeable; the method tag and in-domain flag travel
+  with the number)
+- `acquisition_function` and `fine_tune_parent` (the parent `ModelIdentifier` a Delta-ML run
+  descends from)
 - `fidelity_lineage` — which MLIP/DFT rungs produced this result
 
 The `checkpoint_hash` is the load-bearing field: it is the content-address ADR-022 folds into the
@@ -170,6 +182,19 @@ result** automatically. GPU inference is *not* bitwise-reproducible (FMA contrac
 vendor BLAS), so the reproducibility key is `(statepoint + checkpoint_hash + tolerance_class)` and
 ADR-020's env fingerprint must record `torch`/CUDA versions plus per-property tolerances — never
 byte-equality on an MLIP result.
+
+**This ADR owns only the MLIP *mechanism*, not the policy that governs it.** The mechanism is the
+five usage modes (§4) and the method-tagged uncertainty field — now an
+[ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) `UncertaintyEstimate`. The
+**trust policy** — the calibration requirement, the escalation thresholds, the
+applicability-domain / `in_domain` OOD gate, and what it means to *accept* an MLIP result — is
+decided in **ADR-026**, not here. The **acquisition / campaign policy** — which candidates to
+evaluate, the DFT budget, and the convergence / stopping criteria — is decided in
+**[ADR-025](adr-025-campaign-acquisition-strategy.md)**. This ADR provides the mechanism those
+policies actuate; it does not re-litigate (or hard-code) either policy. The coupling is explicit
+and one-directional: at the escalation boundary, an out-of-domain candidate flagged by ADR-026 must
+hit DFT and may never be silently skipped — ADR-025's `AcquisitionStrategy` scores over the
+ADR-026 `UncertaintyEstimate`, and both resolve model identity through ADR-027's `ModelIdentifier`.
 
 ### 6. A third `ExecutionBackend` for in-process inference — a narrow, DFT-excluded exception
 
@@ -244,7 +269,7 @@ needed.
   (zero-file/in-process) are peers. Adding a foundation model is a registry row, not a new deck
   dialect — and the spine (008/009/011/012) is amended, not contradicted.
 - **The Matbench-Discovery workflow becomes first-class.** Surrogate-screen-then-verify, the
-  dominant production use of foundation models (F1 0.57-0.83), is a named Flow pattern (§4) running
+  dominant production use of foundation models (F1 0.57-0.82), is a named Flow pattern (§4) running
   on a queue-free inference backend (§6) — the MLIP inner loop runs at MLIP speed.
 - **MLIP results are as auditable as DFT results.** `MlipProvenance` (model id, checkpoint hash,
   uncertainty, acquisition, fine-tune parent) folds ML into ADR-009's provenance contract and seeds
@@ -306,7 +331,7 @@ needed.
   DOI:10.1038/s42256-023-00716-3. — Charge-informed universal MLIP wrapped as an ASE `Calculator`.
 - J. Riebesell, R. E. A. Goodall, P. Benner, et al., "Matbench Discovery — A framework to evaluate
   machine learning crystal stability predictions," *Nature Machine Intelligence* (2025).
-  arXiv:2308.14920. — Universal MLIPs as DFT pre-filters; discovery F1 0.57-0.83 — the empirical
+  arXiv:2308.14920. — Universal MLIPs as DFT pre-filters; discovery F1 0.57-0.82 — the empirical
   basis for the surrogate-screen pattern (§4).
 - A. M. Ganose, H. Sahasrabuddhe, M. Asta, et al., "Atomate2: modular workflows for materials
   science," *Digital Discovery* (2025). DOI:10.1039/d5dd00019j. — Runs MLIPs through one
@@ -343,3 +368,42 @@ needed.
   `adr-013-multi-code-handoff-and-restart-validation.md:86` (closed `HandoffArtifact` enum gaining
   `MODEL_CHECKPOINT`), `adr-020-reproducibility-and-golden-file-testing.md` (the ML-determinism /
   GPU-tolerance gap the `checkpoint_hash` and tolerance-class key fill).
+
+## Amendment (2026-06-03): consensus-review fixes
+
+A two-reviewer consensus pass surfaced that ADR-021, as originally written, quietly embedded three
+*scientific-judgment policies* — surrogate trust, campaign/acquisition strategy, and model identity —
+inside an ADR whose job is the calculation-layer *mechanism*. Three new ADRs added this round own
+those policy seams; this amendment **scopes 021 to the mechanism and wires it to consume them via
+cross-reference, reversing no decision**. The single principle: pull every implicit scientific
+judgment out of inert provenance strings and prompts and make it a typed, testable, pluggable object,
+then have the existing ADRs *consume* those objects rather than re-implement them.
+
+- **021 owns the MLIP *mechanism* only.** The five usage modes (§4), the `MlipCalculatorStage`, the
+  zero-file in-process backend (§6), and the method-tagged uncertainty *field* (§5) stay here. The
+  *policy* that reads that field is delegated:
+  - **[ADR-025](adr-025-campaign-acquisition-strategy.md) — Campaign & Acquisition Strategy**
+    answers "**what should the campaign do next, and when do I spend DFT budget?**": a pluggable
+    typed `AcquisitionStrategy.score` over an `UncertaintyEstimate` plus a `CampaignStrategy` loop
+    with budget / convergence / stopping and DFT-budget control. The agentic controller (ADR-023) is
+    *configured with* a 025 strategy object rather than containing the campaign logic.
+  - **[ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) — Trustworthy MLIP
+    Evaluation & Applicability Domain** answers "**is the surrogate trustworthy enough to act on?**":
+    measured-not-asserted trust via an `EvaluationHarness` on Matbench-Discovery-style OOD splits, a
+    calibrated `UncertaintyEstimate`, an applicability-domain / OOD (`in_domain`) gate, and the
+    escalation thresholds. §5's `uncertainty` field is now an ADR-026 `UncertaintyEstimate`.
+  - **[ADR-027](adr-027-model-dataset-registry-lineage.md) — Model & Dataset Registry + Lineage**
+    answers "**what exactly is this model/dataset and where did it come from?**": navigable
+    `ModelRegistry` / `DatasetRegistry` over the ADR-022 content-addressed store, defining the single
+    unified `ModelIdentifier` used everywhere. §2's `MODEL_REGISTRY` entry **is** an ADR-027
+    `ModelIdentifier` resolution; §5's provenance carries a `model: ModelIdentifier`. The digest, not
+    the weight bytes, is the identity (cf. corrected `adr-009...:315`).
+- **The coupling is explicit and one-directional.** ADR-025 consumes ADR-026's `UncertaintyEstimate`
+  and escalation threshold at the escalation boundary (an OOD candidate must hit DFT, never skip);
+  both 025 and 026 resolve model identity through 027's `ModelIdentifier`. 021 delegates *policy* to
+  025/026 and *identity* to 027 and re-litigates none of them.
+- **Citation-integrity fix.** The Matbench Discovery F1 upper bound is corrected from the wrong
+  `0.57-0.83` to the real **`0.57-0.82`** at every occurrence (§Context, §4 table, §Consequences,
+  References). No reference was added that is not already in the verified-canonical set
+  (Riebesell et al., Matbench Discovery, arXiv:2308.14920; Batatia et al., MACE; Deng et al., CHGNet;
+  Vandermause et al., FLARE; Ganose et al., atomate2; Rosen et al., jobflow; Larsen et al., ASE).

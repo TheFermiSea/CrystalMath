@@ -6,6 +6,7 @@
 **Supersedes:** none — *enforces and generalizes* [ADR-009](adr-009-canonical-data-model-emmet-pydantic-taskdocs.md) `input_hash` and [ADR-013](adr-013-multi-code-handoff-and-restart-validation.md) per-handoff checksum
 **Depends on:** [ADR-009](adr-009-canonical-data-model-emmet-pydantic-taskdocs.md) (emmet-style TaskDocuments + lineage fields `input_hash`/`parent_job_uuids`/`raw_paths`), [ADR-010](adr-010-single-result-store-jobflow-maggma.md) (the maggma `JobStore` + `additional_stores` blob seam), [ADR-013](adr-013-multi-code-handoff-and-restart-validation.md) (typed handoff edges whose checksum this ADR backs with a real store)
 **Participates with:** ADR-021 (the `CalculatorStage` abstraction whose runs this ADR caches; ML checkpoints are content-addressed artifacts), ADR-023 (agentic planner whose AI-provenance folds into the hash), ADR-024 (static DAG validation that re-validates dynamically materialized sub-DAGs)
+**Amended 2026-06-03 to consume:** ADR-025 (Campaign & Acquisition Strategy — DFT-budget/escalation boundary), ADR-026 (Trustworthy MLIP Evaluation — applicability-domain trust gate a cached MLIP number does not reuse), ADR-027 (Model & Dataset Registry — the unified `ModelIdentifier` folded into `scientific_reuse_key`). See **Amendment (2026-06-03)**.
 **Pairs with:** [ADR-020](adr-020-reproducibility-and-golden-file-testing.md) (revised) — golden-file/property testing is the *test-side* aspiration this ADR turns into an *enforced execution contract*; ADR-022 supplies the env-fingerprint/replay tier ADR-020 lacks
 
 ## Context
@@ -54,7 +55,8 @@ the hash *and* the outputs are valid (Di Tommaso et al., Nat. Biotechnol. 2017).
 re-init is idempotent (Adorf et al., Comput. Mater. Sci. 2018). Koji computes a **causal hash**
 recursively over inputs + transformation, computable *before* the resource exists (Maymounkov,
 arXiv:1901.01908). Bazel's remote execution keys a hermetic **Merkle action cache** on fully
-specified inputs (arXiv:2405.00796). AiiDA's serverless **disk-objectstore** (SHA-256 loose/packed,
+specified inputs (Bazel remote caching docs, bazel.build/remote/caching; see the 2026-06-03
+amendment §7). AiiDA's serverless **disk-objectstore** (SHA-256 loose/packed,
 tens of millions of files) is exactly the content-addressed raw-file backing `raw_paths` mirrors but
 never adopts (Huber, Nat. Rev. Phys. 2022).
 
@@ -64,7 +66,9 @@ under different MPI rank counts, OpenMP thread counts, GPU atomics, BLAS/LAPACK 
 contraction makes bitwise-identical results across heterogeneous hardware **unachievable**
 (Shanmugavelu et al., SC24-W 2024; Laguna *Varity*, IPDPS 2020). Reproducible *execution* therefore
 needs a full environment fingerprint — executable/lock digest, pseudopotential, BLAS/MPI/thread,
-compiler + flags (Bissuel et al., arXiv:2512.13826; Uehlein et al., arXiv:2604.25944). "Have I run
+compiler + flags (environment-fingerprint inputs anchored to pixi/conda-lock and OCI image digests;
+see the 2026-06-03 amendment §7, which struck the fabrication-risk references previously cited here).
+"Have I run
 this?" (cheap reuse) and "can I reproduce this elsewhere bit-for-bit?" (strict replay) are two
 different questions and need two different hashes.
 
@@ -173,7 +177,8 @@ Caching and replay are separated, because cross-hardware bitwise reproducibility
 - **Tier 2 — replay/env-fingerprint hash (`replay_hash`):** a strict bitwise/environment fingerprint
   recorded on **every** TaskDocument (the env fingerprint ADR-020 lacks), binding
   executable/container/lock digest, pseudopotential, **BLAS/LAPACK + MPI + OpenMP thread/rank counts
-  + compiler + flags + GPU/driver** (Bissuel 2025; Uehlein 2026). `replay_hash` is **not** an
+  + compiler + flags + GPU/driver** (the environment-fingerprint inputs anchored to pixi/conda-lock
+  and OCI image digests; see References and the 2026-06-03 amendment §7). `replay_hash` is **not** an
   execution gate — it is the answer to "were these two runs even comparable, and can I reproduce
   this bit-for-bit on the same stack?". Strict replay = `replay_hash` match **plus** per-property
   scientific tolerances (total energy ~1e-6 Ha, forces, stresses, band gaps) verified by a ReFrame
@@ -327,6 +332,149 @@ digest, not the bytes.
    reference, asserting identical hashes on shared closures (ADR-020/024 tests).
 6. Add the opt-in Workflow Run RO-Crate exporter (§7).
 
+## Amendment (2026-06-03): consensus-review fixes
+
+This amendment is **surgical**: it preserves the Decision and section structure above and resolves
+the specific defects two reviewers flagged. It does **not** re-open the locked decisions of §1–§7;
+it renames one key, adds one registry, makes one gate executable, and re-points a handful of
+identity and citation strings. New ADRs land alongside this round and are **consumed** here, never
+re-litigated:
+
+- **[ADR-025](adr-025-campaign-acquisition-strategy.md)** — Campaign & Acquisition Strategy:
+  the pluggable scientific brain. Typed `AcquisitionStrategy` + `CampaignStrategy` with
+  budget/convergence/stopping and DFT-budget control. Answers *"what should the campaign do next,
+  and when do I spend DFT budget?"*
+- **[ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md)** — Trustworthy MLIP
+  Evaluation & Applicability Domain: measured-not-asserted surrogate trust. Benchmark harness,
+  calibrated `UncertaintyEstimate`, OOD/applicability-domain gate, escalation thresholds. Answers
+  *"is the surrogate trustworthy enough to act on?"*
+- **[ADR-027](adr-027-model-and-dataset-registry-lineage.md)** — Model & Dataset Registry +
+  Lineage: navigable `ModelRegistry`/`DatasetRegistry` **over the ADR-022 CAS**, defining the single
+  unified `ModelIdentifier` used everywhere. Answers *"what exactly is this model/dataset and where
+  did it come from?"*
+
+### 1. The 020-vs-022 cache-hit-meaning contradiction is resolved by renaming Tier-1 (§4, lines 163–183)
+
+ADR-020 and this ADR previously disagreed on what a "cache hit" *means*. The split is now explicit:
+
+- **Tier-1 is renamed `scientific_reuse_key`** (was the overloaded "scientific-identity hash" sense
+  of `content_hash`):
+
+  ```
+  scientific_reuse_key = H(
+        canonical(statepoint)
+      ⊕ tolerance_profile_id        # NEW — names the per-property tolerance class (see §2 below)
+      ⊕ reuse_policy_id             # NEW — names the reuse policy (what is allowed to be reused)
+      ⊕ calculator_id ⊕ ModelIdentifier   # ADR-027 identity (replaces calculator_id+model_version)
+      ⊕ executable_digest ⊕ pseudopotential_or_basis_hash
+      ⊕ deck_bytes_hash ⊕ sorted(parent_scientific_reuse_keys) ⊕ workflow_version
+  )
+  ```
+
+  It **deliberately EXCLUDES rank count, thread count, and BLAS/LAPACK build.** It is the *reuse*
+  key: "have I already computed this science, to this tolerance class, under this reuse policy?"
+
+- **Tier-2 `replay_hash` is full environment identity.** It binds
+  **BLAS/LAPACK + MPI + OpenMP thread/rank counts + compiler + flags + GPU/driver** (plus
+  executable/container/lock digest and pseudopotential). It is the *environment* identity, not a
+  reuse key.
+
+- **A Tier-1 hit with a Tier-2 mismatch is a legitimate reuse**, flagged **non-bitwise** in
+  provenance (the `cache_clone` marker, §2 below). This is the canonical, decided meaning of "cache
+  hit" across ADR-020 and ADR-022: Tier-1 governs *reuse*; Tier-2 governs *bitwise reproduction*;
+  the two are never conflated. (This supersedes any ADR-020 phrasing implying a hit asserts bitwise
+  identity.)
+
+`content_hash` (§1) is retained as the umbrella term; where §1–§7 above say "the `content_hash` as
+reuse key," read **`scientific_reuse_key`**; where they say the strict env fingerprint, read
+**`replay_hash`**.
+
+### 2. ToleranceRegistry — the missing scientific-tolerance-class mechanism
+
+ADR-022 referenced "scientific-tolerance class" (§4, line 172) and "per-property tolerances"
+(Consequences) without ever defining where they live. **Add a `ToleranceRegistry`:**
+
+- It holds **named per-property abs/rel tolerance PROFILES** — at minimum **total energy, forces,
+  stress, band gap, and phonon** — each profile being a small typed record of `{abs, rel}` bounds
+  per quantity. A profile is referenced by **`tolerance_profile_id`**.
+- `tolerance_profile_id` is **folded into `scientific_reuse_key`** (§1 above), so two runs are only
+  reuse-equivalent if they were certified to the *same* tolerance class. Loosening or tightening a
+  profile mints a new `tolerance_profile_id` and therefore busts the relevant cache entries
+  deterministically — the same discipline `CACHE_VERSION` gives for code-behavior changes.
+- The registry is the **single home of the regime-4 tolerance the clone is certified within.** The
+  `cache_clone` provenance marker (§2, line 134) now records the `tolerance_profile_id` the clone
+  was certified under, so an auditor can read directly off the marker *what tolerance class* a reused
+  result is trusted to. The Tier-2 strict-replay tolerances (§4, line 178) are read from the **same**
+  registry, so caching and replay share one tolerance source of truth.
+
+### 3. The §2 cache gate is EXECUTABLE: a dynamic wrapper `@job` per calculator (§2, lines 120–141)
+
+§2 described the gate as prose ("the engine queries the store … rides `Response(detour/replace)`").
+That is not enforceable as written, because nothing makes downstream edges depend on the gate's
+decision. Make it real:
+
+- **Each calculator is a DYNAMIC WRAPPER `@job`.** The wrapper queries the ADR-010 `JobStore` by
+  `scientific_reuse_key` and returns **either**:
+  1. the cached `TaskDocument` (clone-on-hit, §2.3), **or**
+  2. `Response(replace=<calculator subflow>)` — the real calculator `Flow` materialized only on a
+     miss (jobflow `Response.replace`; Rosen et al., jobflow, JOSS 2024).
+- **Downstream `OutputReference` edges depend ONLY on the wrapper's output**, never on the inner
+  calculator job directly. Because jobflow resolves `OutputReference`s against whatever the wrapper
+  ultimately returns, the gate is *structurally* on the critical path: a hit short-circuits the
+  subflow and downstream consumers transparently read the clone; a miss materializes and runs the
+  subflow. The cache gate is therefore **executable graph structure, not documentation.**
+- The dynamically materialized subflow on a miss is re-validated by **[ADR-024](adr-024-static-typed-workflow-dag-validation.md)**; ADR-024's
+  executor-rejects-unsigned-jobs boundary is what makes a wrapper that emits `Response.replace` safe.
+
+### 4. ML-checkpoint identity uses the unified ADR-027 `ModelIdentifier` (§5, lines 191–195)
+
+The §5 ML-checkpoint bullet keyed on `calculator_id + model_version` / "model registry digest." That
+is **replaced by the single unified [ADR-027](adr-027-model-and-dataset-registry-lineage.md) `ModelIdentifier`.** Checkpoint
+acquisition, revision pinning, and identity (HF repo+revision vs local CAS key) are **decided in
+ADR-027**, not here. ADR-022 only consumes the `ModelIdentifier` as a closure input: a
+`ModelIdentifier` change still busts every dependent surrogate's `scientific_reuse_key`, exactly as
+`model_version` did, but the *meaning* of identity is now owned by one place.
+
+### 5. An MLIP-stage hit reuses the NUMBER, not the trust decision (relates §2, §5)
+
+A Tier-1 hit on an `MlipCalculatorStage` returns the cached **prediction** (energy/forces/stress).
+It does **not** reuse, and must never be read as reusing, the **trust decision** about whether that
+surrogate prediction is admissible. **[ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md)'s applicability-domain / OOD trust gate
+still applies on every consumption of a cached MLIP value.** The cache answers "what number did the
+surrogate produce for this statepoint?"; ADR-026 answers "may I act on that number, or must this
+candidate escalate to DFT?" An OOD candidate escalates to DFT regardless of a Tier-1 hit — the cache
+never launders an untrusted prediction into a trusted one.
+
+### 6. The AiiDA `sqlite_dos` path is a CONFORMANCE ORACLE, not a blind reimplementation (§6, lines 206–220)
+
+§6 is sharpened: the server-free `sqlite_dos` AiiDA path is the **conformance oracle** the maggma
+path is *tested against*, not a parallel reimplementation we hope matches. The contract is an
+executable assertion: **on shared closures, the maggma `scientific_reuse_key` and AiiDA's BLAKE2b
+node hash must produce identical hashes** (asserted in the ADR-020/024 test layer). AiiDA's
+caching+clone is treated as the reference semantics; any divergence is a maggma-path bug, surfaced by
+the oracle, not silently tolerated.
+
+### 7. Citation fixes (fabrication-risk references removed)
+
+Per the project's citation-integrity invariant, three references are replaced:
+
+- The two future-dated, fabrication-risk arXiv references — **Bissuel et al. arXiv:2512.13826
+  (2025)** and **Uehlein et al. arXiv:2604.25944 (2026)** — are **removed.** The Tier-2 `replay_hash`
+  claim ("reproducible execution requires full environment fingerprinting: compiler/MPI/BLAS/GPU")
+  is already supported by the two **canonical** FP-non-associativity references retained below
+  (Shanmugavelu et al., SC24-W 2024; Laguna *Varity*, IPDPS 2020). The environment-fingerprinting
+  *practice* is now anchored to **tool docs** rather than an uncertain paper: pixi/conda-lock
+  environment locking and container digests (see the tool references below).
+- The **Bazel-CI** reference (Zheng et al., "Does using Bazel help speed up CI builds?",
+  arXiv:2405.00796) is **replaced** by the canonical **Bazel remote caching documentation**
+  (`bazel.build/remote/caching`) for the §1 closure-completeness / hermetic-action-cache argument —
+  the docs are the authoritative source for "fully specified inputs enable safe reuse," and avoid
+  resting a load-bearing claim on a paper whose framing was tangential.
+
+The References section below is updated accordingly: the two future-dated arXiv entries and the
+Bazel-CI paper entry are struck and replaced with the Bazel remote caching docs URL and the
+ADR-025/026/027 cross-references.
+
 ## References
 
 - S. P. Huber, S. Zoupanos, M. Uhrin, L. Talirz, et al., "AiiDA 1.0, a scalable computational
@@ -355,14 +503,20 @@ digest, not the bytes.
 - P. Maymounkov, "Koji: Automating pipelines with mixed-semantics data sources," arXiv:1901.01908
   (2019). — Causal hash recursive over inputs + transformation, computable *before* the resource
   exists; the §1 parent-content-hash recursion and the §2 pre-execution gate.
-- H. Zheng, S. Mahmud, P. Devanbu, B. Vasilescu, et al., "Does using Bazel help speed up CI builds?,"
-  arXiv:2405.00796 (2024); bazel-remote Merkle action cache. — Hermetic Merkle action
-  caching/remote execution; fully specified inputs enable safe reuse — the closure-completeness
-  argument of §1.
-- D. Bissuel et al., "Reproducible Container Solutions for Materials Science," arXiv:2512.13826
-  (2025); F. Uehlein et al., "From Code to Figure: reproducible execution and environment
-  fingerprinting," arXiv:2604.25944 (2026). — Reproducible execution requires full environment
-  fingerprinting (compiler/MPI/BLAS/container); grounds the Tier-2 `replay_hash` of §4.
+- Bazel remote caching documentation, https://bazel.build/remote/caching (and Remote Execution API,
+  https://bazel.build/remote/rbe). — Hermetic Merkle action caching keyed on fully specified inputs;
+  fully specified inputs enable safe reuse — the closure-completeness argument of §1. *(Replaces the
+  prior Zheng et al. arXiv:2405.00796 Bazel-CI paper per the 2026-06-03 amendment §7: the docs are
+  the authoritative source for the action-cache contract.)*
+- Environment-fingerprinting practice (Tier-2 `replay_hash`, §4) is anchored to tool documentation
+  rather than an uncertain paper: **pixi** lockfiles (https://pixi.sh), **conda-lock**
+  (https://github.com/conda/conda-lock), and **OCI image digests** as the
+  executable/container/lock-digest inputs to `replay_hash`. The *scientific necessity* of the
+  fingerprint (results differ across compiler/MPI/BLAS/GPU stacks) is supported by the canonical
+  FP-non-associativity references immediately below (Shanmugavelu SC24-W; Laguna IPDPS20).
+  *(Replaces the prior future-dated, fabrication-risk arXiv references — Bissuel et al.
+  arXiv:2512.13826 and Uehlein et al. arXiv:2604.25944 — removed per the 2026-06-03 amendment §7
+  under the project's citation-integrity invariant.)*
 - S. Shanmugavelu, M. Taillefumier, C. Culver, O. Hernandez, M. Coletti, A. Sedova, "Impacts of
   floating-point non-associativity on reproducibility for HPC and deep learning applications,"
   *SC24-W (Workshops of SC)*, 2024. DOI:10.1109/SCW63240.2024.00028, arXiv:2408.05148. — Bitwise
@@ -378,7 +532,15 @@ digest, not the bytes.
   bundle exported in §7, carrying hashes, env fingerprints, and AI provenance.
 - A. S. Rosen, A. M. Ganose, et al., "Jobflow: Computational Workflows Made Simple," *Journal of Open
   Source Software* **9**(93), 5995 (2024). DOI:10.21105/joss.05995. — `Response(detour/replace)` as
-  the pre-execution hook the §2 cache gate rides.
+  the pre-execution hook the §2 cache gate rides, and `Response.replace` as the dynamic-wrapper
+  materialization mechanism of the 2026-06-03 amendment §3.
+- CrystalMath internal — companion ADRs this round, consumed (not re-litigated) by the 2026-06-03
+  amendment: `adr-025-campaign-acquisition-strategy.md` (pluggable `AcquisitionStrategy`/
+  `CampaignStrategy`; DFT-budget control — the escalation boundary §5 of the amendment defers to);
+  `adr-026-trustworthy-mlip-evaluation-applicability-domain.md` (calibrated `UncertaintyEstimate`,
+  applicability-domain/OOD trust gate — the trust decision a cached MLIP number does *not* reuse);
+  `adr-027-model-and-dataset-registry-lineage.md` (the unified `ModelIdentifier` folded into
+  `scientific_reuse_key`; registries over this ADR's CAS).
 - CrystalMath internal: `adr-009-canonical-data-model-emmet-pydantic-taskdocs.md:114,118,119,162,166`
   (`input_hash`/`parent_job_uuids`/`raw_paths` — the advisory fields §1/§3 promote);
   `adr-010-single-result-store-jobflow-maggma.md:52,83,104,119` (the `additional_store` blob seam
