@@ -191,7 +191,7 @@ calculation, when DFT should be **one stage among peers**. An MLIP/foundation-mo
 degenerate DFT run — it returns energy/forces/stress with **zero files** — yet under the original
 Decision the only seam available is `CodeDeckGenerator`/`InputDeck`, whose entire contract
 (`files`, `potcar_symbols`, deck staging, POTCAR validation) presumes a file-writing DFT code. This
-amendment ceeds the "center" to ADR-021 and carves the DFT-specific machinery down so a fileless
+amendment cedes the "center" to ADR-021 and carves the DFT-specific machinery down so a fileless
 MLIP run is never forced through deck-staging semantics. The four new ADRs slot onto seams this ADR
 already named; they **do not contradict** any decision above — they reframe it.
 

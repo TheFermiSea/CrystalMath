@@ -222,6 +222,8 @@ submits an edge the checker cannot prove sound.
 ## Consequences
 
 ### Positive
+
+
 - **Whole classes of misconfigured campaigns fail in seconds, not hours.** Wrong-artifact edges,
   incompatible code pairs, and NBANDS/KPAR/`SHRINK` mismatches are caught before *any* job is queued,
   closing the gap between ADR-013's per-edge runtime gate (which fires after the producer runs) and
@@ -240,6 +242,8 @@ submits an edge the checker cannot prove sound.
   special case but a declared signature the type system enforces.
 
 ### Negative / Tradeoffs
+
+
 - **Every `CalculatorStage` must declare a typed I/O signature (a hard precondition on ADR-021),
   including the ML/foundation stages.** This is real authoring work and a coupling to ADR-021's
   rollout — a stage with no declared signature cannot be validated, so the checker is only as complete
@@ -259,6 +263,8 @@ submits an edge the checker cannot prove sound.
   realized values of those same declarations.
 
 ### Migration impact
+
+
 1. Add `crystalmath.validate` with `validate_flow(flow) -> ValidationReport` and the three static
    proofs (§2); raise `WorkflowValidationError` enumerating all offending edges.
 2. Add the `crystalmath validate` CLI verb and wire `crystalmath submit` to run it as a mandatory

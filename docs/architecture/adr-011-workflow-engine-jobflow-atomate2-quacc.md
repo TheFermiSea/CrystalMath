@@ -106,13 +106,17 @@ backend; CrystalMath no longer owns a runner abstraction at all. Consequently:
 
 ### 4. Multi-code handoff is a typed edge between jobflow jobs, not a bespoke class
 
-The `CodeHandoff` dataclass (`integrations/atomate2_bridge.py:222`) is replaced by an
-`OutputReference` from a source job's `TaskDocument` to a target job's input, plus a **mandatory
-restart-file validation step** (a `@job` that checks the CRYSTAL `.f9`/`.f98` or VASP
-`WAVECAR`/`CHGCAR` exists, is non-empty, and matches the expected structure/checksum before the
-downstream job consumes it — addressing the stale-restart-file pitfall where a failed run's
-`WAVECAR` silently produces wrong results). The canonical VASP→YAMBO chain becomes a jobflow `Flow`
-of `[vasp_scf → validate_wavecar → p2y → yambo]` jobs.
+> **Note:** The original `CodeHandoff` dataclass approach described here is superseded by
+> ADR-013's `TaskDocument.OutputReference` approach plus validation jobs (e.g.,
+> `validate_wavecar`/`validate_restart`). See ADR-013 for the refined multi-code handoff
+> contract with typed `HandoffArtifact` edges and mandatory `RestartValidation`.
+
+The multi-code handoff is expressed as an `OutputReference` from a source job's `TaskDocument` to
+a target job's input, plus a **mandatory restart-file validation step** (a `@job` that checks
+the CRYSTAL `.f9`/`.f98` or VASP `WAVECAR`/`CHGCAR` exists, is non-empty, and matches the expected
+structure/checksum before the downstream job consumes it — addressing the stale-restart-file
+pitfall where a failed run's `WAVECAR` silently produces wrong results). The canonical VASP→YAMBO
+chain becomes a jobflow `Flow` of `[vasp_scf → validate_wavecar → p2y → yambo]` jobs.
 
 ### 5. Delete the stub-simulation scaffolding; keep only the gate
 
@@ -166,6 +170,8 @@ executors under the ADR-012 backend, not as the orchestration model.
 ## Consequences
 
 ### Positive
+
+
 - **One orchestration model.** Five runner hierarchies → one jobflow `Flow` + one
   `ExecutionBackend` seam. The job-state-enum / result-type fragmentation (six coexisting status
   types) collapses onto jobflow's job model and the ADR-010 `TaskDocument`.
@@ -181,6 +187,8 @@ executors under the ADR-012 backend, not as the orchestration model.
   maggma `JobStore` (ADR-010) natively; lineage edges (parent-job uuids) are first-class.
 
 ### Negative / Tradeoffs
+
+
 - **Hard dependency on jobflow + the ADR-012 backend** for *all* execution; the
   availability-detected "degrade to no-op" behavior is gone by design (this is the point).
 - **CRYSTAL23/YAMBO recipes are CrystalMath's to maintain**, since atomate2 doesn't cover them;
@@ -190,6 +198,8 @@ executors under the ADR-012 backend, not as the orchestration model.
   re-pointed at Flow factories or deleted alongside `runners.py`.
 
 ### Migration Impact
+
+
 1. Stand up Flow factories (`make_{relax,scf,bands,dos,eos,phonon,gw,bse}_flow`) that emit jobflow
    `Flow`s; for VASP/EOS/phonon delegate to atomate2 `Maker`s, for CRYSTAL23/YAMBO wrap the ADR-008
    deck seam in `@job` recipes.

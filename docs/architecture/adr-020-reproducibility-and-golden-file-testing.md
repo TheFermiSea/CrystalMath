@@ -278,8 +278,7 @@ regime it actually holds**, and stops the spine from promising bitwise reproduci
 - A. M. Ganose, J. Sahasrabuddhe, … A. S. Rosen, A. Jain et al., **"Atomate2: modular workflows
   for materials science"**, *Digital Discovery* (2025) — model for real-DFT-output parser fixtures
   (§3).
-- M. Uhrin, S. P. Huber, J. Yu, N. Marzari, G. Pizzi, and S. P. Huber, S. Zoupanos, M. Uhrin et
-  al., **"AiiDA 1.0, a scalable computational infrastructure for automated reproducible workflows
+- M. Uhrin, S. P. Huber, J. Yu, N. Marzari, G. Pizzi, S. Zoupanos, et al., **"AiiDA 1.0, a scalable computational infrastructure for automated reproducible workflows
   and data provenance"**, *Scientific Data* 7:300 (2020) — reproducibility-via-provenance context
   for why deterministic, content-pinned inputs matter (§1, §5).
 - M. D. Wilkinson, M. Dumontier, IJ. Aalbersberg et al., **"The FAIR Guiding Principles for

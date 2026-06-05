@@ -166,7 +166,7 @@ zero users there is no reason to preserve it.
 
 **AiiDA's provenance store as the single canonical store.** Rejected as the *default*; kept as opt-in.
 AiiDA is the gold standard for automatic, immutable, queryable provenance (Pizzi et al. 2016; Huber et
-al. 2020), but it requires a PostgreSQL server (and historically RabbitMQ) and an "everything is an
+al. 2020), but it historically required a PostgreSQL server, though `sqlite_dos` provides a lighter, opt-in path, and an "everything is an
 AiiDA node" model that fights a laptop-first TUI manager — too heavy to be the *only* store. The
 redesign captures provenance as first-class document fields (§4) so the lightweight path is still
 reproducible, and offers AiiDA behind the same `ExecutionBackend` seam for users who need the full

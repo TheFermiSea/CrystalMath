@@ -226,6 +226,8 @@ validation must be a pre-submission gate, consistent with the project's fail-lou
 ## Consequences
 
 ### Positive
+
+
 - **Eliminates the stale-WAVECAR silent-wrong-result failure mode** (PITFALLS #4) on the *default*
   path, not just under AiiDA. The single most consequential correctness bug class for a multi-code
   manager is closed by construction.
@@ -239,6 +241,8 @@ validation must be a pre-submission gate, consistent with the project's fail-lou
   is literally an edge between two documents in the canonical store, not a side-channel.
 
 ### Negative / Tradeoffs
+
+
 - **Per-code restart-validation knowledge must be encoded** (which files, which parallelization
   invariants) for each `(source, target, artifact)` triple. This is real work, but it is the
   *valuable* work the ecosystem (Steensen 2025; Huber 2021) identifies as the hard part of
@@ -251,6 +255,8 @@ validation must be a pre-submission gate, consistent with the project's fail-lou
   and recorded on the source document, so the handoff compares stored hashes rather than re-hashing.
 
 ### Migration impact
+
+
 - Move `CodeHandoff` from `integrations/atomate2_bridge.py:221` to `crystalmath.handoff`, re-typed
   against ADR-009 `TaskDocument`; make `validation` required and add `RestartValidation`.
 - Re-express the AiiDA-only SCF→bands wavefunction passing (`aiida_launcher.py:199-322`) and the

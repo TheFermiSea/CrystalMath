@@ -115,8 +115,8 @@ class ProvenanceDoc(BaseModel):
     code_name: str                             # e.g. "crystal23"
     code_version: str | None                   # parsed from output header
     structure_uuid: str                        # identity of the input structure
-    parent_job_uuids: list[str] = []           # lineage edges (AiiDA "input" links)
-    raw_paths: dict[str, CasRef] = {}          # typed content-addressed references (ADR-022 CAS;
+    parent_job_uuids: list[str] = Field(default_factory=list)  # lineage edges (AiiDA "input" links)
+    raw_paths: dict[str, CasRef] = Field(default_factory=dict)  # typed content-addressed references (ADR-022 CAS;
                                                # was advisory dict[str,str] — see Amendment below)
 ```
 
@@ -319,8 +319,8 @@ class MlProvenance(BaseModel):                  # populated for MlipTaskDoc (ADR
                                                 # identity is model.immutable_revision / registry digest, NOT the
                                                 # multi-GB weights. (Amendment 2 replaces the contradictory
                                                 # model_uuid/model_checkpoint_hash/model_version/registry_digest quad.)
-    training_set_lineage: list[DatasetRef] = []  # ADR-027 dataset_id Merkle-manifest refs (navigable, not str)
-    fidelity_lineage: list[DatasetRef] = []      # Δ-ML / multi-fidelity ancestry as ADR-027 navigable refs
+    training_set_lineage: list[DatasetRef] = Field(default_factory=list)  # ADR-027 dataset_id Merkle-manifest refs (navigable, not str)
+    fidelity_lineage: list[DatasetRef] = Field(default_factory=list)  # Δ-ML / multi-fidelity ancestry as ADR-027 navigable refs
     uncertainty: UncertaintyEstimate | None = None  # ADR-026 estimate (method-tagged + calibration); see note
     uncertainty_method: str | None = None       # legacy tag; trust semantics now decided in ADR-025/026 (see note)
     acquisition_function: str | None = None      # active-learning acquisition that selected this statepoint (ADR-025)

@@ -87,7 +87,7 @@ class ExecutionBackend(Protocol):
 ```
 
 Workflows are jobflow `Flow`s (per ADR-011); the backend submits the Flow, it does not build
-`sbatch` strings. There are **two** implementations for file-code DFT/GW compute, no more — a
+`sbatch` strings. There are **two implementations (with additional optional implementations such as MlipInferenceBackend permitted)** for file-code DFT/GW compute — a
 **third, narrowly-scoped `MlipInferenceBackend`** is admitted by the Amendment (2026-06-03) below
 for in-process/GPU foundation-calculator inference only (never DFT, never a bare-SSH compute
 channel); the two-backend wall and the E1 "`sbatch` by construction" guarantee remain in force for
@@ -185,6 +185,8 @@ jobflow/atomate2 stack ADR-011 commits to.
 ## Consequences
 
 ### Positive
+
+
 - **Deletes ~3.3k LOC of bespoke SLURM submission + ~0.8k LOC of vendored SSH transport**, plus
   the duplicated `SLURMJobState`/job-ID-regex/state-file machinery — the friction catalog's
   largest single reinvention (§2) — and removes the security-sensitive hand-rolled
@@ -206,6 +208,8 @@ jobflow/atomate2 stack ADR-011 commits to.
   {storage}×{engine}×{transport} cross-product of availability-detected runners (friction §9).
 
 ### Negative / Tradeoffs
+
+
 - **New core dependency** (`jobflow-remote`), younger and smaller-community than AiiDA/FireWorks;
   its API is still evolving. Mitigated by the thin adapter (the seam is ours; the engine is swappable).
 - **A managed daemon** is a new lifecycle the Python core must supervise (start/stop/health),
@@ -220,6 +224,8 @@ jobflow/atomate2 stack ADR-011 commits to.
   checksum/timestamp validation at the seam regardless of backend.
 
 ### Migration impact
+
+
 1. Land ADR-011 (jobflow/quacc workflow model + `JobStore`) first — this ADR depends on it.
 2. Introduce `python/crystalmath/execution/` with the `ExecutionBackend` protocol and
    `JobflowRemoteBackend`; configure beefcake2 workers (partitions, scratch, modules) via the

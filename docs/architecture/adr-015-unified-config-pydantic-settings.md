@@ -67,7 +67,9 @@ class CrystalMathSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CRYSTALMATH_",
         env_nested_delimiter="__",      # CRYSTALMATH_VASP__POTCAR_DIR
-        toml_file=[user_toml(), project_toml()],  # XDG user, then project
+        toml_file=[user_toml(), project_toml()],  # later entries win in TomlConfigSettingsSource;
+                                                  # toml_file=[user_toml(), project_toml()] yields
+                                                  # project TOML overriding user TOML (matching env > project > user)
     )
 
     @classmethod
@@ -76,7 +78,7 @@ class CrystalMathSettings(BaseSettings):
         # Documented precedence: env > project TOML > user TOML > package defaults.
         return (
             env_settings,
-            TomlConfigSettingsSource(settings_cls),  # project then user (toml_file order)
+            TomlConfigSettingsSource(settings_cls),  # processes toml_file with "later entries win"
             init_settings,                           # in-code defaults
         )
 ```

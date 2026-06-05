@@ -112,7 +112,7 @@ leaving **one** build backend (hatchling) and **one** lockfile story. This also 
 - **Extras matrix (pytest + CI).** Add a CI job that runs the suite under
   `{core-only, +vasp, +aiida, +quacc, +atomate2, all}` so every `skipif` seam is exercised in at
   least one cell instead of silently skipped everywhere. Implement as a GitHub Actions matrix that
-  installs each pixi feature/environment, plus Python `3.10/3.11/3.12` on `ubuntu` + `macos`.
+  installs each pixi feature/environment, plus Python `3.10/3.11/3.12` on `ubuntu` + `macOS`.
 - **Synthetic-POTCAR fixtures.** Ship tiny **dummy** pseudopotential files under a temporary
   `PMG_VASP_PSP_DIR` / `VASP_PP_PATH` (a pytest fixture) so `test_decks.py` /
   `test_vasp_generator.py` exercise the full deck/staging/POTCAR-assembly path **without
@@ -160,6 +160,8 @@ leaving **one** build backend (hatchling) and **one** lockfile story. This also 
 ## Consequences
 
 ### Positive
+
+
 - Removes the worst packaging pain: no `PYO3_PYTHON`, no embedded interpreter, no Python venv in
   every Rust CI job; each side builds/tests/releases on its own cadence and platform matrix.
 - A genuinely standalone, distributable Rust binary (the headline goal of ADR-006/ADR-014).
@@ -171,6 +173,8 @@ leaving **one** build backend (hatchling) and **one** lockfile story. This also 
   of silently skipping them; OIDC publishing removes release-token risk.
 
 ### Negative / Tradeoffs
+
+
 - **Two release pipelines** (cargo-dist + trusted-publish) instead of one, with a versioned IPC
   contract and version-skew handling needed at the handshake (ADR-014).
 - **Two onboarding paths** (binary + Python env, or pixi) — installer docs matter more.
@@ -180,6 +184,8 @@ leaving **one** build backend (hatchling) and **one** lockfile story. This also 
   (mitigated by the existing path filters).
 
 ### Migration impact
+
+
 1. Land ADR-014 (PyO3 deleted) — the precondition.
 2. Add `cargo-dist` config + a Homebrew tap; verify a standalone binary builds with no Python.
 3. Promote the needed `_vendor/` modules into `crystalmath`; delete duplicative `materials_api`;
@@ -187,7 +193,7 @@ leaving **one** build backend (hatchling) and **one** lockfile story. This also 
 4. Add `pixi.toml`/`pixi.lock` with features for `vasp/aiida/quacc/atomate2`; port shell scripts to
    pixi tasks.
 5. Add the pytest extras-matrix CI job, the synthetic-POTCAR fixture, and Python 3.10–3.12 ×
-   ubuntu/macos; switch the wheel release to PyPI trusted publishing.
+   ubuntu/macOS; switch the wheel release to PyPI trusted publishing.
 
 ## References
 

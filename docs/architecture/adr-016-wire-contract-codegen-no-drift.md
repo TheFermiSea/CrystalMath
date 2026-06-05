@@ -65,8 +65,11 @@ file is the contract: checked into the repo, the canonical artifact both languag
 
 Crucially, **the dispatch table itself is part of the contract.** Per [ADR-014](adr-014-ipc-boundary-stdio-jsonrpc-delete-pyo3.md)
 there is exactly one method registry; the export walks it and, for each `domain.verb` method, emits
-the `params` schema and the `result` schema. The generated Rust client then has a typed signature per
-method instead of `request_rpc(method, serde_json::Value) -> Value`.
+the `params` schema and the `result` schema. While the dispatch table (registry of `domain.verb` entries
+with `params`/`result` schemas) is part of the contract and the generator emits per-method typed signatures,
+those typed Rust client methods are thin wrappers that marshal arguments into the single generic boundary
+call `request_rpc(method, serde_json::Value) -> serde_json::Value` rather than introducing multiple distinct
+IPC calls. The generated signatures map to the single generic RPC boundary.
 
 ### 2. Rust codegen: `typify` in `build.rs`
 

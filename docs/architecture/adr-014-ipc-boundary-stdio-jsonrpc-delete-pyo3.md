@@ -158,6 +158,8 @@ team's chosen direction, so finishing the stdio cutover is the decisive path.
 ## Consequences
 
 ### Positive
+
+
 - **Standalone, distributable Rust binary becomes real** — no embedded interpreter, no `PYO3_PYTHON`,
   no Python in every Rust CI job. This unblocks the two-artifact packaging story (binary +
   pure-Python wheel) and `crystalmath-5nz`.
@@ -171,6 +173,8 @@ team's chosen direction, so finishing the stdio cutover is the decisive path.
   framing code (`framing.rs`) is already correct.
 
 ### Negative / Tradeoffs
+
+
 - **A second process to supervise.** Mitigated: parent-owned stdio lifecycle is *simpler* than the
   socket+auto-start it replaces; the child dies with the parent.
 - **JSON is verbose for large payloads** (structures, DOS grids). Mitigated: pass those by file
@@ -179,6 +183,8 @@ team's chosen direction, so finishing the stdio cutover is the decisive path.
   and is far lighter than a gRPC toolchain.
 
 ### Migration Impact
+
+
 1. Implement stdio spawn + `Content-Length` framing as the default `BridgeService`
    (`src/bridge_ipc.rs` becomes the only impl); keep UDS behind an explicit config opt-in.
 2. Flip the default Cargo build off `pyo3-bridge`; verify integration tests

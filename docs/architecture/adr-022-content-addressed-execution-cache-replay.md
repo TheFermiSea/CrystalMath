@@ -278,6 +278,8 @@ digest, not the bytes.
 ## Consequences
 
 ### Positive
+
+
 - **Content-addressing becomes an enforced execution contract, not metadata.** ADR-009's recorded
   `input_hash` and ADR-013's per-edge checksum are promoted into one hash that actually *gates and
   skips* execution — closing the largest determinism gap in the 007–020 set.
@@ -298,6 +300,8 @@ digest, not the bytes.
   provenance in a cross-WMS standard.
 
 ### Negative / Tradeoffs
+
+
 - **Canonicalization is now load-bearing and must be audited.** An under-broad closure causes silent
   *false hits* (wrong science reused across an incompatible binary/BLAS/MPI stack); an over-broad one
   causes *false misses*. This pushes real burden onto ADR-024's static canonicalizer and ADR-020's
@@ -318,6 +322,8 @@ digest, not the bytes.
   `schema_version` bump with migration.
 
 ### Migration impact
+
+
 1. Implement `crystalmath.identity.content_hash` (§1) over the canonicalized closure; **redefine**
    ADR-009 `input_hash` as this hash and add `replay_hash` + env-fingerprint fields; bump
    `schema_version`.
