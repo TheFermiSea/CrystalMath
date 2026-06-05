@@ -163,6 +163,9 @@ they re-center the spine without contradicting items 1–9.*
 | **[015](adr-015-unified-config-pydantic-settings.md)** | Configuration | three config mechanisms | pydantic-settings, layered XDG-TOML + project-TOML + env |
 | **[016](adr-016-wire-contract-codegen-no-drift.md)** | Wire contract | serde↔pydantic drift | pydantic → JSON-Schema → generated Rust serde types (typify) |
 | **[017](adr-017-packaging-testing-two-artifacts-pixi.md)** | Packaging, distribution & testing | build coupling, extras sprawl | two artifacts (cargo-dist binary + hatchling wheel); pixi dev env |
+| **[018](adr-018-error-recovery-custodian-handlers.md)** | Error recovery | bespoke ADAPTIVE recovery | custodian-style per-code handlers |
+| **[019](adr-019-delete-phase3-protocols-aspiration-layer.md)** | Delete Phase 3 aspiration layer | unimplemented Protocol layer | delete `protocols.py`/`high_level` stubs; keep type aliases |
+| **[020](adr-020-reproducibility-and-golden-file-testing.md)** | Reproducibility spine | shallow/fragmented testing | golden-file + property/metamorphic tests + real-output parser fixtures |
 
 The ordering is a true dependency chain: 008's I/O seam populates 009's documents; 009's schema is
 what 010's store persists; 011's `Flow`s write 009-documents into 010's store and submit to 012's
