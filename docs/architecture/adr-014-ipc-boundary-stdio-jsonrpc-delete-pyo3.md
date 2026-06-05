@@ -67,9 +67,7 @@ and tooling*, which is exactly where stdio JSON-RPC wins.
 
 ## Decision
 
-**Cut over to JSON-RPC 2.0 over a spawned-child stdio stream as the default and only supported
-transport, delete PyO3, and collapse the dual dispatch into one registry.** Concretely:
-
+**Cut over to JSON-RPC 2.0 over a spawned-child stdio stream as the default transport, delete PyO3, and collapse the dual dispatch into one registry.** Concretely:
 ### 1. Default transport: spawned-child stdio with `Content-Length` framing (the LSP/MCP pattern)
 
 The Rust TUI **spawns `crystalmath-server` as a child process** and speaks JSON-RPC 2.0 over the
