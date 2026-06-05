@@ -1,5 +1,7 @@
 # Integration Guide: CLI + TUI
 
+> **Warning: Historical / superseded.** This document predates the ADR-007–027 redesign and describes the pre-redesign integration layer that the redesign replaces. Authoritative direction: [ADR-008](adr-008-structure-and-deck-io-on-ase-pymatgen.md), [ADR-010](adr-010-single-result-store-jobflow-maggma.md), [ADR-012](adr-012-hpc-execution-jobflow-remote-aiida-optional.md) and [REDESIGN.md](REDESIGN.md). Kept for background only.
+
 This guide explains how the CrystalMath CLI and TUI tools work together, their complementary roles, and integration patterns.
 
 > **Direction (ADR-006, 2026-05-31):** The project is unifying on a single

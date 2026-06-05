@@ -1,5 +1,10 @@
 # Database Migration Guide
 
+> **⚠️ Historical / superseded.** This document predates the ADR-007–027 redesign and describes the
+> homegrown SQLite result store that the redesign replaces. Authoritative direction:
+> [ADR-010](adr-010-single-result-store-jobflow-maggma.md) and [REDESIGN.md](REDESIGN.md). Kept for
+> background only.
+
 This document describes the database schema evolution for the CRYSTAL-TUI project and provides guidance for migrating existing databases.
 
 ## Overview

@@ -6,6 +6,10 @@
 > yet been cut over** from PyO3 (`src/bridge.rs`) to this client — that cutover is the keystone
 > follow-up in [ADR-006](adr-006-unify-on-rust-tui.md). This boundary is what made ADR-006's
 > unification possible.
+>
+> **Superseded-on-acceptance by [ADR-014](adr-014-ipc-boundary-stdio-jsonrpc-delete-pyo3.md)** —
+> ADR-014 finishes the PyO3→IPC cutover (delete `bridge.rs`, collapse to one dispatch table).
+> Until ADR-014 is accepted this remains the live IPC reference.
 
 **Status:** Accepted (Implemented)
 **Date:** 2026-01-06

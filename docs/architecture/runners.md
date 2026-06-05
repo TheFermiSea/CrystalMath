@@ -1,5 +1,7 @@
 # Job Execution Backends
 
+> **Warning: Historical / superseded.** This document predates the ADR-007–027 redesign and describes the bespoke runner hierarchy that the redesign replaces. Authoritative direction: [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md), [ADR-012](adr-012-hpc-execution-jobflow-remote-aiida-optional.md) and [REDESIGN.md](REDESIGN.md). Kept for background only.
+
 This package provides job execution backends for running CRYSTAL calculations in different environments.
 
 ## Available Runners
