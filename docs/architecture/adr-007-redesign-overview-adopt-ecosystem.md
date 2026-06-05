@@ -171,9 +171,10 @@ The ordering is a true dependency chain: 008's I/O seam populates 009's document
 what 010's store persists; 011's `Flow`s write 009-documents into 010's store and submit to 012's
 backend; 013's typed handoff edges connect 009-documents across a 011 `Flow`; on the boundary side,
 014's PyO3→stdio cutover is what *enables* 017's decoupled artifacts, 015 resolves the socket path
-014 relies on, and 016 makes the 014 boundary drift-proof. ADRs 008–017 are siblings under this
-overview; this ADR is normative on the *rule and the sequencing*, and each sibling is normative on
-its layer.
+014 relies on, and 016 makes the 014 boundary drift-proof. ADRs 008–017 form the core dependency
+spine; ADRs 018–020 are cross-cutting hardening decisions that depend on (and strengthen) subsets of
+that spine. This ADR is normative on the *rule and the sequencing*, and each sibling ADR is normative
+on its layer.
 
 **Migration sequencing and deletion triggers.** The redesign proceeds in dependency order, and each
 deletion has an explicit, testable trigger — nothing is deleted on faith:
