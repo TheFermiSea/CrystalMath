@@ -197,6 +197,9 @@ impl LspClient {
         let is_js = matches!(ext, "js" | "mjs" | "cjs");
 
         let mut child = if is_js {
+            // NOTE: CRYSTAL_NODE_PATH is process-global. Any test that mutates it
+            // (set_var/remove_var) MUST hold the `ENV_MUTEX` guard from the tests
+            // module below, or it will race this read across parallel tests.
             let node_binary =
                 std::env::var("CRYSTAL_NODE_PATH").unwrap_or_else(|_| "node".to_string());
             info!("Using node binary: {}", node_binary);

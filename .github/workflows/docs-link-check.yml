@@ -1,0 +1,37 @@
+name: Docs Link Check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/docs-link-check.yml'
+      - 'scripts/check_doc_links.py'
+      - 'docs/**'
+      - '*.md'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/check_doc_links.py'
+      - 'docs/**'
+      - '*.md'
+
+concurrency:
+  group: docs-link-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs-link-check:
+    name: Docs Link Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Blocking: prevent re-introduction of the archived pre-redesign paths
+      # (.planning/ and REFACTOR/ moved to archive/ during the ADR-007..027 cleanup).
+      - name: Stale archived-path guard
+        run: python3 scripts/check_doc_links.py --stale-only
+
+      # Report-only: surface broken relative markdown links (pre-existing debt in
+      # the deprecated/stale docs is being burned down; this step never fails CI).
+      - name: Broken relative-link report
+        run: python3 scripts/check_doc_links.py || true
