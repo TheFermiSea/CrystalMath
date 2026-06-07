@@ -152,7 +152,8 @@ class SymmetryInfo:
         crystal_system: Crystal system classification
         hall_symbol: Hall symbol for the space group
         is_centrosymmetric: Whether the structure has inversion symmetry
-        wyckoff_symbols: List of Wyckoff position symbols for each site
+        wyckoff_symbols: List of Wyckoff symbols, one per symmetry-equivalent site group
+            (parallel to the symmetry's equivalent-index groups, not one per site)
         symmetry_operations: Number of symmetry operations
         tolerance: Symmetry detection tolerance used (Angstroms)
     """

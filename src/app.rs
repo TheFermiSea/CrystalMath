@@ -3899,15 +3899,6 @@ impl<'a> App<'a> {
         self.mark_dirty();
     }
 
-    /// Close the cluster manager modal.
-    // Called from handle_key (via dispatch_cluster_key); retained as a shim so
-    // callers that open/close the modal without going through the Handler still work.
-    #[allow(dead_code)]
-    pub fn close_cluster_manager_modal(&mut self) {
-        self.cluster_manager.close();
-        self.mark_dirty();
-    }
-
     /// Request the list of clusters from the backend.
     ///
     /// Thin shim — delegates to the Handler method so existing tests remain green.
@@ -3919,62 +3910,6 @@ impl<'a> App<'a> {
         };
         self.cluster_manager
             .fetch_clusters(self.bridge.as_ref(), &mut ctx);
-    }
-
-    /// Request to create a new cluster from form data.
-    ///
-    /// Thin shim — delegates to the Handler method so existing tests remain green.
-    #[allow(dead_code)]
-    pub fn create_cluster_from_form(&mut self) {
-        let mut ctx = crate::handlers::HandlerCtx {
-            next_request_id: &mut self.next_request_id,
-            last_error: &mut self.last_error,
-            needs_redraw: &mut self.needs_redraw,
-        };
-        self.cluster_manager
-            .create_from_form(self.bridge.as_ref(), &mut ctx);
-    }
-
-    /// Request to update an existing cluster from form data.
-    ///
-    /// Thin shim — delegates to the Handler method so existing tests remain green.
-    #[allow(dead_code)]
-    pub fn update_cluster_from_form(&mut self) {
-        let mut ctx = crate::handlers::HandlerCtx {
-            next_request_id: &mut self.next_request_id,
-            last_error: &mut self.last_error,
-            needs_redraw: &mut self.needs_redraw,
-        };
-        self.cluster_manager
-            .update_from_form(self.bridge.as_ref(), &mut ctx);
-    }
-
-    /// Request to delete the selected cluster.
-    ///
-    /// Thin shim — delegates to the Handler method so existing tests remain green.
-    #[allow(dead_code)]
-    pub fn delete_selected_cluster(&mut self) {
-        let mut ctx = crate::handlers::HandlerCtx {
-            next_request_id: &mut self.next_request_id,
-            last_error: &mut self.last_error,
-            needs_redraw: &mut self.needs_redraw,
-        };
-        self.cluster_manager
-            .delete_selected(self.bridge.as_ref(), &mut ctx);
-    }
-
-    /// Request to test SSH connection to the selected cluster.
-    ///
-    /// Thin shim — delegates to the Handler method so existing tests remain green.
-    #[allow(dead_code)]
-    pub fn test_selected_cluster_connection(&mut self) {
-        let mut ctx = crate::handlers::HandlerCtx {
-            next_request_id: &mut self.next_request_id,
-            last_error: &mut self.last_error,
-            needs_redraw: &mut self.needs_redraw,
-        };
-        self.cluster_manager
-            .test_connection(self.bridge.as_ref(), &mut ctx);
     }
 
     /// Dispatch a key event to the cluster-manager Handler.

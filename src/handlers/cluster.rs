@@ -308,6 +308,9 @@ impl Handler for ClusterManagerState {
                     request_id,
                     result.is_ok()
                 );
+                // Preserve the original always-redraw behaviour: the pre-Handler code fell
+                // through to the loop-trailing mark_dirty() for this no-op variant.
+                ctx.mark_dirty();
                 true
             }
 
