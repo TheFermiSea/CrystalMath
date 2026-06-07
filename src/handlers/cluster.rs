@@ -401,46 +401,46 @@ impl Handler for ClusterManagerState {
 
 // ─── Private form-input helpers ────────────────────────────────────────────────
 
+/// Map the currently focused form field to its backing `String`.
+///
+/// Returns `None` for non-text fields (`ClusterType`, which is toggled via Space).
+/// Shared by the push/pop helpers so the field mapping lives in one place.
+fn form_field_mut(state: &mut ClusterManagerState) -> Option<&mut String> {
+    match state.focused_field {
+        ClusterFormField::Name => Some(&mut state.form_name),
+        ClusterFormField::Hostname => Some(&mut state.form_hostname),
+        ClusterFormField::Port => Some(&mut state.form_port),
+        ClusterFormField::Username => Some(&mut state.form_username),
+        ClusterFormField::KeyFile => Some(&mut state.form_key_file),
+        ClusterFormField::RemoteWorkdir => Some(&mut state.form_remote_workdir),
+        ClusterFormField::QueueName => Some(&mut state.form_queue_name),
+        ClusterFormField::Cry23Root => Some(&mut state.form_cry23_root),
+        ClusterFormField::VaspRoot => Some(&mut state.form_vasp_root),
+        ClusterFormField::MaxConcurrent => Some(&mut state.form_max_concurrent),
+        ClusterFormField::ClusterType => None,
+    }
+}
+
 /// Push a character into the currently focused form field.
 ///
 /// Previously `handle_cluster_form_char` (main.rs ~1285-1319).
 fn cluster_form_push_char(state: &mut ClusterManagerState, c: char, ctx: &mut HandlerCtx) {
-    match state.focused_field {
-        ClusterFormField::Port => {
-            if c.is_ascii_digit() {
-                state.form_port.push(c);
-                ctx.mark_dirty();
-            }
-            return;
-        }
-        ClusterFormField::MaxConcurrent => {
-            if c.is_ascii_digit() {
-                state.form_max_concurrent.push(c);
-                ctx.mark_dirty();
-            }
-            return;
-        }
-        ClusterFormField::ClusterType => return, // Handled by the Space key.
-        _ => {}
+    // Port and MaxConcurrent accept digits only and (unlike text fields) do not
+    // clear the error banner on input.
+    let digits_only = matches!(
+        state.focused_field,
+        ClusterFormField::Port | ClusterFormField::MaxConcurrent
+    );
+    if digits_only && !c.is_ascii_digit() {
+        return;
     }
-
-    let field = match state.focused_field {
-        ClusterFormField::Name => &mut state.form_name,
-        ClusterFormField::Hostname => &mut state.form_hostname,
-        ClusterFormField::Username => &mut state.form_username,
-        ClusterFormField::KeyFile => &mut state.form_key_file,
-        ClusterFormField::RemoteWorkdir => &mut state.form_remote_workdir,
-        ClusterFormField::QueueName => &mut state.form_queue_name,
-        ClusterFormField::Cry23Root => &mut state.form_cry23_root,
-        ClusterFormField::VaspRoot => &mut state.form_vasp_root,
-        // Port / MaxConcurrent / ClusterType already handled above.
-        ClusterFormField::Port
-        | ClusterFormField::MaxConcurrent
-        | ClusterFormField::ClusterType => return,
+    let Some(field) = form_field_mut(state) else {
+        return; // ClusterType is toggled via the Space key.
     };
-
     field.push(c);
-    state.error = None;
+    if !digits_only {
+        state.error = None;
+    }
     ctx.mark_dirty();
 }
 
@@ -448,20 +448,9 @@ fn cluster_form_push_char(state: &mut ClusterManagerState, c: char, ctx: &mut Ha
 ///
 /// Previously `handle_cluster_form_backspace` (main.rs ~1322-1342).
 fn cluster_form_pop_char(state: &mut ClusterManagerState, ctx: &mut HandlerCtx) {
-    let field = match state.focused_field {
-        ClusterFormField::Name => &mut state.form_name,
-        ClusterFormField::Hostname => &mut state.form_hostname,
-        ClusterFormField::Port => &mut state.form_port,
-        ClusterFormField::Username => &mut state.form_username,
-        ClusterFormField::KeyFile => &mut state.form_key_file,
-        ClusterFormField::RemoteWorkdir => &mut state.form_remote_workdir,
-        ClusterFormField::QueueName => &mut state.form_queue_name,
-        ClusterFormField::Cry23Root => &mut state.form_cry23_root,
-        ClusterFormField::VaspRoot => &mut state.form_vasp_root,
-        ClusterFormField::MaxConcurrent => &mut state.form_max_concurrent,
-        ClusterFormField::ClusterType => return,
+    let Some(field) = form_field_mut(state) else {
+        return;
     };
-
     field.pop();
     state.error = None;
     ctx.mark_dirty();
