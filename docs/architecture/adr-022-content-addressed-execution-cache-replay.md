@@ -354,7 +354,7 @@ re-litigated:
   Evaluation & Applicability Domain: measured-not-asserted surrogate trust. Benchmark harness,
   calibrated `UncertaintyEstimate`, OOD/applicability-domain gate, escalation thresholds. Answers
   *"is the surrogate trustworthy enough to act on?"*
-- **[ADR-027](adr-027-model-and-dataset-registry-lineage.md)** — Model & Dataset Registry +
+- **[ADR-027](adr-027-model-dataset-registry-lineage.md)** — Model & Dataset Registry +
   Lineage: navigable `ModelRegistry`/`DatasetRegistry` **over the ADR-022 CAS**, defining the single
   unified `ModelIdentifier` used everywhere. Answers *"what exactly is this model/dataset and where
   did it come from?"*
@@ -435,7 +435,7 @@ decision. Make it real:
 ### 4. ML-checkpoint identity uses the unified ADR-027 `ModelIdentifier` (§5, lines 191–195)
 
 The §5 ML-checkpoint bullet keyed on `calculator_id + model_version` / "model registry digest." That
-is **replaced by the single unified [ADR-027](adr-027-model-and-dataset-registry-lineage.md) `ModelIdentifier`.** Checkpoint
+is **replaced by the single unified [ADR-027](adr-027-model-dataset-registry-lineage.md) `ModelIdentifier`.** Checkpoint
 acquisition, revision pinning, and identity (HF repo+revision vs local CAS key) are **decided in
 ADR-027**, not here. ADR-022 only consumes the `ModelIdentifier` as a closure input: a
 `ModelIdentifier` change still busts every dependent surrogate's `scientific_reuse_key`, exactly as
@@ -545,7 +545,7 @@ ADR-025/026/027 cross-references.
   `CampaignStrategy`; DFT-budget control — the escalation boundary §5 of the amendment defers to);
   `adr-026-trustworthy-mlip-evaluation-applicability-domain.md` (calibrated `UncertaintyEstimate`,
   applicability-domain/OOD trust gate — the trust decision a cached MLIP number does *not* reuse);
-  `adr-027-model-and-dataset-registry-lineage.md` (the unified `ModelIdentifier` folded into
+  `adr-027-model-dataset-registry-lineage.md` (the unified `ModelIdentifier` folded into
   `scientific_reuse_key`; registries over this ADR's CAS).
 - CrystalMath internal: `adr-009-canonical-data-model-emmet-pydantic-taskdocs.md:114,118,119,162,166`
   (`input_hash`/`parent_job_uuids`/`raw_paths` — the advisory fields §1/§3 promote);

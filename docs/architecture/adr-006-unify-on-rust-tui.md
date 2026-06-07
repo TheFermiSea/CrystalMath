@@ -23,11 +23,11 @@ Since then the project has executed the opposite direction, and the code now ref
 - A new **Monitor tab** (Prometheus-backed: `src/monitor.rs`, `src/prometheus.rs`,
   `src/ui/monitor.rs`) was added to the Rust TUI — a new screen and a new Cargo dependency
   (`reqwest`), both of which the ADR-002 freeze prohibited.
-- The active development branch (`codex/integrations-foundation`) and the `.planning/` tree
+- The active development branch (`codex/integrations-foundation`) and the `archive/planning/` tree
   (dated February 2026) describe a single unified UI rather than two.
 
 The result was a **dated strategic reversal that no document reconciled**: the ADRs, the
-top-level instruction files, and `REFACTOR/` still described "Python primary, Rust frozen,"
+top-level instruction files, and `archive/REFACTOR/` still described "Python primary, Rust frozen,"
 while the running code and latest planning moved to "unify on Rust." Maintaining two parallel
 UIs (Textual + Ratatui) over the same database is the project's largest source of duplicated
 logic and documentation drift.
@@ -92,5 +92,5 @@ The cutover is **implemented and feature-gated** (`BridgeService` is the seam; i
 - Cut the running TUI over from PyO3 to `IpcClient` (the keystone refactor).
 - Promote [ADR-003](adr-003-ipc-boundary-design.md) to **Implemented** (done in this pass).
 - Unify the two Python JSON-RPC dispatch registries (`api.py` controller vs `server/handlers/`).
-- Update `AGENTS.md` (the canonical agent doc), `README.md`, and `.planning/` to this direction
+- Update `AGENTS.md` (the canonical agent doc), `README.md`, and `archive/planning/` to this direction
   (done in this pass).
