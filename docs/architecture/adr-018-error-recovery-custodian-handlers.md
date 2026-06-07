@@ -7,6 +7,16 @@
 **Depends on:** [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) (workflow engine — jobflow `Flow`s), [ADR-012](adr-012-hpc-execution-jobflow-remote-aiida-optional.md) (HPC execution — jobflow-remote/AiiDA)
 **Relates to:** [ADR-013](adr-013-multi-code-handoff-and-restart-validation.md) (multi-code handoff + restart-file validation)
 
+> **Amendment (2026-06-07) — consolidation audit ([CONSOLIDATION-PLAN.md](CONSOLIDATION-PLAN.md)):**
+> **Factual correction — custodian has NO Quantum ESPRESSO handlers.** custodian ships handlers for
+> VASP, CP2K, Q-Chem, NWChem, FEFF, and Lobster only; there is no `espresso`/QE handler. The claims
+> below that we "inherit custodian correction for VASP/QE" hold for **VASP only**. The authored-handler
+> workload is therefore **three codes — CRYSTAL23, YAMBO, and QE** — not two: the laptop-first
+> jobflow-remote + custodian default path gets **zero** automated QE recovery unless CrystalMath authors
+> a `QeErrorHandler` (mine `aiida-quantumespresso`'s catalogue), or QE recovery is explicitly relegated
+> to the opt-in AiiDA / quacc-ASE path. The plan picks the authored `QeErrorHandler` for the
+> laptop-first promise.
+
 ## Context
 
 DFT calculations fail in code-specific, well-catalogued ways. A VASP relaxation hits

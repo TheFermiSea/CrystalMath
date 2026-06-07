@@ -6,6 +6,17 @@
 **Supersedes:** none
 **Depends on:** [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) (jobflow/quacc as the workflow model)
 
+> **Amendment (2026-06-07) — consolidation audit ([CONSOLIDATION-PLAN.md](CONSOLIDATION-PLAN.md)):**
+> **jobflow-remote reached v1.0.0 (stable, daemon-free workstation mode)**, so the "younger … API
+> still evolving" tradeoff below is **stale** — downgrade it. Two refinements: (1) name jobflow-remote
+> **batch/pilot mode** as the first answer for in-allocation high-throughput fan-out (e.g. MLIP
+> screening), reaching for Parsl/Dask HTEX only if insufficient; (2) the only maintained ecosystem
+> YAMBO GW/BSE path (`aiida-yambo`) and the CRYSTAL plugin (`aiida-crystal-dft` v0.9.4, 2026-03-25 — an
+> `aiida-crystal17` spin-off whose **CRYSTAL23 keyword coverage is unconfirmed**) live **only** in
+> AiiDA. Resolution: author CRYSTAL23/YAMBO fresh over the deck seam on the **daemon-free default
+> path**, and treat the AiiDA plugins as the validation oracle + the implementation behind the
+> **opt-in** `AiiDABackend` — do not let YAMBO's AiiDA-only coverage pressure the default toward AiiDA.
+
 ## Context
 
 CrystalMath's job is to take a workflow defined in the Python core, push it across an SSH
