@@ -105,11 +105,7 @@ class TestConcurrentWrites:
         def create_job_from_thread(index):
             db = Database(db_path)
             try:
-                job_id = db.create_job(
-                    f"job_{index}",
-                    f"/tmp/job_{index}",
-                    f"input_{index}"
-                )
+                job_id = db.create_job(f"job_{index}", f"/tmp/job_{index}", f"input_{index}")
                 with lock:
                     job_ids.append(job_id)
             finally:
@@ -117,10 +113,7 @@ class TestConcurrentWrites:
 
         # Create jobs from 5 concurrent threads
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [
-                executor.submit(create_job_from_thread, i)
-                for i in range(20)
-            ]
+            futures = [executor.submit(create_job_from_thread, i) for i in range(20)]
             for future in as_completed(futures):
                 future.result()  # Raise any exceptions
 
@@ -153,10 +146,7 @@ class TestConcurrentWrites:
 
         # Update status from multiple threads
         with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = [
-                executor.submit(update_status_from_thread, status)
-                for status in statuses
-            ]
+            futures = [executor.submit(update_status_from_thread, status) for status in statuses]
             for future in as_completed(futures):
                 future.result()
 
@@ -177,9 +167,7 @@ class TestConcurrentWrites:
             db = Database(db_path)
             try:
                 db.update_results(
-                    job_id,
-                    final_energy=energy,
-                    key_results={"convergence": "CONVERGED"}
+                    job_id, final_energy=energy, key_results={"convergence": "CONVERGED"}
                 )
                 with lock:
                     update_count[0] += 1
@@ -216,7 +204,7 @@ class TestConcurrentWrites:
                     name=f"cluster_{index}",
                     type="ssh",
                     hostname=f"host{index}.example.com",
-                    username=f"user_{index}"
+                    username=f"user_{index}",
                 )
                 with lock:
                     cluster_ids.append(cluster_id)
@@ -225,10 +213,7 @@ class TestConcurrentWrites:
 
         # Create clusters from multiple threads
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [
-                executor.submit(create_cluster_from_thread, i)
-                for i in range(10)
-            ]
+            futures = [executor.submit(create_cluster_from_thread, i) for i in range(10)]
             for future in as_completed(futures):
                 future.result()
 
@@ -262,7 +247,7 @@ class TestConcurrentWrites:
                     job_id = db.create_job(
                         f"new_job_{base_index}_{i}",
                         f"/tmp/new_job_{base_index}_{i}",
-                        f"input_{base_index}_{i}"
+                        f"input_{base_index}_{i}",
                     )
                     db.update_status(job_id, "RUNNING")
                 with lock:
@@ -310,8 +295,7 @@ class TestContextManagerTransactions:
         try:
             with temp_db.conn:
                 temp_db.conn.execute(
-                    "UPDATE jobs SET status = ? WHERE id = ?",
-                    ("INVALID_STATUS", job_id)
+                    "UPDATE jobs SET status = ? WHERE id = ?", ("INVALID_STATUS", job_id)
                 )
         except sqlite3.IntegrityError:
             pass
@@ -366,17 +350,14 @@ class TestConcurrencyStress:
                     db.create_job(
                         f"stress_job_{thread_id}_{i}",
                         f"/tmp/stress_job_{thread_id}_{i}",
-                        f"input_{thread_id}_{i}"
+                        f"input_{thread_id}_{i}",
                     )
             finally:
                 db.close()
 
         # Run concurrent creation
         with ThreadPoolExecutor(max_workers=thread_count) as executor:
-            futures = [
-                executor.submit(create_many_jobs, i)
-                for i in range(thread_count)
-            ]
+            futures = [executor.submit(create_many_jobs, i) for i in range(thread_count)]
             for future in as_completed(futures):
                 future.result()
 
@@ -390,9 +371,7 @@ class TestConcurrencyStress:
         job_ids = []
         for i in range(50):
             job_id = temp_db.create_job(
-                f"consistency_job_{i}",
-                f"/tmp/consistency_job_{i}",
-                f"input_{i}"
+                f"consistency_job_{i}", f"/tmp/consistency_job_{i}", f"input_{i}"
             )
             job_ids.append(job_id)
             temp_db.update_status(job_id, "RUNNING", pid=1000 + i)
@@ -437,7 +416,7 @@ class TestConcurrencyStress:
                         db.create_job(
                             f"lock_test_{index}_{i}",
                             f"/tmp/lock_test_{index}_{i}",
-                            f"input_{index}_{i}"
+                            f"input_{index}_{i}",
                         )
                         with lock:
                             success_count[0] += 1
@@ -450,10 +429,7 @@ class TestConcurrencyStress:
 
         # Stress test with many concurrent writers
         with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [
-                executor.submit(aggressive_write, i)
-                for i in range(10)
-            ]
+            futures = [executor.submit(aggressive_write, i) for i in range(10)]
             for future in as_completed(futures):
                 future.result()
 

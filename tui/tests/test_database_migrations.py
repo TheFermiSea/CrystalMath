@@ -45,7 +45,7 @@ class TestMigrationAtomicity:
 
             # First, test that the exception is raised
             exception_raised = False
-            with patch.object(Database, 'SCHEMA_V1', failing_schema):
+            with patch.object(Database, "SCHEMA_V1", failing_schema):
                 try:
                     Database(db_path)
                 except (sqlite3.OperationalError, Exception):
@@ -107,7 +107,7 @@ class TestMigrationAtomicity:
             """
 
             exception_raised = False
-            with patch.object(Database, 'MIGRATION_V1_TO_V2', failing_migration):
+            with patch.object(Database, "MIGRATION_V1_TO_V2", failing_migration):
                 try:
                     Database(db_path)
                 except (sqlite3.OperationalError, Exception):
@@ -173,7 +173,7 @@ class TestMigrationAtomicity:
             """
 
             exception_raised = False
-            with patch.object(Database, 'MIGRATION_V1_TO_V2', failing_migration):
+            with patch.object(Database, "MIGRATION_V1_TO_V2", failing_migration):
                 try:
                     Database(db_path)
                 except (sqlite3.OperationalError, Exception):
@@ -193,8 +193,9 @@ class TestMigrationAtomicity:
                 )
                 test_tables = cursor.fetchall()
                 # With proper rollback, test tables should not exist
-                assert len(test_tables) == 0, \
+                assert len(test_tables) == 0, (
                     f"Found test tables after rollback: {[r[0] for r in test_tables]}"
+                )
 
                 # Verify version is still 1 (migration didn't complete)
                 cursor = conn.execute("SELECT MAX(version) FROM schema_version")
@@ -219,7 +220,9 @@ class TestMigrationAtomicity:
                     versions = [row[0] for row in cursor.fetchall()]
 
                     # Should have v1 through v7 entries (all migrations applied)
-                    assert versions == [1, 2, 3, 4, 5, 6, 7], f"Unexpected version history: {versions}"
+                    assert versions == [1, 2, 3, 4, 5, 6, 7], (
+                        f"Unexpected version history: {versions}"
+                    )
 
                     # Verify all tables exist
                     cursor = conn.execute(
@@ -228,11 +231,16 @@ class TestMigrationAtomicity:
                     tables = {row[0] for row in cursor.fetchall()}
 
                     expected_tables = {
-                        'jobs', 'schema_version', 'clusters',
-                        'remote_jobs', 'job_dependencies', 'job_results'
+                        "jobs",
+                        "schema_version",
+                        "clusters",
+                        "remote_jobs",
+                        "job_dependencies",
+                        "job_results",
                     }
-                    assert expected_tables.issubset(tables), \
+                    assert expected_tables.issubset(tables), (
                         f"Missing tables: {expected_tables - tables}"
+                    )
             finally:
                 db.close()
 
@@ -251,8 +259,9 @@ class TestMigrationAtomicity:
 
             try:
                 # Both should see same version
-                assert version1 == version2, \
+                assert version1 == version2, (
                     f"Concurrent databases see different versions: {version1} vs {version2}"
+                )
 
                 # Verify no duplicate tables were created
                 with db1.connection() as conn:
@@ -266,8 +275,9 @@ class TestMigrationAtomicity:
                         """
                     )
                     duplicates = cursor.fetchall()
-                    assert len(duplicates) == 0, \
+                    assert len(duplicates) == 0, (
                         f"Found duplicate tables: {[r[0] for r in duplicates]}"
+                    )
             finally:
                 db1.close()
                 db2.close()
@@ -285,8 +295,9 @@ class TestMigrationEdgeCases:
             try:
                 # Should be at latest version
                 version = db.get_schema_version()
-                assert version == Database.SCHEMA_VERSION, \
+                assert version == Database.SCHEMA_VERSION, (
                     f"New database at version {version}, expected {Database.SCHEMA_VERSION}"
+                )
 
                 # Should have all tables
                 with db.connection() as conn:
@@ -295,9 +306,17 @@ class TestMigrationEdgeCases:
                     )
                     tables = {row[0] for row in cursor.fetchall()}
 
-                    required_tables = {'jobs', 'schema_version', 'clusters', 'remote_jobs', 'job_dependencies', 'job_results'}
-                    assert required_tables.issubset(tables), \
+                    required_tables = {
+                        "jobs",
+                        "schema_version",
+                        "clusters",
+                        "remote_jobs",
+                        "job_dependencies",
+                        "job_results",
+                    }
+                    assert required_tables.issubset(tables), (
                         f"Missing tables: {required_tables - tables}"
+                    )
             finally:
                 db.close()
 
@@ -319,19 +338,21 @@ class TestMigrationEdgeCases:
             db = Database(db_path)
             try:
                 version = db.get_schema_version()
-                assert version == Database.SCHEMA_VERSION, f"Database not upgraded to v{Database.SCHEMA_VERSION}: version {version}"
+                assert version == Database.SCHEMA_VERSION, (
+                    f"Database not upgraded to v{Database.SCHEMA_VERSION}: version {version}"
+                )
 
                 # Verify all tables exist
                 with db.connection() as conn:
-                    cursor = conn.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table'"
-                    )
+                    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
                     tables = {row[0] for row in cursor.fetchall()}
 
-                    assert 'clusters' in tables, "clusters table missing after migration"
-                    assert 'remote_jobs' in tables, "remote_jobs table missing after migration"
-                    assert 'job_dependencies' in tables, "job_dependencies table missing after migration"
-                    assert 'job_results' in tables, "job_results table missing after migration"
+                    assert "clusters" in tables, "clusters table missing after migration"
+                    assert "remote_jobs" in tables, "remote_jobs table missing after migration"
+                    assert "job_dependencies" in tables, (
+                        "job_dependencies table missing after migration"
+                    )
+                    assert "job_results" in tables, "job_results table missing after migration"
             finally:
                 db.close()
 
@@ -362,7 +383,9 @@ class TestMigrationEdgeCases:
 
             # Should be identical
             assert version1 == version2, f"Version changed: {version1} -> {version2}"
-            assert tables1 == tables2, f"Tables changed: {tables1 - tables2} removed, {tables2 - tables1} added"
+            assert tables1 == tables2, (
+                f"Tables changed: {tables1 - tables2} removed, {tables2 - tables1} added"
+            )
 
     def test_corrupted_schema_version_table(self):
         """Test handling of corrupted schema_version table."""
@@ -404,7 +427,7 @@ class TestTransactionBehavior:
                     with conn:
                         conn.execute(
                             "INSERT INTO jobs (name, work_dir, status, input_file) VALUES (?, ?, ?, ?)",
-                            ("test_job", "/tmp/test", "PENDING", "test.d12")
+                            ("test_job", "/tmp/test", "PENDING", "test.d12"),
                         )
 
                 # Verify data was committed
@@ -429,12 +452,12 @@ class TestTransactionBehavior:
                             # Insert valid job
                             conn.execute(
                                 "INSERT INTO jobs (name, work_dir, status, input_file) VALUES (?, ?, ?, ?)",
-                                ("test_job", "/tmp/test", "PENDING", "test.d12")
+                                ("test_job", "/tmp/test", "PENDING", "test.d12"),
                             )
                             # Attempt duplicate work_dir (should fail UNIQUE constraint)
                             conn.execute(
                                 "INSERT INTO jobs (name, work_dir, status, input_file) VALUES (?, ?, ?, ?)",
-                                ("test_job2", "/tmp/test", "PENDING", "test2.d12")
+                                ("test_job2", "/tmp/test", "PENDING", "test2.d12"),
                             )
 
                 # Verify NO jobs were inserted (rollback worked)
@@ -457,14 +480,14 @@ class TestTransactionBehavior:
                     with conn:
                         conn.execute(
                             "INSERT INTO jobs (name, work_dir, status, input_file) VALUES (?, ?, ?, ?)",
-                            ("job1", "/tmp/job1", "PENDING", "job1.d12")
+                            ("job1", "/tmp/job1", "PENDING", "job1.d12"),
                         )
 
                         # Inner transaction (should be part of same transaction in SQLite)
                         with conn:
                             conn.execute(
                                 "INSERT INTO jobs (name, work_dir, status, input_file) VALUES (?, ?, ?, ?)",
-                                ("job2", "/tmp/job2", "PENDING", "job2.d12")
+                                ("job2", "/tmp/job2", "PENDING", "job2.d12"),
                             )
 
                 # Verify both jobs were committed

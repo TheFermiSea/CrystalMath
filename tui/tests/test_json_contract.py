@@ -1237,9 +1237,20 @@ class TestClusterConfigContract:
 
         # Verify all Rust ClusterConfig fields are present
         rust_fields = {
-            "id", "name", "cluster_type", "hostname", "port", "username",
-            "key_file", "remote_workdir", "queue_name", "max_concurrent",
-            "cry23_root", "vasp_root", "setup_commands", "status",
+            "id",
+            "name",
+            "cluster_type",
+            "hostname",
+            "port",
+            "username",
+            "key_file",
+            "remote_workdir",
+            "queue_name",
+            "max_concurrent",
+            "cry23_root",
+            "vasp_root",
+            "setup_commands",
+            "status",
         }
         assert rust_fields == set(cluster_json.keys()), (
             f"Missing fields: {rust_fields - set(cluster_json.keys())}, "

@@ -233,11 +233,7 @@ class ConfigLoader:
         """
         return ClusterConfig(config_path)
 
-    def import_cluster(
-        self,
-        config: ClusterConfig,
-        update_existing: bool = True
-    ) -> int:
+    def import_cluster(self, config: ClusterConfig, update_existing: bool = True) -> int:
         """
         Import a cluster configuration into the database.
 
@@ -259,7 +255,7 @@ class ConfigLoader:
                     port=config.port,
                     username=config.username,
                     connection_config=config.to_connection_config(),
-                    status="active"
+                    status="active",
                 )
                 return existing.id
             else:
@@ -273,7 +269,7 @@ class ConfigLoader:
             hostname=config.hostname,
             username=config.username,
             port=config.port,
-            connection_config=config.to_connection_config()
+            connection_config=config.to_connection_config(),
         )
         return cluster_id
 

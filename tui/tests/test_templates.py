@@ -313,10 +313,7 @@ class TestTemplateManager:
         manager = TemplateManager(sample_template_file.parent)
         template = manager.load_template(sample_template_file.name)
 
-        result = manager.render(
-            template,
-            {"system_name": "MgO Crystal", "shrink": 12}
-        )
+        result = manager.render(template, {"system_name": "MgO Crystal", "shrink": 12})
 
         assert "MgO Crystal" in result
         assert "12" in result
@@ -346,10 +343,7 @@ class TestTemplateManager:
         manager = TemplateManager(sample_template_file.parent)
         template = manager.load_template(sample_template_file.name)
 
-        errors = manager.validate_params(
-            template,
-            {"system_name": "Test", "shrink": 16}
-        )
+        errors = manager.validate_params(template, {"system_name": "Test", "shrink": 16})
 
         assert len(errors) == 0
 
@@ -359,8 +353,7 @@ class TestTemplateManager:
         template = manager.load_template(sample_template_file.name)
 
         errors = manager.validate_params(
-            template,
-            {"system_name": "Test", "unknown_param": "value"}
+            template, {"system_name": "Test", "unknown_param": "value"}
         )
 
         assert len(errors) > 0
@@ -544,7 +537,7 @@ SHRINK
                 "shrink": {
                     "type": "integer",
                     "default": 8,
-                }
+                },
             },
         }
 
@@ -596,7 +589,7 @@ ATOM {{ atom.number }} {{ atom.symbol }}
                     {"number": 12, "symbol": "Mg"},
                     {"number": 8, "symbol": "O"},
                 ]
-            }
+            },
         )
 
         assert "ATOM 12 Mg" in result
@@ -767,6 +760,7 @@ class TestSecurityHardening:
 
         # Check that it's a SandboxedEnvironment
         from jinja2.sandbox import SandboxedEnvironment
+
         assert isinstance(manager.jinja_env, SandboxedEnvironment)
 
     def test_html_escaping_in_output(self, temp_template_dir):
@@ -789,10 +783,7 @@ class TestSecurityHardening:
         )
 
         # Try to inject HTML/script tags
-        result = manager.render(
-            template,
-            {"html_content": "<script>alert('XSS')</script>"}
-        )
+        result = manager.render(template, {"html_content": "<script>alert('XSS')</script>"})
 
         # With autoescape=True, < and > should be escaped to &lt; and &gt;
         # (though for scientific input this is less relevant, defense-in-depth)
@@ -814,7 +805,7 @@ class TestSecurityHardening:
             "name": "Dangerous Test",
             "version": "1.0",
             "input_template": "",
-            "parameters": {}
+            "parameters": {},
         }
 
         for payload in dangerous_payloads:
@@ -873,7 +864,7 @@ class TestRealWorldTemplates:
                 "shrink": 12,
                 "convergence": 1e-9,
                 "opt_type": "FULLOPTG",
-            }
+            },
         )
 
         assert "MgO Optimization" in result

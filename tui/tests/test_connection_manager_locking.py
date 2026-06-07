@@ -83,15 +83,13 @@ class TestHealthCheckLocking:
                     lock_acquired_during_io = True
 
             # Manually trigger one health check cycle
-            health_check_task = asyncio.create_task(
-                manager._health_check_loop_single_iteration()
-            )
+            health_check_task = asyncio.create_task(manager._health_check_loop_single_iteration())
             lock_test_task = asyncio.create_task(try_acquire_lock())
 
             # Wait for both to complete (with timeout)
             await asyncio.wait_for(
                 asyncio.gather(health_check_task, lock_test_task, return_exceptions=True),
-                timeout=5.0
+                timeout=5.0,
             )
 
             # Verify lock was released during I/O
@@ -230,11 +228,11 @@ class TestHealthCheckLocking:
             original_release = manager._lock.release
 
             async def tracked_acquire(*args, **kwargs):
-                lock_events.append(('acquire', time.time()))
+                lock_events.append(("acquire", time.time()))
                 return await original_acquire(*args, **kwargs)
 
             def tracked_release(*args, **kwargs):
-                lock_events.append(('release', time.time()))
+                lock_events.append(("release", time.time()))
                 return original_release(*args, **kwargs)
 
             manager._lock.acquire = tracked_acquire
@@ -272,9 +270,9 @@ class TestHealthCheckLocking:
             # Verify lock was NOT held during I/O
             # Look for acquire/release pairs that don't overlap with I/O
             for i in range(0, len(lock_events) - 1, 2):
-                if lock_events[i][0] == 'acquire' and lock_events[i+1][0] == 'release':
+                if lock_events[i][0] == "acquire" and lock_events[i + 1][0] == "release":
                     acquire_time = lock_events[i][1]
-                    release_time = lock_events[i+1][1]
+                    release_time = lock_events[i + 1][1]
 
                     # If I/O happened, lock should NOT be held during it
                     if io_start_time and io_end_time:
@@ -331,10 +329,7 @@ class TestHealthCheckLocking:
             ]
 
             # Should not raise exceptions or deadlock
-            await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=5.0
-            )
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5.0)
 
             # Verify no connections are in inconsistent state
             if 1 in manager._pools:
@@ -363,9 +358,9 @@ async def _health_check_loop_single_iteration(self):
                     continue
 
                 # Check if connection is stale or idle too long
-                if pooled_conn.is_stale(
-                    self.MAX_CONNECTION_AGE
-                ) or pooled_conn.is_idle_too_long(self.MAX_IDLE_TIME):
+                if pooled_conn.is_stale(self.MAX_CONNECTION_AGE) or pooled_conn.is_idle_too_long(
+                    self.MAX_IDLE_TIME
+                ):
                     connections_to_remove_stale.append((cluster_id, pooled_conn))
                 else:
                     # Queue for health check
@@ -379,12 +374,12 @@ async def _health_check_loop_single_iteration(self):
 
     # Step 3: Perform health checks in parallel (slow, lock-free)
     if connections_to_check:
+
         async def check_one(cluster_id: int, pooled_conn: PooledConnection):
             """Health check a single connection."""
             try:
                 result = await asyncio.wait_for(
-                    pooled_conn.connection.run("true", check=False),
-                    timeout=5.0
+                    pooled_conn.connection.run("true", check=False), timeout=5.0
                 )
                 is_healthy = result.exit_status == 0
                 return (cluster_id, pooled_conn, is_healthy, None)
@@ -393,8 +388,7 @@ async def _health_check_loop_single_iteration(self):
 
         # Run all health checks in parallel
         results = await asyncio.gather(
-            *[check_one(cid, pc) for cid, pc in connections_to_check],
-            return_exceptions=True
+            *[check_one(cid, pc) for cid, pc in connections_to_check], return_exceptions=True
         )
 
         # Step 4: Update state based on results (fast, under lock)

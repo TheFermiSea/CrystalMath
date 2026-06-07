@@ -23,19 +23,14 @@ async def main():
     wf = Workflow(
         workflow_id="conditional_opt",
         name="Optimization with Conditional Restart",
-        description="Optimize geometry, check convergence, and restart with tighter parameters if needed"
+        description="Optimize geometry, check convergence, and restart with tighter parameters if needed",
     )
 
     # Initial optimization attempt
     opt1 = wf.add_node(
         template="optimization",
-        params={
-            "basis": "sto-3g",
-            "functional": "PBE",
-            "conv_tol": 1e-5,
-            "max_cycles": 50
-        },
-        node_id="opt_initial"
+        params={"basis": "sto-3g", "functional": "PBE", "conv_tol": 1e-5, "max_cycles": 50},
+        node_id="opt_initial",
     )
 
     # Condition node: Check if optimization converged
@@ -44,19 +39,15 @@ async def main():
         condition_expr="opt_initial['converged'] == True",
         true_branch=["freq_calc"],
         false_branch=["opt_retry"],
-        dependencies=["opt_initial"]
+        dependencies=["opt_initial"],
     )
     wf.add_dependency("opt_initial", "check_convergence")
 
     # Branch 1 (True): Run frequency calculation on converged geometry
     freq = wf.add_node(
         template="frequency",
-        params={
-            "basis": "sto-3g",
-            "functional": "PBE",
-            "guess_file": "{{ opt_initial.f9 }}"
-        },
-        node_id="freq_calc"
+        params={"basis": "sto-3g", "functional": "PBE", "guess_file": "{{ opt_initial.f9 }}"},
+        node_id="freq_calc",
     )
     wf.add_dependency("check_convergence", "freq_calc", condition="converged")
 
@@ -68,21 +59,17 @@ async def main():
             "functional": "PBE",
             "conv_tol": 1e-6,  # Tighter tolerance
             "max_cycles": 100,  # More cycles
-            "guess_file": "{{ opt_initial.f9 }}"  # Start from previous geometry
+            "guess_file": "{{ opt_initial.f9 }}",  # Start from previous geometry
         },
-        node_id="opt_retry"
+        node_id="opt_retry",
     )
     wf.add_dependency("check_convergence", "opt_retry", condition="not converged")
 
     # After retry, always run frequency
     freq2 = wf.add_node(
         template="frequency",
-        params={
-            "basis": "sto-3g",
-            "functional": "PBE",
-            "guess_file": "{{ opt_retry.f9 }}"
-        },
-        node_id="freq_after_retry"
+        params={"basis": "sto-3g", "functional": "PBE", "guess_file": "{{ opt_retry.f9 }}"},
+        node_id="freq_after_retry",
     )
     wf.add_dependency("opt_retry", "freq_after_retry")
 
@@ -131,11 +118,7 @@ async def main():
     print("\nExecution path:")
     for node_id in wf.execution_order:
         node = wf.nodes[node_id]
-        symbol = {
-            "COMPLETED": "✓",
-            "FAILED": "✗",
-            "SKIPPED": "○"
-        }.get(node.status.value, "?")
+        symbol = {"COMPLETED": "✓", "FAILED": "✗", "SKIPPED": "○"}.get(node.status.value, "?")
         print(f"  {symbol} {node_id} [{node.status.value}]")
 
     # Save workflow
@@ -145,7 +128,7 @@ async def main():
 
     # Save diagram
     dot_path = Path("conditional_branch.dot")
-    with open(dot_path, 'w') as f:
+    with open(dot_path, "w") as f:
         f.write(dot_content)
     print(f"✓ Workflow diagram saved to {dot_path}")
 

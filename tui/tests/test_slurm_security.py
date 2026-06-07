@@ -77,9 +77,7 @@ class TestSLURMValidationSecurity:
         for setup in dangerous_setups:
             with pytest.raises(SLURMTemplateValidationError):
                 generator.generate(
-                    job_name="test",
-                    work_dir="/scratch/test",
-                    environment_setup=setup
+                    job_name="test", work_dir="/scratch/test", environment_setup=setup
                 )
 
     def test_safe_environment_setup_accepted(self):
@@ -96,9 +94,7 @@ class TestSLURMValidationSecurity:
         for setup in safe_setups:
             # Should not raise
             script = generator.generate(
-                job_name="test",
-                work_dir="/scratch/test",
-                environment_setup=setup
+                job_name="test", work_dir="/scratch/test", environment_setup=setup
             )
             assert setup in script
 
@@ -182,7 +178,7 @@ class TestSLURMScriptGeneration:
         script = generator.generate(
             job_name="test",
             work_dir="/scratch/test",
-            modules=["crystal23", "intel/2023.1", "openmpi-4.1.5"]
+            modules=["crystal23", "intel/2023.1", "openmpi-4.1.5"],
         )
 
         # Each module should appear in script
@@ -193,11 +189,7 @@ class TestSLURMScriptGeneration:
     def test_script_generation_escapes_partition(self):
         """Test that partition name is properly escaped."""
         generator = SLURMTemplateGenerator()
-        script = generator.generate(
-            job_name="test",
-            work_dir="/scratch/test",
-            partition="compute"
-        )
+        script = generator.generate(job_name="test", work_dir="/scratch/test", partition="compute")
 
         # Partition should appear in script
         assert "--partition=" in script

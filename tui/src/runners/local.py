@@ -30,11 +30,13 @@ logger = logging.getLogger(__name__)
 
 class ExecutableNotFoundError(ConfigurationError):
     """Raised when the DFT executable cannot be found."""
+
     pass
 
 
 class InputFileError(ResourceError):
     """Raised when there are issues with the input file."""
+
     pass
 
 
@@ -64,7 +66,7 @@ class LocalRunner(BaseRunner):
         self,
         executable_path: Optional[Path] = None,
         default_threads: Optional[int] = None,
-        config: Optional[RunnerConfig] = None
+        config: Optional[RunnerConfig] = None,
     ):
         """
         Initialize the LocalRunner.
@@ -81,7 +83,7 @@ class LocalRunner(BaseRunner):
         if config is None:
             config = RunnerConfig(
                 executable_path=executable_path,
-                default_threads=default_threads or os.cpu_count() or 4
+                default_threads=default_threads or os.cpu_count() or 4,
             )
         super().__init__(config)
 
@@ -177,7 +179,11 @@ class LocalRunner(BaseRunner):
         root_dir = os.environ.get(self.code_config.root_env_var)
         if root_dir:
             for bin_subdir in ["bin", ""]:
-                exe_path = Path(root_dir) / bin_subdir / exe_name if bin_subdir else Path(root_dir) / exe_name
+                exe_path = (
+                    Path(root_dir) / bin_subdir / exe_name
+                    if bin_subdir
+                    else Path(root_dir) / exe_name
+                )
                 if exe_path.exists() and os.access(exe_path, os.X_OK):
                     return exe_path
 
@@ -188,7 +194,7 @@ class LocalRunner(BaseRunner):
         job_id: int,
         work_dir: Path,
         threads: Optional[int] = None,
-        input_file: Optional[Path] = None
+        input_file: Optional[Path] = None,
     ) -> AsyncIterator[str]:
         """
         Execute a DFT job and stream output in real-time.
@@ -311,13 +317,12 @@ class LocalRunner(BaseRunner):
                 except Exception:
                     # Ignore errors during cleanup
                     pass
-            raise LocalRunnerError(f"Failed to execute {self.code_config.display_name} job: {e}") from e
+            raise LocalRunnerError(
+                f"Failed to execute {self.code_config.display_name} job: {e}"
+            ) from e
 
     async def _create_process(
-        self,
-        input_file: Path,
-        work_dir: Path,
-        env: Dict[str, str]
+        self, input_file: Path, work_dir: Path, env: Dict[str, str]
     ) -> asyncio.subprocess.Process:
         """
         Create subprocess based on DFT code invocation style.
@@ -343,18 +348,19 @@ class LocalRunner(BaseRunner):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(work_dir),
-                env=env
+                env=env,
             )
         elif invocation == InvocationStyle.FLAG:
             # QE-style: exe -in input (flag-based input)
             return await asyncio.create_subprocess_exec(
                 str(self.executable_path),
-                "-in", str(input_file.name),
+                "-in",
+                str(input_file.name),
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(work_dir),
-                env=env
+                env=env,
             )
         elif invocation == InvocationStyle.CWD:
             # VASP-style: exe (reads from cwd - INCAR, POSCAR, etc.)
@@ -364,16 +370,12 @@ class LocalRunner(BaseRunner):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(work_dir),
-                env=env
+                env=env,
             )
         else:
             raise LocalRunnerError(f"Unknown invocation style: {invocation}")
 
-    async def _parse_results(
-        self,
-        output_file: Path,
-        return_code: int
-    ) -> JobResult:
+    async def _parse_results(self, output_file: Path, return_code: int) -> JobResult:
         """
         Parse DFT output file using code-specific parser.
 
@@ -393,7 +395,7 @@ class LocalRunner(BaseRunner):
                 convergence_status="FAILED",
                 errors=["Output file is missing or empty"],
                 warnings=[],
-                metadata={"return_code": return_code}
+                metadata={"return_code": return_code},
             )
 
         # Use code-specific parser
@@ -403,9 +405,9 @@ class LocalRunner(BaseRunner):
 
             # Determine overall success
             success = (
-                return_code == 0 and
-                parse_result.convergence_status == "CONVERGED" and
-                len(parse_result.errors) == 0
+                return_code == 0
+                and parse_result.convergence_status == "CONVERGED"
+                and len(parse_result.errors) == 0
             )
 
             return JobResult(
@@ -419,8 +421,8 @@ class LocalRunner(BaseRunner):
                     "return_code": return_code,
                     "scf_cycles": parse_result.scf_cycles,
                     "geometry_converged": parse_result.geometry_converged,
-                    **parse_result.metadata
-                }
+                    **parse_result.metadata,
+                },
             )
         except Exception as e:
             return JobResult(
@@ -430,7 +432,7 @@ class LocalRunner(BaseRunner):
                 convergence_status="UNKNOWN",
                 errors=[f"Failed to parse output: {e}"],
                 warnings=[],
-                metadata={"return_code": return_code}
+                metadata={"return_code": return_code},
             )
 
     async def stop_job(self, job_id: int, timeout: float = 10.0) -> bool:
@@ -541,12 +543,7 @@ class LocalRunner(BaseRunner):
     # -------------------------------------------------------------------------
 
     async def submit_job(
-        self,
-        job_id: int,
-        input_file: Path,
-        work_dir: Path,
-        threads: Optional[int] = None,
-        **kwargs
+        self, job_id: int, input_file: Path, work_dir: Path, threads: Optional[int] = None, **kwargs
     ) -> JobHandle:
         """
         Submit a job for execution (BaseRunner interface).
@@ -569,7 +566,9 @@ class LocalRunner(BaseRunner):
         self._job_work_dirs[handle] = work_dir
 
         # Start job execution in background, passing handle for result storage
-        task = asyncio.create_task(self._run_job_task(handle, job_id, work_dir, threads, input_file))
+        task = asyncio.create_task(
+            self._run_job_task(handle, job_id, work_dir, threads, input_file)
+        )
         self._active_jobs[handle] = task
 
         return handle
@@ -580,7 +579,7 @@ class LocalRunner(BaseRunner):
         job_id: int,
         work_dir: Path,
         threads: Optional[int],
-        input_file: Optional[Path] = None
+        input_file: Optional[Path] = None,
     ):
         """Background task that runs a job to completion.
 
@@ -786,10 +785,7 @@ class LocalRunner(BaseRunner):
                 break
 
     async def retrieve_results(
-        self,
-        job_handle: JobHandle,
-        dest: Path,
-        cleanup: Optional[bool] = None
+        self, job_handle: JobHandle, dest: Path, cleanup: Optional[bool] = None
     ) -> None:
         """
         Retrieve results (BaseRunner interface).
@@ -939,7 +935,7 @@ async def run_dft_job(
     work_dir: Path,
     dft_code: DFTCode = DFTCode.CRYSTAL,
     job_id: int = 0,
-    threads: Optional[int] = None
+    threads: Optional[int] = None,
 ) -> JobResult:
     """
     Simple wrapper to run a DFT job and get results.
@@ -978,9 +974,7 @@ async def run_dft_job(
 
 # Backward-compatible alias
 async def run_crystal_job(
-    work_dir: Path,
-    job_id: int = 0,
-    threads: Optional[int] = None
+    work_dir: Path, job_id: int = 0, threads: Optional[int] = None
 ) -> JobResult:
     """Backward-compatible alias for run_dft_job with CRYSTAL code."""
     return await run_dft_job(work_dir, DFTCode.CRYSTAL, job_id, threads)

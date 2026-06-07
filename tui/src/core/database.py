@@ -29,6 +29,7 @@ def _safe_get_column(row: sqlite3.Row, col_name: str, default: Any = None) -> An
 
 class RunnerType(Enum):
     """Job execution backend types."""
+
     LOCAL = "local"
     SSH = "ssh"
     SLURM = "slurm"
@@ -36,12 +37,14 @@ class RunnerType(Enum):
 
 class ClusterType(Enum):
     """Remote cluster types."""
+
     SSH = "ssh"
     SLURM = "slurm"
 
 
 class DependencyType(Enum):
     """Job dependency relationship types."""
+
     AFTER_OK = "after_ok"  # Run after successful completion
     AFTER_ANY = "after_any"  # Run after completion (any status)
     AFTER_FAILED = "after_failed"  # Run only if dependency failed
@@ -50,6 +53,7 @@ class DependencyType(Enum):
 @dataclass
 class Job:
     """Represents a DFT calculation job."""
+
     id: Optional[int]
     name: str
     work_dir: str
@@ -76,6 +80,7 @@ class Job:
 @dataclass
 class Cluster:
     """Represents a remote cluster configuration."""
+
     id: Optional[int]
     name: str
     type: str  # ssh or slurm
@@ -94,6 +99,7 @@ class Cluster:
 @dataclass
 class RemoteJob:
     """Represents remote job execution details."""
+
     id: Optional[int]
     job_id: int
     cluster_id: int
@@ -110,6 +116,7 @@ class RemoteJob:
 @dataclass
 class JobDependency:
     """Represents a dependency between two jobs."""
+
     id: Optional[int]
     job_id: int
     depends_on_job_id: int
@@ -119,6 +126,7 @@ class JobDependency:
 @dataclass
 class JobResult:
     """Represents detailed job results (normalized from jobs table)."""
+
     id: Optional[int]
     job_id: int
     key_results: Optional[Dict[str, Any]] = None
@@ -387,7 +395,7 @@ class Database:
         conn = sqlite3.connect(
             str(self.db_path),
             check_same_thread=False,
-            timeout=30.0  # 30 seconds timeout for lock acquisition
+            timeout=30.0,  # 30 seconds timeout for lock acquisition
         )
         conn.row_factory = sqlite3.Row
 
@@ -440,7 +448,7 @@ class Database:
             DeprecationWarning,
             stacklevel=2,
         )
-        if not hasattr(self, '_shared_conn'):
+        if not hasattr(self, "_shared_conn"):
             self._shared_conn = self._pool.get()
         return self._shared_conn
 
@@ -456,15 +464,10 @@ class Database:
             conn.execute("BEGIN TRANSACTION")
             try:
                 # Parse and execute each statement individually
-                statements = [
-                    stmt.strip() for stmt in self.SCHEMA_V1.split(';')
-                    if stmt.strip()
-                ]
+                statements = [stmt.strip() for stmt in self.SCHEMA_V1.split(";") if stmt.strip()]
                 for stmt in statements:
                     conn.execute(stmt)
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (1,)
-                )
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (1,))
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -515,14 +518,11 @@ class Database:
             try:
                 # Parse and execute each statement individually
                 statements = [
-                    stmt.strip() for stmt in self.MIGRATION_V1_TO_V2.split(';')
-                    if stmt.strip()
+                    stmt.strip() for stmt in self.MIGRATION_V1_TO_V2.split(";") if stmt.strip()
                 ]
                 for stmt in statements:
                     conn.execute(stmt)
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (2,)
-                )
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (2,))
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -540,14 +540,11 @@ class Database:
             try:
                 # Parse and execute each statement individually
                 statements = [
-                    stmt.strip() for stmt in self.MIGRATION_V2_TO_V3.split(';')
-                    if stmt.strip()
+                    stmt.strip() for stmt in self.MIGRATION_V2_TO_V3.split(";") if stmt.strip()
                 ]
                 for stmt in statements:
                     conn.execute(stmt)
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (3,)
-                )
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (3,))
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -590,14 +587,13 @@ class Database:
             try:
                 # Parse and execute each statement individually
                 statements = [
-                    stmt.strip() for stmt in self.MIGRATION_V3_TO_V4.split(';')
-                    if stmt.strip() and not stmt.strip().startswith('--')
+                    stmt.strip()
+                    for stmt in self.MIGRATION_V3_TO_V4.split(";")
+                    if stmt.strip() and not stmt.strip().startswith("--")
                 ]
                 for stmt in statements:
                     conn.execute(stmt)
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (4,)
-                )
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (4,))
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -635,7 +631,7 @@ class Database:
             # Check if key_results column exists in jobs table
             cursor = conn.execute("PRAGMA table_info(jobs)")
             columns = {row[1] for row in cursor.fetchall()}
-            has_key_results = 'key_results' in columns
+            has_key_results = "key_results" in columns
 
             # Migration is needed - create table and migrate data
             conn.execute("BEGIN TRANSACTION")
@@ -667,9 +663,7 @@ class Database:
                         WHERE key_results IS NOT NULL
                     """)
 
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (5,)
-                )
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (5,))
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -707,19 +701,15 @@ class Database:
                 # Parse and execute each statement individually
                 # First remove comment lines, then split by semicolon
                 lines = [
-                    line for line in self.MIGRATION_V5_TO_V6.split('\n')
-                    if not line.strip().startswith('--')
+                    line
+                    for line in self.MIGRATION_V5_TO_V6.split("\n")
+                    if not line.strip().startswith("--")
                 ]
-                sql_no_comments = '\n'.join(lines)
-                statements = [
-                    stmt.strip() for stmt in sql_no_comments.split(';')
-                    if stmt.strip()
-                ]
+                sql_no_comments = "\n".join(lines)
+                statements = [stmt.strip() for stmt in sql_no_comments.split(";") if stmt.strip()]
                 for stmt in statements:
                     conn.execute(stmt)
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (6,)
-                )
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (6,))
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -739,17 +729,11 @@ class Database:
             conn.execute("BEGIN TRANSACTION")
             try:
                 # Add expires_at to materials_structures
-                conn.execute(
-                    "ALTER TABLE materials_structures ADD COLUMN expires_at TEXT"
-                )
+                conn.execute("ALTER TABLE materials_structures ADD COLUMN expires_at TEXT")
                 # Add expires_at to mpcontribs_cache
-                conn.execute(
-                    "ALTER TABLE mpcontribs_cache ADD COLUMN expires_at TEXT"
-                )
+                conn.execute("ALTER TABLE mpcontribs_cache ADD COLUMN expires_at TEXT")
                 # Record version
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (7,)
-                )
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (7,))
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -766,14 +750,11 @@ class Database:
             try:
                 # Parse and execute each statement individually
                 statements = [
-                    stmt.strip() for stmt in self.MIGRATION_V7_TO_V8.split(';')
-                    if stmt.strip()
+                    stmt.strip() for stmt in self.MIGRATION_V7_TO_V8.split(";") if stmt.strip()
                 ]
                 for stmt in statements:
                     conn.execute(stmt)
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (8,)
-                )
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (8,))
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -789,14 +770,11 @@ class Database:
             conn.execute("BEGIN TRANSACTION")
             try:
                 statements = [
-                    stmt.strip() for stmt in self.MIGRATION_V8_TO_V9.split(';')
-                    if stmt.strip()
+                    stmt.strip() for stmt in self.MIGRATION_V8_TO_V9.split(";") if stmt.strip()
                 ]
                 for stmt in statements:
                     conn.execute(stmt)
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (9,)
-                )
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (9,))
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -821,7 +799,7 @@ class Database:
         cluster_id: Optional[int] = None,
         runner_type: str = "local",
         parallelism_config: Optional[Dict[str, Any]] = None,
-        dft_code: str = "crystal"
+        dft_code: str = "crystal",
     ) -> int:
         """Create a new job entry."""
         parallelism_json = json.dumps(parallelism_config) if parallelism_config else None
@@ -833,7 +811,16 @@ class Database:
                     INSERT INTO jobs (name, work_dir, status, input_file, workflow_id, cluster_id, runner_type, parallelism_config, dft_code)
                     VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)
                     """,
-                    (name, work_dir, input_content, workflow_id, cluster_id, runner_type, parallelism_json, dft_code)
+                    (
+                        name,
+                        work_dir,
+                        input_content,
+                        workflow_id,
+                        cluster_id,
+                        runner_type,
+                        parallelism_json,
+                        dft_code,
+                    ),
                 )
                 job_id = cursor.lastrowid
                 if job_id is None:
@@ -843,9 +830,7 @@ class Database:
     def get_job(self, job_id: int) -> Optional[Job]:
         """Get a job by ID."""
         with self.connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE id = ?", (job_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
 
             if not row:
                 return None
@@ -855,9 +840,7 @@ class Database:
     def get_all_jobs(self) -> List[Job]:
         """Get all jobs ordered by creation date."""
         with self.connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM jobs ORDER BY created_at DESC"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
 
             return [self._row_to_job(row) for row in rows]
 
@@ -879,10 +862,9 @@ class Database:
         with self.connection() as conn:
             # Convert to list if needed (handles sets) and create placeholders
             job_ids_list = list(job_ids)
-            placeholders = ','.join('?' * len(job_ids_list))
+            placeholders = ",".join("?" * len(job_ids_list))
             cursor = conn.execute(
-                f"SELECT id, status FROM jobs WHERE id IN ({placeholders})",
-                tuple(job_ids_list)
+                f"SELECT id, status FROM jobs WHERE id IN ({placeholders})", tuple(job_ids_list)
             )
             return {row[0]: row[1] for row in cursor.fetchall()}
 
@@ -903,11 +885,8 @@ class Database:
 
         with self.connection() as conn:
             # Create placeholders for parameterized query
-            placeholders = ','.join('?' * len(job_ids))
-            cursor = conn.execute(
-                f"SELECT id FROM jobs WHERE id IN ({placeholders})",
-                job_ids
-            )
+            placeholders = ",".join("?" * len(job_ids))
+            cursor = conn.execute(f"SELECT id FROM jobs WHERE id IN ({placeholders})", job_ids)
             existing_ids = {row[0] for row in cursor.fetchall()}
 
             # Return dict with True for existing jobs, False for non-existent
@@ -917,8 +896,7 @@ class Database:
         """Get all jobs for a specific cluster."""
         with self.connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM jobs WHERE cluster_id = ? ORDER BY created_at DESC",
-                (cluster_id,)
+                "SELECT * FROM jobs WHERE cluster_id = ? ORDER BY created_at DESC", (cluster_id,)
             ).fetchall()
 
             return [self._row_to_job(row) for row in rows]
@@ -927,18 +905,12 @@ class Database:
         """Get all jobs with a specific status."""
         with self.connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM jobs WHERE status = ? ORDER BY created_at DESC",
-                (status,)
+                "SELECT * FROM jobs WHERE status = ? ORDER BY created_at DESC", (status,)
             ).fetchall()
 
             return [self._row_to_job(row) for row in rows]
 
-    def update_status(
-        self,
-        job_id: int,
-        status: str,
-        pid: Optional[int] = None
-    ) -> None:
+    def update_status(self, job_id: int, status: str, pid: Optional[int] = None) -> None:
         """Update job status and optionally PID."""
         timestamp_field = None
         if status == "RUNNING":
@@ -955,19 +927,18 @@ class Database:
                         SET status = ?, pid = ?, {timestamp_field} = CURRENT_TIMESTAMP
                         WHERE id = ?
                         """,
-                        (status, pid, job_id)
+                        (status, pid, job_id),
                     )
                 else:
                     conn.execute(
-                        "UPDATE jobs SET status = ?, pid = ? WHERE id = ?",
-                        (status, pid, job_id)
+                        "UPDATE jobs SET status = ?, pid = ? WHERE id = ?", (status, pid, job_id)
                     )
 
     def update_results(
         self,
         job_id: int,
         final_energy: Optional[float] = None,
-        key_results: Optional[Dict[str, Any]] = None
+        key_results: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Update job results after completion."""
         results_json = json.dumps(key_results) if key_results else None
@@ -979,7 +950,7 @@ class Database:
                     SET final_energy = ?, key_results = ?
                     WHERE id = ?
                     """,
-                    (final_energy, results_json, job_id)
+                    (final_energy, results_json, job_id),
                 )
 
     def _row_to_job(self, row: sqlite3.Row) -> Job:
@@ -1011,7 +982,7 @@ class Database:
             queue_time=_safe_get_column(row, "queue_time"),
             start_time=_safe_get_column(row, "start_time"),
             end_time=_safe_get_column(row, "end_time"),
-            dft_code=_safe_get_column(row, "dft_code") or "crystal"
+            dft_code=_safe_get_column(row, "dft_code") or "crystal",
         )
 
     # ==================== Cluster Methods (Phase 2) ====================
@@ -1026,7 +997,7 @@ class Database:
         connection_config: Optional[Dict[str, Any]] = None,
         cry23_root: Optional[str] = None,
         vasp_root: Optional[str] = None,
-        setup_commands: Optional[List[str]] = None
+        setup_commands: Optional[List[str]] = None,
     ) -> int:
         """Create a new cluster configuration."""
         config_json = json.dumps(connection_config or {})
@@ -1040,7 +1011,17 @@ class Database:
                                          cry23_root, vasp_root, setup_commands)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (name, type, hostname, port, username, config_json, cry23_root, vasp_root, setup_json)
+                    (
+                        name,
+                        type,
+                        hostname,
+                        port,
+                        username,
+                        config_json,
+                        cry23_root,
+                        vasp_root,
+                        setup_json,
+                    ),
                 )
                 cluster_id = cursor.lastrowid
                 if cluster_id is None:
@@ -1050,9 +1031,7 @@ class Database:
     def get_cluster(self, cluster_id: int) -> Optional[Cluster]:
         """Get a cluster by ID."""
         with self.connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM clusters WHERE id = ?", (cluster_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM clusters WHERE id = ?", (cluster_id,)).fetchone()
 
             if not row:
                 return None
@@ -1062,9 +1041,7 @@ class Database:
     def get_cluster_by_name(self, name: str) -> Optional[Cluster]:
         """Get a cluster by name."""
         with self.connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM clusters WHERE name = ?", (name,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM clusters WHERE name = ?", (name,)).fetchone()
 
             if not row:
                 return None
@@ -1074,9 +1051,7 @@ class Database:
     def get_all_clusters(self) -> List[Cluster]:
         """Get all clusters ordered by name."""
         with self.connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM clusters ORDER BY name"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM clusters ORDER BY name").fetchall()
 
             return [self._row_to_cluster(row) for row in rows]
 
@@ -1100,7 +1075,7 @@ class Database:
         status: Optional[str] = None,
         cry23_root: Optional[str] = None,
         vasp_root: Optional[str] = None,
-        setup_commands: Optional[List[str]] = None
+        setup_commands: Optional[List[str]] = None,
     ) -> None:
         """Update cluster configuration."""
         updates = []
@@ -1173,7 +1148,7 @@ class Database:
             vasp_root=_safe_get_column(row, "vasp_root"),
             setup_commands=setup_commands,
             created_at=row["created_at"],
-            updated_at=row["updated_at"]
+            updated_at=row["updated_at"],
         )
 
     # ==================== Remote Job Methods (Phase 2) ====================
@@ -1185,7 +1160,7 @@ class Database:
         remote_handle: str,
         working_directory: str,
         queue_name: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> int:
         """Create a remote job tracking entry."""
         metadata_json = json.dumps(metadata or {})
@@ -1198,7 +1173,14 @@ class Database:
                                             queue_name, metadata, submission_time)
                     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     """,
-                    (job_id, cluster_id, remote_handle, working_directory, queue_name, metadata_json)
+                    (
+                        job_id,
+                        cluster_id,
+                        remote_handle,
+                        working_directory,
+                        queue_name,
+                        metadata_json,
+                    ),
                 )
                 remote_job_id = cursor.lastrowid
                 if remote_job_id is None:
@@ -1220,9 +1202,7 @@ class Database:
     def get_remote_job_by_job_id(self, job_id: int) -> Optional[RemoteJob]:
         """Get a remote job by job ID."""
         with self.connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM remote_jobs WHERE job_id = ?", (job_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM remote_jobs WHERE job_id = ?", (job_id,)).fetchone()
 
             if not row:
                 return None
@@ -1235,7 +1215,7 @@ class Database:
         node_list: Optional[str] = None,
         stdout_path: Optional[str] = None,
         stderr_path: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Update remote job details."""
         updates = []
@@ -1278,16 +1258,13 @@ class Database:
             working_directory=row["working_directory"],
             stdout_path=row["stdout_path"],
             stderr_path=row["stderr_path"],
-            metadata=metadata
+            metadata=metadata,
         )
 
     # ==================== Job Dependency Methods (Phase 2) ====================
 
     def add_job_dependency(
-        self,
-        job_id: int,
-        depends_on_job_id: int,
-        dependency_type: str = "after_ok"
+        self, job_id: int, depends_on_job_id: int, dependency_type: str = "after_ok"
     ) -> int:
         """Add a dependency between two jobs."""
         with self.connection() as conn:
@@ -1297,7 +1274,7 @@ class Database:
                     INSERT INTO job_dependencies (job_id, depends_on_job_id, dependency_type)
                     VALUES (?, ?, ?)
                     """,
-                    (job_id, depends_on_job_id, dependency_type)
+                    (job_id, depends_on_job_id, dependency_type),
                 )
                 dep_id = cursor.lastrowid
                 if dep_id is None:
@@ -1354,14 +1331,10 @@ class Database:
                     )
             elif dep.dependency_type == "after_any":
                 if parent_job.status not in ("COMPLETED", "FAILED"):
-                    blocking_reasons.append(
-                        f"Waiting for job '{parent_job.name}' to finish"
-                    )
+                    blocking_reasons.append(f"Waiting for job '{parent_job.name}' to finish")
             elif dep.dependency_type == "after_failed":
                 if parent_job.status != "FAILED":
-                    blocking_reasons.append(
-                        f"Waiting for job '{parent_job.name}' to fail"
-                    )
+                    blocking_reasons.append(f"Waiting for job '{parent_job.name}' to fail")
 
         return len(blocking_reasons) == 0, blocking_reasons
 
@@ -1371,7 +1344,7 @@ class Database:
             id=row["id"],
             job_id=row["job_id"],
             depends_on_job_id=row["depends_on_job_id"],
-            dependency_type=row["dependency_type"]
+            dependency_type=row["dependency_type"],
         )
 
     # ==================== Job Results Methods (Phase 5 - Normalized) ====================
@@ -1383,7 +1356,7 @@ class Database:
         convergence_status: Optional[str] = None,
         scf_cycles: Optional[int] = None,
         cpu_time_seconds: Optional[float] = None,
-        wall_time_seconds: Optional[float] = None
+        wall_time_seconds: Optional[float] = None,
     ) -> int:
         """
         Save detailed job results to normalized job_results table.
@@ -1407,15 +1380,18 @@ class Database:
                         cpu_time_seconds = excluded.cpu_time_seconds,
                         wall_time_seconds = excluded.wall_time_seconds
                     """,
-                    (job_id, results_json, convergence_status, scf_cycles,
-                     cpu_time_seconds, wall_time_seconds)
+                    (
+                        job_id,
+                        results_json,
+                        convergence_status,
+                        scf_cycles,
+                        cpu_time_seconds,
+                        wall_time_seconds,
+                    ),
                 )
 
                 # Also update legacy column for backward compatibility
-                conn.execute(
-                    "UPDATE jobs SET key_results = ? WHERE id = ?",
-                    (results_json, job_id)
-                )
+                conn.execute("UPDATE jobs SET key_results = ? WHERE id = ?", (results_json, job_id))
 
                 result_id = cursor.lastrowid
                 if result_id is None:
@@ -1429,9 +1405,7 @@ class Database:
     def get_job_result(self, job_id: int) -> Optional[JobResult]:
         """Get detailed job results from normalized table."""
         with self.connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM job_results WHERE job_id = ?", (job_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM job_results WHERE job_id = ?", (job_id,)).fetchone()
 
             if not row:
                 return None
@@ -1466,7 +1440,7 @@ class Database:
             scf_cycles=row["scf_cycles"],
             cpu_time_seconds=row["cpu_time_seconds"],
             wall_time_seconds=row["wall_time_seconds"],
-            created_at=row["created_at"]
+            created_at=row["created_at"],
         )
 
     # ==================== Utility Methods ====================
@@ -1474,9 +1448,9 @@ class Database:
     def close(self) -> None:
         """Close all database connections in the pool."""
         # Return shared connection to pool if it exists
-        if hasattr(self, '_shared_conn'):
+        if hasattr(self, "_shared_conn"):
             self._pool.put(self._shared_conn)
-            delattr(self, '_shared_conn')
+            delattr(self, "_shared_conn")
 
         # Close all connections in the pool
         while not self._pool.empty():

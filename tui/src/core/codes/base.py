@@ -70,9 +70,7 @@ class DFTCodeConfig:
         if fallback:
             return fallback
 
-        raise ValueError(
-            f"No executable configured for code '{self.display_name}'"
-        )
+        raise ValueError(f"No executable configured for code '{self.display_name}'")
 
     def build_command(
         self, input_file: Path, output_file: Path, parallel: bool = False

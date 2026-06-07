@@ -21,11 +21,7 @@ class JobProgressUpdate(Message):
     """
 
     def __init__(
-        self,
-        job_id: int,
-        job_handle: str,
-        progress_data: Dict[str, Any],
-        status_text: str
+        self, job_id: int, job_handle: str, progress_data: Dict[str, Any], status_text: str
     ):
         self.job_id = job_id
         self.job_handle = job_handle
@@ -46,11 +42,7 @@ class JobStatusChanged(Message):
     """
 
     def __init__(
-        self,
-        job_id: int,
-        old_status: str,
-        new_status: str,
-        job_handle: Optional[str] = None
+        self, job_id: int, old_status: str, new_status: str, job_handle: Optional[str] = None
     ):
         self.job_id = job_id
         self.old_status = old_status

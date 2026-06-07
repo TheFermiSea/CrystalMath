@@ -26,6 +26,7 @@ Example:
             d12_content = await service.generate_crystal_input("mp-2815")
             print(d12_content)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -270,9 +271,7 @@ class MaterialsService:
             RuntimeError: If not in context manager
         """
         if not self._entered:
-            raise RuntimeError(
-                "MaterialsService must be used as async context manager"
-            )
+            raise RuntimeError("MaterialsService must be used as async context manager")
 
         async with self._mpcontribs_client_lock:
             if self._mpcontribs_client is None:
@@ -290,9 +289,7 @@ class MaterialsService:
             RuntimeError: If not in context manager
         """
         if not self._entered:
-            raise RuntimeError(
-                "MaterialsService must be used as async context manager"
-            )
+            raise RuntimeError("MaterialsService must be used as async context manager")
 
         async with self._optimade_client_lock:
             if self._optimade_client is None:
@@ -572,8 +569,7 @@ class MaterialsService:
         if not material_id.startswith("mp-"):
             raise ValidationError(
                 "material_id",
-                f"Invalid Materials Project ID format: {material_id}. "
-                "Expected format: 'mp-XXXXX'",
+                f"Invalid Materials Project ID format: {material_id}. Expected format: 'mp-XXXXX'",
             )
 
         # Generate cache key
@@ -657,13 +653,9 @@ class MaterialsService:
             """Fetch contributions for a single record."""
             try:
                 async with self._semaphore:
-                    contributions = await client.search_by_material_id(
-                        record.material_id
-                    )
+                    contributions = await client.search_by_material_id(record.material_id)
                 if contributions:
-                    record.metadata["contributions"] = [
-                        c.to_dict() for c in contributions
-                    ]
+                    record.metadata["contributions"] = [c.to_dict() for c in contributions]
             except Exception as e:
                 logger.debug(
                     "Failed to fetch contributions for %s: %s",
@@ -677,10 +669,7 @@ class MaterialsService:
         enriched = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Filter out exceptions and return valid records
-        return [
-            r for r in enriched
-            if isinstance(r, MaterialRecord)
-        ]
+        return [r for r in enriched if isinstance(r, MaterialRecord)]
 
     async def get_contributions(
         self,

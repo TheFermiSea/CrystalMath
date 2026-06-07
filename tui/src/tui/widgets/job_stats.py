@@ -55,9 +55,7 @@ class JobStatsWidget(Static):
         """Render the statistics display."""
         # Calculate success rate
         finished_jobs = self.completed_jobs + self.failed_jobs
-        success_rate = (
-            (self.completed_jobs / finished_jobs * 100) if finished_jobs > 0 else 0.0
-        )
+        success_rate = (self.completed_jobs / finished_jobs * 100) if finished_jobs > 0 else 0.0
 
         # Build the stats text
         stats_text = Text()
@@ -100,7 +98,13 @@ class JobStatsWidget(Static):
         # Success rate
         if finished_jobs > 0:
             stats_text.append("  Success Rate: ", style="dim")
-            rate_style = "green bold" if success_rate >= 80 else "yellow bold" if success_rate >= 50 else "red bold"
+            rate_style = (
+                "green bold"
+                if success_rate >= 80
+                else "yellow bold"
+                if success_rate >= 50
+                else "red bold"
+            )
             stats_text.append(f"{success_rate:.1f}%", style=rate_style)
 
         # Update the widget

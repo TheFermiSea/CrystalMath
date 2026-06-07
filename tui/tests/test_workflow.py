@@ -23,7 +23,7 @@ from src.core.workflow import (
     NodeType,
     NodeStatus,
     WorkflowStatus,
-    WorkflowEdge
+    WorkflowEdge,
 )
 
 
@@ -32,7 +32,9 @@ from src.core.workflow import (
 TEST_METADATA = {"allow_stub_execution": True}
 
 
-def create_test_workflow(workflow_id: str = "test", name: str = "Test", description: str = "") -> Workflow:
+def create_test_workflow(
+    workflow_id: str = "test", name: str = "Test", description: str = ""
+) -> Workflow:
     """Create a workflow configured for testing (stub execution enabled)."""
     return Workflow(workflow_id, name, description, metadata=TEST_METADATA)
 
@@ -89,10 +91,7 @@ class TestWorkflowConstruction:
         wf.add_node("opt", {}, node_id="opt")
 
         transfer = wf.add_data_transfer_node(
-            "transfer_f9",
-            source_node="opt",
-            source_files=["*.f9"],
-            target_node="freq"
+            "transfer_f9", source_node="opt", source_files=["*.f9"], target_node="freq"
         )
 
         assert transfer.node_type == NodeType.DATA_TRANSFER
@@ -110,7 +109,7 @@ class TestWorkflowConstruction:
             condition_expr="opt['converged'] == True",
             true_branch=["freq"],
             false_branch=["restart_opt"],
-            dependencies=["opt"]
+            dependencies=["opt"],
         )
 
         assert condition.node_type == NodeType.CONDITION
@@ -125,9 +124,7 @@ class TestWorkflowConstruction:
         wf.add_node("calc2", {}, node_id="calc2")
 
         agg = wf.add_aggregation_node(
-            "average_energy",
-            aggregation_func="mean",
-            dependencies=["calc1", "calc2"]
+            "average_energy", aggregation_func="mean", dependencies=["calc1", "calc2"]
         )
 
         assert agg.node_type == NodeType.AGGREGATION
@@ -321,7 +318,7 @@ class TestWorkflowValidation:
             condition_expr="opt['converged']",
             true_branch=["freq"],
             false_branch=[],
-            dependencies=["opt"]
+            dependencies=["opt"],
         )
         wf.add_dependency("opt", "check")
         wf.add_dependency("check", "freq")
@@ -334,11 +331,7 @@ class TestWorkflowValidation:
         """Test validation catches condition node without expression."""
         wf = Workflow("test", "Test")
         node = wf.add_condition_node(
-            "check",
-            condition_expr="",
-            true_branch=["freq"],
-            false_branch=[],
-            dependencies=[]
+            "check", condition_expr="", true_branch=["freq"], false_branch=[], dependencies=[]
         )
         node.condition_expr = None  # Force invalid state
 
@@ -351,11 +344,7 @@ class TestWorkflowValidation:
         """Test validation catches condition node without branches."""
         wf = Workflow("test", "Test")
         wf.add_condition_node(
-            "check",
-            condition_expr="True",
-            true_branch=[],
-            false_branch=[],
-            dependencies=[]
+            "check", condition_expr="True", true_branch=[], false_branch=[], dependencies=[]
         )
 
         errors = wf.validate()
@@ -370,10 +359,7 @@ class TestWorkflowValidation:
         wf.add_node("freq", {}, node_id="freq")
         # Create data transfer node (adds opt to dependencies internally)
         transfer = wf.add_data_transfer_node(
-            "transfer",
-            source_node="opt",
-            source_files=["*.f9"],
-            target_node="freq"
+            "transfer", source_node="opt", source_files=["*.f9"], target_node="freq"
         )
         # Must manually add edges for the dependency relationships
         wf.add_dependency("opt", "transfer")  # opt->transfer edge
@@ -388,10 +374,7 @@ class TestWorkflowValidation:
         """Test validation catches invalid source in data transfer."""
         wf = Workflow("test", "Test")
         node = wf.add_data_transfer_node(
-            "transfer",
-            source_node="nonexistent",
-            source_files=["*.f9"],
-            target_node="freq"
+            "transfer", source_node="nonexistent", source_files=["*.f9"], target_node="freq"
         )
 
         errors = wf.validate()
@@ -404,10 +387,7 @@ class TestWorkflowValidation:
         wf = Workflow("test", "Test")
         wf.add_node("opt", {}, node_id="opt")
         node = wf.add_data_transfer_node(
-            "transfer",
-            source_node="opt",
-            source_files=[],
-            target_node="freq"
+            "transfer", source_node="opt", source_files=[], target_node="freq"
         )
 
         errors = wf.validate()
@@ -559,12 +539,7 @@ class TestParameterPropagation:
         wf = Workflow("test", "Test")
         opt = wf.add_node("opt", {}, node_id="opt")
         freq = wf.add_node(
-            "freq",
-            {
-                "guess": "{{ opt.f9 }}",
-                "energy": "{{ opt.energy }}"
-            },
-            node_id="freq"
+            "freq", {"guess": "{{ opt.f9 }}", "energy": "{{ opt.energy }}"}, node_id="freq"
         )
         wf.add_dependency("opt", "freq")
 
@@ -580,13 +555,7 @@ class TestParameterPropagation:
         wf = Workflow("test", "Test")
         opt = wf.add_node("opt", {}, node_id="opt")
         freq = wf.add_node(
-            "freq",
-            {
-                "guess": "{{ opt.f9 }}",
-                "basis": "sto-3g",
-                "nprocs": 8
-            },
-            node_id="freq"
+            "freq", {"guess": "{{ opt.f9 }}", "basis": "sto-3g", "nprocs": 8}, node_id="freq"
         )
         wf.add_dependency("opt", "freq")
 
@@ -682,9 +651,7 @@ class TestWorkflowExecution:
         wf.add_node("calc1", {}, node_id="calc1")
         wf.add_node("calc2", {}, node_id="calc2")
         agg = wf.add_aggregation_node(
-            "avg",
-            aggregation_func="mean",
-            dependencies=["calc1", "calc2"]
+            "avg", aggregation_func="mean", dependencies=["calc1", "calc2"]
         )
         wf.add_dependency("calc1", "avg")
         wf.add_dependency("calc2", "avg")
@@ -738,7 +705,7 @@ class TestWorkflowSerialization:
         wf.add_node("freq", {}, node_id="freq")
         wf.add_dependency("opt", "freq")
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             filepath = Path(f.name)
 
         try:

@@ -29,17 +29,13 @@ class TestCrystalConfig:
         assert CRYSTAL_CONFIG.invocation_style == InvocationStyle.STDIN
 
     def test_build_serial_command(self):
-        cmd = CRYSTAL_CONFIG.build_command(
-            Path("input.d12"), Path("output.out"), parallel=False
-        )
+        cmd = CRYSTAL_CONFIG.build_command(Path("input.d12"), Path("output.out"), parallel=False)
         assert "crystalOMP" in cmd[-1]
         assert "< input.d12" in cmd[-1]
         assert "> output.out" in cmd[-1]
 
     def test_build_parallel_command(self):
-        cmd = CRYSTAL_CONFIG.build_command(
-            Path("input.d12"), Path("output.out"), parallel=True
-        )
+        cmd = CRYSTAL_CONFIG.build_command(Path("input.d12"), Path("output.out"), parallel=True)
         assert "PcrystalOMP" in cmd[-1]
 
     def test_auxiliary_inputs_mapping(self):

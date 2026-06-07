@@ -183,7 +183,9 @@ class SLURMQueueScreen(Screen):
             # Details panel
             with Vertical(id="details-panel"):
                 yield Label("Job Details", id="details-title")
-                yield Static("Select a job to view details", id="job-details", classes="no-selection")
+                yield Static(
+                    "Select a job to view details", id="job-details", classes="no-selection"
+                )
 
                 with Horizontal(id="detail-actions"):
                     yield Button("Cancel Job", id="cancel-btn", variant="error", disabled=True)
@@ -307,7 +309,9 @@ class SLURMQueueScreen(Screen):
 
         cluster_name = self._cluster.name if self._cluster else "Unknown"
         header = self.query_one("#header-label", Label)
-        header.update(f"SLURM Queue: {cluster_name} - {total} jobs ({running} running, {pending} pending)")
+        header.update(
+            f"SLURM Queue: {cluster_name} - {total} jobs ({running} running, {pending} pending)"
+        )
 
     # Use DataTable.RowHighlighted since SLURMQueueWidget inherits from DataTable
     @on(DataTable.RowHighlighted)
@@ -319,17 +323,17 @@ class SLURMQueueScreen(Screen):
             return
 
         queue_widget = self.query_one("#queue-widget", SLURMQueueWidget)
-        
+
         # Use event.row_key.value directly to get job (RowKey object has .value attribute)
         job = None
         if event.row_key:
             # RowKey object - extract the actual value
-            key = event.row_key.value if hasattr(event.row_key, 'value') else str(event.row_key)
+            key = event.row_key.value if hasattr(event.row_key, "value") else str(event.row_key)
             job = queue_widget.get_job(str(key))
-        
+
         if not job:
             job = queue_widget.get_selected_job() or queue_widget.get_first_job()
-            
+
         logger.debug(f"Selected job: {job}")
 
         if job:

@@ -83,7 +83,7 @@ class SLURMQueueWidget(DataTable):
         runner: Optional["SLURMRunner"] = None,
         refresh_interval: float = 5.0,
         auto_refresh: bool = True,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize the SLURM queue widget.
@@ -94,11 +94,7 @@ class SLURMQueueWidget(DataTable):
             auto_refresh: Whether to enable auto-refresh on mount.
             **kwargs: Additional arguments passed to DataTable.
         """
-        super().__init__(
-            zebra_stripes=True,
-            cursor_type="row",
-            **kwargs
-        )
+        super().__init__(zebra_stripes=True, cursor_type="row", **kwargs)
         self._runner = runner
         self._refresh_interval = refresh_interval
         self._auto_refresh = auto_refresh
@@ -110,9 +106,7 @@ class SLURMQueueWidget(DataTable):
         """Set the SLURM runner for fetching queue data."""
         self._runner = runner
 
-    def set_fetch_callback(
-        self, callback: Callable[[], Awaitable[List[Dict[str, Any]]]]
-    ) -> None:
+    def set_fetch_callback(self, callback: Callable[[], Awaitable[List[Dict[str, Any]]]]) -> None:
         """
         Set a custom callback for fetching queue data.
 
@@ -127,15 +121,7 @@ class SLURMQueueWidget(DataTable):
     def on_mount(self) -> None:
         """Set up columns and start auto-refresh when widget is mounted."""
         self.add_columns(
-            "JobID",
-            "User",
-            "Name",
-            "State",
-            "Partition",
-            "Nodes",
-            "GPUs",
-            "Time",
-            "NodeList"
+            "JobID", "User", "Name", "State", "Partition", "Nodes", "GPUs", "Time", "NodeList"
         )
 
         if self._auto_refresh and (self._runner or self._fetch_callback):
@@ -147,10 +133,7 @@ class SLURMQueueWidget(DataTable):
 
     def _start_auto_refresh(self) -> None:
         """Start the auto-refresh timer."""
-        self._refresh_timer = self.set_interval(
-            self._refresh_interval,
-            self.request_refresh
-        )
+        self._refresh_timer = self.set_interval(self._refresh_interval, self.request_refresh)
 
     def stop_auto_refresh(self) -> None:
         """Stop the auto-refresh timer."""
@@ -194,7 +177,7 @@ class SLURMQueueWidget(DataTable):
             return await self._runner.get_queue_status(
                 user_only=(self.filter_user is not None),
                 partition=self.filter_partition,
-                states=[self.filter_state] if self.filter_state else None
+                states=[self.filter_state] if self.filter_state else None,
             )
         except Exception:
             # Log error but don't crash the widget
@@ -226,11 +209,13 @@ class SLURMQueueWidget(DataTable):
         if self.cursor_row is not None:
             try:
                 # cursor_row may be RowKey or int depending on Textual version
-                if hasattr(self.cursor_row, 'value'):
+                if hasattr(self.cursor_row, "value"):
                     selected_row_key = str(self.cursor_row.value)
                 else:
                     row_key = self.get_row_key(self.cursor_row)
-                    selected_row_key = str(row_key.value) if hasattr(row_key, 'value') else str(row_key)
+                    selected_row_key = (
+                        str(row_key.value) if hasattr(row_key, "value") else str(row_key)
+                    )
             except Exception:
                 pass
 
@@ -248,7 +233,7 @@ class SLURMQueueWidget(DataTable):
             # Find the row index by matching against row key values
             try:
                 for idx, row_key in enumerate(self.rows.keys()):
-                    key_val = str(row_key.value) if hasattr(row_key, 'value') else str(row_key)
+                    key_val = str(row_key.value) if hasattr(row_key, "value") else str(row_key)
                     if key_val == selected_row_key:
                         self.move_cursor(row=idx)
                         break
@@ -307,16 +292,7 @@ class SLURMQueueWidget(DataTable):
         state_text = self._format_state(state)
 
         self.add_row(
-            job_id,
-            user,
-            name,
-            state_text,
-            partition,
-            nodes,
-            gpus,
-            time_used,
-            node_list,
-            key=job_id
+            job_id, user, name, state_text, partition, nodes, gpus, time_used, node_list, key=job_id
         )
 
     def _format_state(self, state: str) -> Text:
@@ -342,7 +318,7 @@ class SLURMQueueWidget(DataTable):
         """Truncate text with ellipsis if too long."""
         if len(text) <= max_len:
             return text
-        return text[:max_len - 1] + "…"
+        return text[: max_len - 1] + "…"
 
     def get_job(self, row_key: str) -> Optional[Dict[str, Any]]:
         """
@@ -368,13 +344,13 @@ class SLURMQueueWidget(DataTable):
 
         try:
             # Handle both Textual versions: cursor_row may be RowKey or int
-            if hasattr(self.cursor_row, 'value'):
+            if hasattr(self.cursor_row, "value"):
                 # cursor_row is a RowKey object
                 key = str(self.cursor_row.value)
             else:
                 # cursor_row is an int index
                 row_key = self.get_row_key(self.cursor_row)
-                key = str(row_key.value) if hasattr(row_key, 'value') else str(row_key)
+                key = str(row_key.value) if hasattr(row_key, "value") else str(row_key)
             return self._jobs_cache.get(key)
         except Exception:
             return None

@@ -13,24 +13,28 @@ from enum import Enum
 
 class VASPErrorSeverity(Enum):
     """Severity levels for VASP errors."""
-    FATAL = "fatal"          # Job cannot continue
+
+    FATAL = "fatal"  # Job cannot continue
     RECOVERABLE = "recoverable"  # Can be fixed and restarted
-    WARNING = "warning"      # Non-fatal but should be addressed
+    WARNING = "warning"  # Non-fatal but should be addressed
 
 
 @dataclass
 class VASPError:
     """Container for a detected VASP error with recovery info."""
-    code: str                    # Short error code (e.g., "ZBRENT")
+
+    code: str  # Short error code (e.g., "ZBRENT")
     severity: VASPErrorSeverity
-    message: str                 # Human-readable error description
+    message: str  # Human-readable error description
     line_content: Optional[str] = None  # Actual line from OUTCAR
     suggestions: List[str] = field(default_factory=list)  # Recovery suggestions
     incar_changes: Dict[str, str] = field(default_factory=dict)  # Suggested INCAR changes
 
 
 # Known VASP error patterns with recovery strategies
-VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[str], Dict[str, str]]] = [
+VASP_ERROR_PATTERNS: List[
+    Tuple[re.Pattern, str, VASPErrorSeverity, str, List[str], Dict[str, str]]
+] = [
     # ZBRENT: Bracketing error in Brent algorithm (common in relaxation)
     (
         re.compile(r"ZBRENT: fatal error in bracketing", re.IGNORECASE),
@@ -43,9 +47,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Check for unreasonable starting geometry",
             "Increase EDIFF for looser SCF convergence initially",
         ],
-        {"POTIM": "0.1", "IBRION": "1"}
+        {"POTIM": "0.1", "IBRION": "1"},
     ),
-
     # EDDDAV: SCF did not converge
     (
         re.compile(r"Error EDDDAV", re.IGNORECASE),
@@ -59,9 +62,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Check k-point mesh density",
             "For metals: increase SIGMA or use ISMEAR=-5",
         ],
-        {"NELM": "200", "ALGO": "All"}
+        {"NELM": "200", "ALGO": "All"},
     ),
-
     # POSMAP: Internal error with positions
     (
         re.compile(r"POSMAP internal error", re.IGNORECASE),
@@ -73,9 +75,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Increase the unit cell if atoms are too close to periodic images",
             "Verify all atomic positions are within 0.0-1.0 (direct) or cell bounds (Cartesian)",
         ],
-        {}
+        {},
     ),
-
     # Sub-space matrix error
     (
         re.compile(r"RSPHER: internal error: .* (increase|decrease) RSPHER", re.IGNORECASE),
@@ -87,9 +88,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Try ADDGRID=.TRUE. in INCAR",
             "Reduce POTIM for geometry optimization",
         ],
-        {"ADDGRID": ".TRUE."}
+        {"ADDGRID": ".TRUE."},
     ),
-
     # VERY BAD NEWS - general serious error
     (
         re.compile(r"VERY BAD NEWS", re.IGNORECASE),
@@ -101,9 +101,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Review input structure for anomalies",
             "Consider restarting from a known good CONTCAR",
         ],
-        {}
+        {},
     ),
-
     # SGRCON: Symmetry group error
     (
         re.compile(r"SGRCON.*group", re.IGNORECASE),
@@ -115,9 +114,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Or increase SYMPREC to be more tolerant",
             "Check that input structure has correct symmetry",
         ],
-        {"ISYM": "0"}
+        {"ISYM": "0"},
     ),
-
     # RHOSYG: Charge density symmetrization error
     (
         re.compile(r"RHOSYG internal error", re.IGNORECASE),
@@ -128,9 +126,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Set ISYM=0 to disable symmetry",
             "Check for atoms at special positions",
         ],
-        {"ISYM": "0"}
+        {"ISYM": "0"},
     ),
-
     # BRIONS: ionic relaxation problems
     (
         re.compile(r"BRIONS problems", re.IGNORECASE),
@@ -143,9 +140,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Check that forces on atoms are reasonable",
             "Consider starting from different initial geometry",
         ],
-        {"POTIM": "0.1", "IBRION": "1"}
+        {"POTIM": "0.1", "IBRION": "1"},
     ),
-
     # PRICEL: primitive cell error
     (
         re.compile(r"PRICEL.*not found", re.IGNORECASE),
@@ -156,9 +152,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Set SYMPREC to a larger value (e.g., 1E-4)",
             "Or disable symmetry with ISYM=0",
         ],
-        {"SYMPREC": "1E-4"}
+        {"SYMPREC": "1E-4"},
     ),
-
     # Memory allocation errors
     (
         re.compile(r"allocation.*failed|cannot allocate", re.IGNORECASE),
@@ -171,9 +166,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Consider reducing ENCUT or NGX/NGY/NGZ",
             "For very large systems: use LREAL=Auto",
         ],
-        {"LREAL": "Auto"}
+        {"LREAL": "Auto"},
     ),
-
     # BRMIX: Mixing failed
     (
         re.compile(r"BRMIX.*internal error", re.IGNORECASE),
@@ -185,9 +179,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Try different mixing: IMIX=1 with smaller AMIX",
             "For magnetic systems: reduce AMIX_MAG",
         ],
-        {"AMIX": "0.1", "BMIX": "0.0001"}
+        {"AMIX": "0.1", "BMIX": "0.0001"},
     ),
-
     # DENTET: Tetrahedron method error
     (
         re.compile(r"DENTET", re.IGNORECASE),
@@ -199,9 +192,8 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "For metals: ISMEAR=1 or 2 with appropriate SIGMA",
             "Increase k-point density",
         ],
-        {"ISMEAR": "0", "SIGMA": "0.05"}
+        {"ISMEAR": "0", "SIGMA": "0.05"},
     ),
-
     # PSMAXN: augmentation charge error
     (
         re.compile(r"PSMAXN for non-local potential", re.IGNORECASE),
@@ -213,7 +205,7 @@ VASP_ERROR_PATTERNS: List[Tuple[re.Pattern, str, VASPErrorSeverity, str, List[st
             "Explicitly set larger NGX, NGY, NGZ",
             "Check POTCAR files are appropriate for the calculation",
         ],
-        {"PREC": "Accurate"}
+        {"PREC": "Accurate"},
     ),
 ]
 
@@ -246,21 +238,23 @@ class VASPErrorHandler:
             List of detected VASPError objects.
         """
         errors = []
-        lines = content.split('\n')
+        lines = content.split("\n")
 
         for line in lines:
             for pattern, code, severity, message, suggestions, incar_changes in self._patterns:
                 if pattern.search(line):
                     # Check if we already have this error (avoid duplicates)
                     if not any(e.code == code for e in errors):
-                        errors.append(VASPError(
-                            code=code,
-                            severity=severity,
-                            message=message,
-                            line_content=line.strip(),
-                            suggestions=suggestions.copy(),
-                            incar_changes=incar_changes.copy(),
-                        ))
+                        errors.append(
+                            VASPError(
+                                code=code,
+                                severity=severity,
+                                message=message,
+                                line_content=line.strip(),
+                                suggestions=suggestions.copy(),
+                                incar_changes=incar_changes.copy(),
+                            )
+                        )
                     break  # Only match first pattern per line
 
         return errors

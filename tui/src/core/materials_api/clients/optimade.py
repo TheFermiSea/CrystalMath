@@ -9,6 +9,7 @@ References:
 - OPTIMADE specification: https://github.com/Materials-Consortia/OPTIMADE
 - Materials Project OPTIMADE: https://optimade.materialsproject.org
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -120,8 +121,7 @@ class OptimadeClient:
         """Verify required dependencies are installed."""
         if httpx is None:
             raise ImportError(
-                "httpx is required for async OPTIMADE queries. "
-                "Install with: pip install httpx"
+                "httpx is required for async OPTIMADE queries. Install with: pip install httpx"
             )
         if get_pymatgen is None or StructureResource is None:
             raise ImportError(
@@ -263,9 +263,7 @@ class OptimadeClient:
                 if response.status_code == 429:
                     retry_after = int(response.headers.get("Retry-After", 60))
                     if attempt < self.settings.max_retries - 1:
-                        logger.warning(
-                            f"Rate limited by {url}, waiting {retry_after}s..."
-                        )
+                        logger.warning(f"Rate limited by {url}, waiting {retry_after}s...")
                         await asyncio.sleep(retry_after)
                         continue
                     raise RateLimitError("optimade", retry_after=retry_after)
@@ -277,8 +275,7 @@ class OptimadeClient:
                         error_data = response.json()
                         if "errors" in error_data:
                             error_msg = "; ".join(
-                                e.get("detail", str(e))
-                                for e in error_data["errors"]
+                                e.get("detail", str(e)) for e in error_data["errors"]
                             )
                     except Exception:
                         pass
@@ -384,9 +381,7 @@ class OptimadeClient:
 
             # Formation energy
             if "formation_energy_per_atom" in attributes:
-                properties["formation_energy_per_atom"] = attributes[
-                    "formation_energy_per_atom"
-                ]
+                properties["formation_energy_per_atom"] = attributes["formation_energy_per_atom"]
 
             # Number of sites
             if "nsites" in attributes:
@@ -550,8 +545,7 @@ class OptimadeClient:
         if not base_url:
             raise ValidationError(
                 "provider",
-                f"Unknown provider: {provider}. "
-                f"Known: {list(self.PROVIDERS.keys())}",
+                f"Unknown provider: {provider}. Known: {list(self.PROVIDERS.keys())}",
             )
 
         url = self._build_url(base_url, f"structures/{structure_id}")
@@ -656,7 +650,9 @@ class OptimadeClient:
             if error_msg:
                 errors[provider] = error_msg
 
-        logger.info(f"OPTIMADE multi-provider results: {provider_counts}, errors: {list(errors.keys())}")
+        logger.info(
+            f"OPTIMADE multi-provider results: {provider_counts}, errors: {list(errors.keys())}"
+        )
 
         return StructureResult(
             records=all_records,

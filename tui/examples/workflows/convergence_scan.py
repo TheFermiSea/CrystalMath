@@ -23,7 +23,7 @@ async def main():
     wf = Workflow(
         workflow_id="convergence_scan",
         name="Basis Set Convergence Scan",
-        description="Run calculations with increasing basis set quality and aggregate results"
+        description="Run calculations with increasing basis set quality and aggregate results",
     )
 
     # Define basis sets to test
@@ -32,7 +32,7 @@ async def main():
         ("6-31g", "6-31G"),
         ("6-31gd", "6-31G(d)"),
         ("6-311gd", "6-311G(d)"),
-        ("6-311gdp", "6-311G(d,p)")
+        ("6-311gdp", "6-311G(d,p)"),
     ]
 
     # Create calculation node for each basis set
@@ -40,20 +40,14 @@ async def main():
     for basis_id, basis_name in basis_sets:
         node = wf.add_node(
             template="single_point",
-            params={
-                "basis": basis_name,
-                "functional": "PBE",
-                "conv_tol": 1e-8
-            },
-            node_id=f"calc_{basis_id}"
+            params={"basis": basis_name, "functional": "PBE", "conv_tol": 1e-8},
+            node_id=f"calc_{basis_id}",
         )
         calc_nodes.append(node.node_id)
 
     # Add aggregation node to collect energies
     agg = wf.add_aggregation_node(
-        node_id="collect_energies",
-        aggregation_func="collect",
-        dependencies=calc_nodes
+        node_id="collect_energies", aggregation_func="collect", dependencies=calc_nodes
     )
 
     # Add edges from each calculation to the aggregation node
@@ -65,9 +59,9 @@ async def main():
         template="convergence_analysis",
         params={
             "energies": "{{ collect_energies.aggregated_value }}",
-            "threshold": 1e-5  # mHartree convergence threshold
+            "threshold": 1e-5,  # mHartree convergence threshold
         },
-        node_id="analysis"
+        node_id="analysis",
     )
 
     # Connect aggregation to analysis
@@ -126,7 +120,7 @@ async def main():
 
     # Generate visualization
     dot_path = Path("convergence_scan.dot")
-    with open(dot_path, 'w') as f:
+    with open(dot_path, "w") as f:
         f.write(wf.to_graphviz())
     print(f"✓ GraphViz diagram saved to {dot_path}")
     print("  Render with: dot -Tpng convergence_scan.dot -o convergence_scan.png")

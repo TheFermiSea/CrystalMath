@@ -48,9 +48,7 @@ class TestBatchQueryMethod:
         """Test batch query with single job."""
         # Create a job
         job_id = temp_db.create_job(
-            name="test_job",
-            work_dir="/tmp/test",
-            input_content="test input"
+            name="test_job", work_dir="/tmp/test", input_content="test input"
         )
 
         # Query it
@@ -60,21 +58,9 @@ class TestBatchQueryMethod:
     def test_get_job_statuses_batch_multiple_jobs(self, temp_db):
         """Test batch query with multiple jobs."""
         # Create multiple jobs with different statuses
-        job_id1 = temp_db.create_job(
-            name="job1",
-            work_dir="/tmp/job1",
-            input_content="input1"
-        )
-        job_id2 = temp_db.create_job(
-            name="job2",
-            work_dir="/tmp/job2",
-            input_content="input2"
-        )
-        job_id3 = temp_db.create_job(
-            name="job3",
-            work_dir="/tmp/job3",
-            input_content="input3"
-        )
+        job_id1 = temp_db.create_job(name="job1", work_dir="/tmp/job1", input_content="input1")
+        job_id2 = temp_db.create_job(name="job2", work_dir="/tmp/job2", input_content="input2")
+        job_id3 = temp_db.create_job(name="job3", work_dir="/tmp/job3", input_content="input3")
 
         # Update some statuses
         temp_db.update_status(job_id2, "RUNNING")
@@ -83,20 +69,12 @@ class TestBatchQueryMethod:
         # Query all at once
         result = temp_db.get_job_statuses_batch([job_id1, job_id2, job_id3])
 
-        assert result == {
-            job_id1: "PENDING",
-            job_id2: "RUNNING",
-            job_id3: "COMPLETED"
-        }
+        assert result == {job_id1: "PENDING", job_id2: "RUNNING", job_id3: "COMPLETED"}
 
     def test_get_job_statuses_batch_nonexistent_jobs(self, temp_db):
         """Test batch query with mix of existing and non-existent jobs."""
         # Create one real job
-        job_id1 = temp_db.create_job(
-            name="job1",
-            work_dir="/tmp/job1",
-            input_content="input1"
-        )
+        job_id1 = temp_db.create_job(name="job1", work_dir="/tmp/job1", input_content="input1")
 
         # Query real and fake job IDs
         result = temp_db.get_job_statuses_batch([job_id1, 999999])
@@ -116,9 +94,7 @@ class TestQueueManagerBatchOptimization:
         job_ids = []
         for i in range(5):
             job_id = temp_db.create_job(
-                name=f"job{i}",
-                work_dir=f"/tmp/job{i}",
-                input_content=f"input{i}"
+                name=f"job{i}", work_dir=f"/tmp/job{i}", input_content=f"input{i}"
             )
             job_ids.append(job_id)
 
@@ -151,7 +127,9 @@ class TestQueueManagerBatchOptimization:
         assert call_count["batch"] >= 1, "Should use batch query"
         # Individual get_job calls should be 0 or minimal (only for dependency checks)
         # The old code would call get_job N times per job
-        assert call_count["individual"] == 0, "Should not use individual get_job for status checking"
+        assert call_count["individual"] == 0, (
+            "Should not use individual get_job for status checking"
+        )
 
     @pytest.mark.asyncio
     async def test_query_complexity_improvement(self, queue_manager, temp_db):
@@ -161,9 +139,7 @@ class TestQueueManagerBatchOptimization:
         job_ids = []
         for i in range(job_count):
             job_id = temp_db.create_job(
-                name=f"job{i}",
-                work_dir=f"/tmp/job{i}",
-                input_content=f"input{i}"
+                name=f"job{i}", work_dir=f"/tmp/job{i}", input_content=f"input{i}"
             )
             job_ids.append(job_id)
 
@@ -196,25 +172,19 @@ class TestQueueManagerBatchOptimization:
         await queue_manager.schedule_jobs()
 
         # Verify batch query was used
-        assert call_tracker["batch_calls"] >= 1, \
-            "Should use batch query for status checking"
+        assert call_tracker["batch_calls"] >= 1, "Should use batch query for status checking"
 
         # Individual calls might happen for dependency checking, but not for status
         # So the ratio should show optimization
         # Old code: job_count + dependency checks = ~10 + N
         # New code: 1 batch + dependency checks = 1 + N
         # So batch_calls should be 1 and individual_calls should be minimal
-        assert call_tracker["batch_calls"] >= 1, \
-            "Batch query optimization not being used"
+        assert call_tracker["batch_calls"] >= 1, "Batch query optimization not being used"
 
     @pytest.mark.asyncio
     async def test_cache_invalidation_on_enqueue(self, queue_manager, temp_db):
         """Test that cache is invalidated when job is enqueued."""
-        job_id = temp_db.create_job(
-            name="test_job",
-            work_dir="/tmp/test",
-            input_content="test"
-        )
+        job_id = temp_db.create_job(name="test_job", work_dir="/tmp/test", input_content="test")
 
         # Manually add to cache (simulating a previous schedule_jobs call)
         queue_manager._status_cache[job_id] = ("PENDING", datetime.now())
@@ -228,11 +198,7 @@ class TestQueueManagerBatchOptimization:
     @pytest.mark.asyncio
     async def test_cache_invalidation_on_dequeue(self, queue_manager, temp_db):
         """Test that cache is invalidated when job is dequeued."""
-        job_id = temp_db.create_job(
-            name="test_job",
-            work_dir="/tmp/test",
-            input_content="test"
-        )
+        job_id = temp_db.create_job(name="test_job", work_dir="/tmp/test", input_content="test")
 
         # Enqueue the job
         await queue_manager.enqueue(job_id, priority=Priority.NORMAL)
@@ -250,11 +216,7 @@ class TestQueueManagerBatchOptimization:
     @pytest.mark.asyncio
     async def test_cache_invalidation_on_completion(self, queue_manager, temp_db):
         """Test that cache is invalidated when job completes."""
-        job_id = temp_db.create_job(
-            name="test_job",
-            work_dir="/tmp/test",
-            input_content="test"
-        )
+        job_id = temp_db.create_job(name="test_job", work_dir="/tmp/test", input_content="test")
 
         # Add to cache
         queue_manager._status_cache[job_id] = ("RUNNING", datetime.now())
@@ -296,9 +258,7 @@ class TestQueryPerformanceBenchmark:
         job_ids = []
         for i in range(job_count):
             job_id = temp_db.create_job(
-                name=f"job{i}",
-                work_dir=f"/tmp/job{i}",
-                input_content=f"input{i}"
+                name=f"job{i}", work_dir=f"/tmp/job{i}", input_content=f"input{i}"
             )
             job_ids.append(job_id)
 
@@ -319,16 +279,14 @@ class TestQueryPerformanceBenchmark:
         batch_time = time.time() - start_time
 
         # Batch should be significantly faster
-        speedup = individual_time / batch_time if batch_time > 0 else float('inf')
+        speedup = individual_time / batch_time if batch_time > 0 else float("inf")
         print(f"\nPerformance Improvement:")
         print(f"  Individual queries: {individual_time:.4f}s")
         print(f"  Batch query:        {batch_time:.4f}s")
         print(f"  Speedup:            {speedup:.1f}x")
 
-        assert batch_time < individual_time, \
-            f"Batch query should be faster than individual queries"
-        assert speedup >= 1.5, \
-            f"Expected at least 1.5x speedup, got {speedup:.1f}x"
+        assert batch_time < individual_time, f"Batch query should be faster than individual queries"
+        assert speedup >= 1.5, f"Expected at least 1.5x speedup, got {speedup:.1f}x"
 
     def test_scaling_with_queue_size(self, temp_db):
         """Test that batch query scales better than individual queries."""
@@ -341,9 +299,7 @@ class TestQueryPerformanceBenchmark:
             job_ids = []
             for i in range(job_count):
                 job_id = temp_db.create_job(
-                    name=f"job{i}",
-                    work_dir=f"/tmp/job{i}_{job_count}",
-                    input_content=f"input{i}"
+                    name=f"job{i}", work_dir=f"/tmp/job{i}_{job_count}", input_content=f"input{i}"
                 )
                 job_ids.append(job_id)
 
@@ -363,13 +319,15 @@ class TestQueryPerformanceBenchmark:
                         statuses[job_id] = job.status
             individual_time = time.time() - start_time
 
-            speedup = individual_time / batch_time if batch_time > 0 else float('inf')
-            results.append({
-                "job_count": job_count,
-                "individual_time": individual_time,
-                "batch_time": batch_time,
-                "speedup": speedup
-            })
+            speedup = individual_time / batch_time if batch_time > 0 else float("inf")
+            results.append(
+                {
+                    "job_count": job_count,
+                    "individual_time": individual_time,
+                    "batch_time": batch_time,
+                    "speedup": speedup,
+                }
+            )
 
         # Print scaling results
         print("\nScaling Test Results:")
@@ -382,8 +340,9 @@ class TestQueryPerformanceBenchmark:
             )
 
         # All should show speedup
-        assert all(r["speedup"] >= 1.0 for r in results), \
+        assert all(r["speedup"] >= 1.0 for r in results), (
             "Batch query should be faster for all queue sizes"
+        )
 
 
 class TestRealWorldSchedulingScenario:
@@ -401,19 +360,18 @@ class TestRealWorldSchedulingScenario:
         job_ids = []
         for i in range(100):
             job_id = temp_db.create_job(
-                name=f"job{i}",
-                work_dir=f"/tmp/job{i}",
-                input_content=f"input{i}"
+                name=f"job{i}", work_dir=f"/tmp/job{i}", input_content=f"input{i}"
             )
             job_ids.append(job_id)
 
         # Enqueue all with various priorities
         for i, job_id in enumerate(job_ids):
-            priority = (i % 5)  # Distribute across priority levels
+            priority = i % 5  # Distribute across priority levels
             await queue_manager.enqueue(job_id, priority=priority)
 
         # Run multiple scheduling cycles
         import time
+
         start_time = time.time()
 
         for cycle in range(10):
@@ -432,8 +390,9 @@ class TestRealWorldSchedulingScenario:
         print(f"  Average per cycle: {elapsed_time / 10:.4f}s")
 
         # Should complete reasonably fast (well under 10 seconds for 1000 ops)
-        assert elapsed_time < 10.0, \
+        assert elapsed_time < 10.0, (
             f"Scheduling should be fast with batch queries, took {elapsed_time:.2f}s"
+        )
 
 
 if __name__ == "__main__":

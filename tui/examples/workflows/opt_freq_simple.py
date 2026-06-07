@@ -24,19 +24,15 @@ async def main():
     wf = Workflow(
         workflow_id="opt_freq_simple",
         name="Optimization → Frequency",
-        description="Simple two-step workflow: optimize geometry then calculate frequencies"
+        description="Simple two-step workflow: optimize geometry then calculate frequencies",
     )
 
     # Add optimization node
     opt = wf.add_node(
         template="optimization",
-        params={
-            "basis": "sto-3g",
-            "functional": "PBE",
-            "conv_tol": 1e-6
-        },
+        params={"basis": "sto-3g", "functional": "PBE", "conv_tol": 1e-6},
         node_id="opt",
-        max_retries=1
+        max_retries=1,
     )
 
     # Add frequency calculation node (uses .f9 from optimization)
@@ -46,9 +42,9 @@ async def main():
             "basis": "sto-3g",
             "functional": "PBE",
             "guess_file": "{{ opt.f9 }}",  # Parameter propagation
-            "temperature": 298.15
+            "temperature": 298.15,
         },
-        node_id="freq"
+        node_id="freq",
     )
 
     # Add dependency: freq depends on opt

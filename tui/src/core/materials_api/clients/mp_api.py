@@ -68,11 +68,7 @@ class MpApiClient:
         self._settings = settings or MaterialsSettings.get_instance()
 
         # API key resolution: explicit > env var > settings
-        self._api_key = (
-            api_key
-            or os.getenv("MP_API_KEY")
-            or self._settings.mp_api_key
-        )
+        self._api_key = api_key or os.getenv("MP_API_KEY") or self._settings.mp_api_key
 
         # Concurrency control
         self._max_concurrent = max_concurrent or self._settings.max_concurrent_requests
@@ -103,13 +99,14 @@ class MpApiClient:
                     raise AuthenticationError(
                         _SOURCE,
                         "MP_API_KEY not configured. Set via environment variable "
-                        "or pass api_key to MpApiClient."
+                        "or pass api_key to MpApiClient.",
                     )
 
                 try:
                     # Import and instantiate MPRester in thread to avoid blocking
                     def _create_mpr():
                         from mp_api.client import MPRester
+
                         return MPRester(api_key=self._api_key)
 
                     self._mpr = await asyncio.to_thread(_create_mpr)
@@ -145,6 +142,7 @@ class MpApiClient:
             retry_after = None
             if "retry" in exc_str:
                 import re
+
                 match = re.search(r"(\d+)\s*(?:second|sec|s)", exc_str)
                 if match:
                     retry_after = int(match.group(1))
@@ -179,6 +177,7 @@ class MpApiClient:
         Raises:
             MaterialsAPIError: On API errors
         """
+
         # Wrap the function to acquire thread lock before calling MPRester
         def _thread_safe_call():
             with self._mpr_thread_lock:
@@ -405,7 +404,9 @@ class MpApiClient:
                     # Handle nested objects (like symmetry)
                     if hasattr(value, "dict"):
                         result[prop] = value.dict()
-                    elif hasattr(value, "__dict__") and not isinstance(value, (str, int, float, bool)):
+                    elif hasattr(value, "__dict__") and not isinstance(
+                        value, (str, int, float, bool)
+                    ):
                         result[prop] = dict(value.__dict__)
                     else:
                         result[prop] = value

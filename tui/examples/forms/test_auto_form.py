@@ -14,6 +14,7 @@ from textual.containers import Container
 
 # Add parent directory to path for imports
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.tui.widgets.auto_form import AutoForm
@@ -77,10 +78,7 @@ class AutoFormTestApp(App):
         yield Header()
 
         with Container(classes="container"):
-            yield Static(
-                f"AutoForm Test - {self.schema_file}",
-                classes="title"
-            )
+            yield Static(f"AutoForm Test - {self.schema_file}", classes="title")
 
             # Load initial form
             schema = self._load_schema(self.schema_file)
@@ -90,9 +88,7 @@ class AutoFormTestApp(App):
 
             # Result display
             yield Static(
-                "Submit form to see results here",
-                id=self.result_display_id,
-                classes="result"
+                "Submit form to see results here", id=self.result_display_id, classes="result"
             )
 
         yield Footer()
@@ -127,7 +123,7 @@ class AutoFormTestApp(App):
         self.notify(
             f"Field '{message.field_name}' changed to: {message.value}",
             severity="information",
-            timeout=2
+            timeout=2,
         )
 
     async def action_load_simple(self) -> None:
@@ -178,7 +174,7 @@ def main():
         nargs="?",
         default="simple_form.json",
         choices=["simple_form.json", "complex_form.json", "conditional_form.json"],
-        help="Schema file to load"
+        help="Schema file to load",
     )
 
     args = parser.parse_args()
