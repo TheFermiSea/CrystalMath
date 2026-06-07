@@ -1,5 +1,12 @@
 # Unified Workflow Architecture
 
+> **⚠️ Historical / superseded.** This document predates the ADR-007–027 redesign and describes the
+> bespoke runner/workflow architecture the redesign collapses. Authoritative direction:
+> [ADR-007](adr-007-redesign-overview-adopt-ecosystem.md),
+> [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md),
+> [ADR-012](adr-012-hpc-execution-jobflow-remote-aiida-optional.md) and [REDESIGN.md](REDESIGN.md).
+> Kept for background only.
+
 **Version:** 2.0.0
 **Status:** Design Phase
 **Date:** 2026-01-09

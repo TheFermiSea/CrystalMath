@@ -36,7 +36,7 @@ hashed Data node. But the **default, non-AiiDA path has no equivalent guard.** O
 is no enforcement that the WAVECAR a YAMBO step reads actually came from the VASP step that claims
 to have produced it.
 
-**This is a known, documented, silent-wrong-result failure mode.** `.planning/research/PITFALLS.md`
+**This is a known, documented, silent-wrong-result failure mode.** `archive/planning/research/PITFALLS.md`
 Pitfall #4 ("VASP Restart File Confusion After Failed Calculations") states the danger precisely:
 "Restarted VASP calculations read stale WAVECAR/CHGCAR files from a previous failed run, leading to
 incorrect results" (`PITFALLS.md:121`); "WAVECAR is only written when calculation completes, not
@@ -357,7 +357,7 @@ CAS, and adds a static first line of defense in front of the runtime gate.
 - Custodian VASP handlers (positive file matching, restart handling),
   http://materialsproject.github.io/custodian/custodian.vasp.handlers.html. — Source of the
   positive-file-matching discipline adopted in §3.1.
-- CrystalMath internal: `.planning/research/PITFALLS.md` Pitfall #4 ("VASP Restart File Confusion
+- CrystalMath internal: `archive/planning/research/PITFALLS.md` Pitfall #4 ("VASP Restart File Confusion
   After Failed Calculations", `PITFALLS.md:119-152`) — the concrete failure mode and prevention list
   this ADR mandates; `integrations/atomate2_bridge.py:221-274` (current `CodeHandoff`);
   `workflows/aiida_launcher.py:153-322` (AiiDA-only restart/wavefunction passing).

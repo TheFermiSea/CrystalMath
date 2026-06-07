@@ -1,5 +1,11 @@
 # atomate2 Integration Design
 
+> **⚠️ Historical / superseded.** This document predates the ADR-007–027 redesign and describes an
+> early atomate2 bridge design (the bridge is currently a Phase-3 mock scaffold). Authoritative
+> direction: [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md),
+> [ADR-013](adr-013-multi-code-handoff-and-restart-validation.md) and [REDESIGN.md](REDESIGN.md).
+> Kept for background only.
+
 **Version:** 1.0.0
 **Status:** Design Complete (Phase 2.2)
 **Date:** 2026-01-09
