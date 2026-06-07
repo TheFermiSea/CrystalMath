@@ -7,6 +7,13 @@
 **Depends on:** [ADR-021](adr-021-calculatorstage-mlip-foundation-calculators.md) (the `MlipCalculatorStage` whose results are evaluated; the method-tagged `uncertainty` field §5), [ADR-027](adr-027-model-dataset-registry-lineage.md) (the `UncertaintyEstimate`/calibration/OOD metrics attach to the `ModelIdentifier` and Model Card applicability block; the harness reads models *by* `ModelIdentifier`), [ADR-020](adr-020-reproducibility-and-golden-file-testing.md) (the per-property scientific tolerances; the escalation threshold is validated on a held-out OOD split paired with the regime-4 ReFrame tolerance layer)
 **Consumed by:** [ADR-025](adr-025-campaign-acquisition-strategy.md) (the `CampaignStrategy` reads this harness's `{calibration, OOD/in_domain, benchmark}` output at the escalation boundary — an OOD candidate must hit DFT, never skip)
 
+> **Amendment (2026-06-07) — consolidation audit ([CONSOLIDATION-PLAN.md](CONSOLIDATION-PLAN.md)):**
+> Refresh the dated evidence: the headline benchmark metric has moved from single-number Matbench
+> Discovery F1 to **CPS** (combined F1 + geometry RMSD + thermal-conductivity kSRME) — adopt CPS-style
+> multi-property scoring. Make **single-model + conformal** the cheap **default** (laptop path);
+> deep-ensemble uncertainty becomes **opt-in** (GPU-heavy). The trust *architecture* (calibration +
+> applicability-domain gate + escalation thresholds) is unchanged and remains ahead of the field.
+
 ## Context
 
 ADR-021 makes an MLIP a first-class `CalculatorStage` peer of DFT and names five usage modes —

@@ -134,10 +134,12 @@ without subordinating to any; **aiida-workgraph** is the watch-item for dynamic/
 4. **ADR-021/026** — MLIP evidence is dated (MACE-MP-0/CHGNet, Matbench F1); refresh to the 2026
    roster + **CPS** multi-property metric; make single-model+conformal the cheap default (ensemble
    opt-in). *The trust architecture itself is ahead of the field.*
-5. **Verify empirically:** the AiiDA CRYSTAL plugin status is contradicted across sources
-   (`aiida-crystal17` stale/2020 vs `aiida-crystal-dft` v0.9.4/Mar-2026) — it changes whether the
-   opt-in AiiDA backend gets CRYSTAL23 "for free". The fresh-authoring decision for the **default**
-   (daemon-free) path stands regardless.
+5. **AiiDA CRYSTAL plugin — verified 2026-06-07:** `aiida-crystal-dft` **v0.9.4 (2026-03-25)** is
+   actively maintained (AiiDA-core 2.6.4) but is an **`aiida-crystal17` spin-off** that does *not*
+   advertise CRYSTAL23 support and is MPDS-oriented — so **CRYSTAL23 keyword coverage is unconfirmed**.
+   Conclusion: do **not** rely on it for CRYSTAL23; author the CRYSTAL23 deck fresh on the default
+   path; treat the plugin as a science-mining reference + the opt-in `AiiDABackend` implementation
+   (CRYSTAL17-era). The fresh-authoring decision for the daemon-free default path holds either way.
 
 ## 7. Net-new (beyond the ADRs)
 

@@ -7,6 +7,11 @@
 **Depends on:** [ADR-008](adr-008-structure-and-deck-io-on-ase-pymatgen.md) (one `Structure` object + per-code deck seam over ASE/pymatgen), [ADR-009](adr-009-canonical-data-model-emmet-pydantic-taskdocs.md) (emmet-style versioned `TaskDocument` + lineage fields), [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) (jobflow `Flow`/`Response` as the one orchestration model), [ADR-012](adr-012-hpc-execution-jobflow-remote-aiida-optional.md) (the `ExecutionBackend` seam)
 **Consumed by:** [ADR-022](adr-022-content-addressed-execution-cache-replay.md) (the checkpoint hash this ADR introduces is a primary input to the canonical content hash), [ADR-023](adr-023-agentic-control-plane-mcp-ai-provenance.md) (MLIP screening is the cheap inner loop an agentic planner composes), [ADR-024](adr-024-static-typed-workflow-dag-validation.md) (each `CalculatorStage`'s declared input/output type signature is what the static checker reads), [ADR-025](adr-025-campaign-acquisition-strategy.md) (consumes the MLIP mechanism + `UncertaintyEstimate` to decide *what to run next* and *when to spend DFT budget*), [ADR-026](adr-026-trustworthy-mlip-evaluation-applicability-domain.md) (owns the MLIP *trust policy*: calibration, applicability-domain gate, escalation thresholds, and the `UncertaintyEstimate` type this ADR's mechanism emits), [ADR-027](adr-027-model-dataset-registry-lineage.md) (owns the `ModelIdentifier` and the model/dataset registry this ADR's `MODEL_REGISTRY` row resolves to)
 
+> **Amendment (2026-06-07) — consolidation audit ([CONSOLIDATION-PLAN.md](CONSOLIDATION-PLAN.md)):**
+> The MLIP roster cited below is dated. Refresh the candidate foundation models to the 2026 leaders
+> (ORB v3, GRACE-2L-OAM, SevenNet-MP-ompa, eSEN, MatterSim) alongside MACE-MP / CHGNet; the
+> `CalculatorStage` *mechanism* is unchanged. (Trust/metric refresh lives in ADR-026.)
+
 ## Context
 
 CrystalMath's calculation layer is **DFT-centric by construction, not by accident.** The code
