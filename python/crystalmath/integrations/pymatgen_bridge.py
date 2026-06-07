@@ -152,7 +152,8 @@ class SymmetryInfo:
         crystal_system: Crystal system classification
         hall_symbol: Hall symbol for the space group
         is_centrosymmetric: Whether the structure has inversion symmetry
-        wyckoff_symbols: List of Wyckoff position symbols for each site
+        wyckoff_symbols: List of Wyckoff symbols, one per symmetry-equivalent site group
+            (parallel to the symmetry's equivalent-index groups, not one per site)
         symmetry_operations: Number of symmetry operations
         tolerance: Symmetry detection tolerance used (Angstroms)
     """
@@ -844,12 +845,14 @@ def get_symmetry_info(
         # Check centrosymmetry
         is_centrosymmetric = sga.is_laue()
 
-        # Get Wyckoff symbols
+        # Get Wyckoff symbols.
+        # In pymatgen, SymmetrizedStructure.wyckoff_symbols is aggregated
+        # per equivalence group (one entry per distinct Wyckoff site), parallel
+        # to equivalent_indices. It must be indexed by the group position, not
+        # by a site index (eq_indices[0]), which can exceed the list length for
+        # multi-site cells and raise IndexError.
         symmetrized = sga.get_symmetrized_structure()
-        wyckoff_symbols = []
-        for eq_indices in symmetrized.equivalent_indices:
-            wy = symmetrized.wyckoff_symbols[eq_indices[0]]
-            wyckoff_symbols.append(wy)
+        wyckoff_symbols = list(symmetrized.wyckoff_symbols)
 
         logger.debug(f"Symmetry analysis complete: {sg_symbol} ({sg_number})")
 

@@ -103,14 +103,10 @@ class RunnerConfig:
             raise ValueError(f"default_threads must be >= 1, got {self.default_threads}")
 
         if self.max_concurrent_jobs < 1:
-            raise ValueError(
-                f"max_concurrent_jobs must be >= 1, got {self.max_concurrent_jobs}"
-            )
+            raise ValueError(f"max_concurrent_jobs must be >= 1, got {self.max_concurrent_jobs}")
 
         if self.timeout_seconds < 0:
-            raise ValueError(
-                f"timeout_seconds must be >= 0, got {self.timeout_seconds}"
-            )
+            raise ValueError(f"timeout_seconds must be >= 0, got {self.timeout_seconds}")
 
 
 @dataclass
@@ -211,12 +207,7 @@ class BaseRunner(ABC):
 
     @abstractmethod
     async def submit_job(
-        self,
-        job_id: int,
-        input_file: Path,
-        work_dir: Path,
-        threads: Optional[int] = None,
-        **kwargs
+        self, job_id: int, input_file: Path, work_dir: Path, threads: Optional[int] = None, **kwargs
     ) -> JobHandle:
         """
         Submit a job for execution and return a job handle.
@@ -334,10 +325,7 @@ class BaseRunner(ABC):
 
     @abstractmethod
     async def retrieve_results(
-        self,
-        job_handle: JobHandle,
-        dest: Path,
-        cleanup: Optional[bool] = None
+        self, job_handle: JobHandle, dest: Path, cleanup: Optional[bool] = None
     ) -> None:
         """
         Retrieve all output files from a completed job.
@@ -396,10 +384,7 @@ class BaseRunner(ABC):
         )
 
     async def wait_for_completion(
-        self,
-        job_handle: JobHandle,
-        poll_interval: float = 1.0,
-        timeout: Optional[float] = None
+        self, job_handle: JobHandle, poll_interval: float = 1.0, timeout: Optional[float] = None
     ) -> JobStatus:
         """
         Wait for a job to complete.
@@ -438,7 +423,7 @@ class BaseRunner(ABC):
                     raise TimeoutError(
                         f"Job did not complete within {timeout} seconds",
                         timeout_seconds=timeout,
-                        operation="wait_for_completion"
+                        operation="wait_for_completion",
                     )
 
             # Sleep before next poll
@@ -527,8 +512,7 @@ class BaseRunner(ABC):
 
         # Spawn background task to release slot when job completes
         task = asyncio.create_task(
-            self._monitor_and_release_slot(job_handle),
-            name=f"slot_monitor_{job_handle}"
+            self._monitor_and_release_slot(job_handle), name=f"slot_monitor_{job_handle}"
         )
         self._active_jobs[job_handle] = task
 
@@ -638,6 +622,7 @@ class RemoteBaseRunner(BaseRunner):
             FileNotFoundError: If no matching files found
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         # Build file patterns from code config if not provided
@@ -696,6 +681,7 @@ class RemoteBaseRunner(BaseRunner):
         import fnmatch
         import logging
         import shlex
+
         logger = logging.getLogger(__name__)
 
         # Build output file patterns from code config if not provided
@@ -723,10 +709,7 @@ class RemoteBaseRunner(BaseRunner):
 
             for filename in remote_files:
                 # Check if file matches our patterns using proper glob matching
-                should_download = any(
-                    fnmatch.fnmatch(filename, pattern)
-                    for pattern in patterns
-                )
+                should_download = any(fnmatch.fnmatch(filename, pattern) for pattern in patterns)
 
                 if should_download:
                     # Security: Validate filename to prevent path traversal attacks
@@ -760,6 +743,7 @@ class RemoteBaseRunner(BaseRunner):
             remote_dir: Remote directory path to create
         """
         import shlex
+
         mkdir_cmd = f"mkdir -p {shlex.quote(remote_dir)}"
         await conn.run(mkdir_cmd, check=True)
 
@@ -777,6 +761,7 @@ class RemoteBaseRunner(BaseRunner):
         """
         import shlex
         import logging
+
         logger = logging.getLogger(__name__)
         cleanup_cmd = f"rm -rf {shlex.quote(remote_dir)}"
         await conn.run(cleanup_cmd, check=False)

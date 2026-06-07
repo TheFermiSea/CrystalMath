@@ -19,6 +19,7 @@ class JobStatus:
     Note: Database uses uppercase values for the CHECK constraint.
     All status constants should be uppercase for database compatibility.
     """
+
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
@@ -43,6 +44,7 @@ class JobStatus:
 
 class QueueStatus:
     """Queue/workflow status constants."""
+
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -65,6 +67,7 @@ class QueueStatus:
 
 class RunnerType:
     """Job runner types."""
+
     LOCAL = "local"
     SSH = "ssh"
     SLURM = "slurm"
@@ -77,6 +80,7 @@ class RunnerType:
 
 class NodeStatus:
     """Workflow node status constants."""
+
     PENDING = "pending"
     READY = "ready"
     QUEUED = "queued"
@@ -101,6 +105,7 @@ class NodeStatus:
 
 class WorkflowStatus:
     """Workflow execution status constants."""
+
     PENDING = "pending"
     RUNNING = "running"
     PAUSED = "paused"

@@ -27,6 +27,7 @@ class RunnerError(Exception):
     All runner-specific exceptions inherit from this class to allow
     generic error handling at the application level.
     """
+
     pass
 
 
@@ -69,7 +70,7 @@ class ExecutionError(RunnerError):
         message: str,
         job_handle: str = "",
         exit_code: int | None = None,
-        stderr_output: str = ""
+        stderr_output: str = "",
     ):
         super().__init__(message)
         self.job_handle = job_handle
@@ -136,11 +137,7 @@ class ResourceError(RunnerError):
     """
 
     def __init__(
-        self,
-        message: str,
-        resource_type: str = "",
-        required: str = "",
-        available: str = ""
+        self, message: str, resource_type: str = "", required: str = "", available: str = ""
     ):
         super().__init__(message)
         self.resource_type = resource_type
@@ -267,12 +264,7 @@ class SLURMRunnerError(RunnerError):
         slurm_error_code: SLURM error code if available
     """
 
-    def __init__(
-        self,
-        message: str,
-        slurm_job_id: str = "",
-        slurm_error_code: int | None = None
-    ):
+    def __init__(self, message: str, slurm_job_id: str = "", slurm_error_code: int | None = None):
         super().__init__(message)
         self.slurm_job_id = slurm_job_id
         self.slurm_error_code = slurm_error_code

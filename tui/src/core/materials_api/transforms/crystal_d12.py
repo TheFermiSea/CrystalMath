@@ -29,6 +29,7 @@ Example:
     >>> with open("input.d12", "w") as f:
     ...     f.write(d12_content)
 """
+
 from __future__ import annotations
 
 import math
@@ -110,21 +111,109 @@ class OptimizationConfig:
 
 # Element symbol to atomic number mapping
 ELEMENT_TO_Z: dict[str, int] = {
-    "H": 1, "He": 2, "Li": 3, "Be": 4, "B": 5, "C": 6, "N": 7, "O": 8,
-    "F": 9, "Ne": 10, "Na": 11, "Mg": 12, "Al": 13, "Si": 14, "P": 15,
-    "S": 16, "Cl": 17, "Ar": 18, "K": 19, "Ca": 20, "Sc": 21, "Ti": 22,
-    "V": 23, "Cr": 24, "Mn": 25, "Fe": 26, "Co": 27, "Ni": 28, "Cu": 29,
-    "Zn": 30, "Ga": 31, "Ge": 32, "As": 33, "Se": 34, "Br": 35, "Kr": 36,
-    "Rb": 37, "Sr": 38, "Y": 39, "Zr": 40, "Nb": 41, "Mo": 42, "Tc": 43,
-    "Ru": 44, "Rh": 45, "Pd": 46, "Ag": 47, "Cd": 48, "In": 49, "Sn": 50,
-    "Sb": 51, "Te": 52, "I": 53, "Xe": 54, "Cs": 55, "Ba": 56, "La": 57,
-    "Ce": 58, "Pr": 59, "Nd": 60, "Pm": 61, "Sm": 62, "Eu": 63, "Gd": 64,
-    "Tb": 65, "Dy": 66, "Ho": 67, "Er": 68, "Tm": 69, "Yb": 70, "Lu": 71,
-    "Hf": 72, "Ta": 73, "W": 74, "Re": 75, "Os": 76, "Ir": 77, "Pt": 78,
-    "Au": 79, "Hg": 80, "Tl": 81, "Pb": 82, "Bi": 83, "Po": 84, "At": 85,
-    "Rn": 86, "Fr": 87, "Ra": 88, "Ac": 89, "Th": 90, "Pa": 91, "U": 92,
-    "Np": 93, "Pu": 94, "Am": 95, "Cm": 96, "Bk": 97, "Cf": 98, "Es": 99,
-    "Fm": 100, "Md": 101, "No": 102, "Lr": 103,
+    "H": 1,
+    "He": 2,
+    "Li": 3,
+    "Be": 4,
+    "B": 5,
+    "C": 6,
+    "N": 7,
+    "O": 8,
+    "F": 9,
+    "Ne": 10,
+    "Na": 11,
+    "Mg": 12,
+    "Al": 13,
+    "Si": 14,
+    "P": 15,
+    "S": 16,
+    "Cl": 17,
+    "Ar": 18,
+    "K": 19,
+    "Ca": 20,
+    "Sc": 21,
+    "Ti": 22,
+    "V": 23,
+    "Cr": 24,
+    "Mn": 25,
+    "Fe": 26,
+    "Co": 27,
+    "Ni": 28,
+    "Cu": 29,
+    "Zn": 30,
+    "Ga": 31,
+    "Ge": 32,
+    "As": 33,
+    "Se": 34,
+    "Br": 35,
+    "Kr": 36,
+    "Rb": 37,
+    "Sr": 38,
+    "Y": 39,
+    "Zr": 40,
+    "Nb": 41,
+    "Mo": 42,
+    "Tc": 43,
+    "Ru": 44,
+    "Rh": 45,
+    "Pd": 46,
+    "Ag": 47,
+    "Cd": 48,
+    "In": 49,
+    "Sn": 50,
+    "Sb": 51,
+    "Te": 52,
+    "I": 53,
+    "Xe": 54,
+    "Cs": 55,
+    "Ba": 56,
+    "La": 57,
+    "Ce": 58,
+    "Pr": 59,
+    "Nd": 60,
+    "Pm": 61,
+    "Sm": 62,
+    "Eu": 63,
+    "Gd": 64,
+    "Tb": 65,
+    "Dy": 66,
+    "Ho": 67,
+    "Er": 68,
+    "Tm": 69,
+    "Yb": 70,
+    "Lu": 71,
+    "Hf": 72,
+    "Ta": 73,
+    "W": 74,
+    "Re": 75,
+    "Os": 76,
+    "Ir": 77,
+    "Pt": 78,
+    "Au": 79,
+    "Hg": 80,
+    "Tl": 81,
+    "Pb": 82,
+    "Bi": 83,
+    "Po": 84,
+    "At": 85,
+    "Rn": 86,
+    "Fr": 87,
+    "Ra": 88,
+    "Ac": 89,
+    "Th": 90,
+    "Pa": 91,
+    "U": 92,
+    "Np": 93,
+    "Pu": 94,
+    "Am": 95,
+    "Cm": 96,
+    "Bk": 97,
+    "Cf": 98,
+    "Es": 99,
+    "Fm": 100,
+    "Md": 101,
+    "No": 102,
+    "Lr": 103,
 }
 
 
@@ -329,9 +418,7 @@ class CrystalD12Generator:
         if space_group == 1:
             # P1: all atoms are independent
             for site in structure.sites:
-                z = CrystalD12Generator._get_atomic_number(
-                    site.specie.symbol
-                )
+                z = CrystalD12Generator._get_atomic_number(site.specie.symbol)
                 frac = site.frac_coords
                 atoms.append((z, frac[0], frac[1], frac[2]))
         else:
@@ -345,18 +432,14 @@ class CrystalD12Generator:
                 # Get one representative from each equivalent set
                 for equiv_sites in sym_struct.equivalent_sites:
                     site = equiv_sites[0]  # Take first of equivalent set
-                    z = CrystalD12Generator._get_atomic_number(
-                        site.specie.symbol
-                    )
+                    z = CrystalD12Generator._get_atomic_number(site.specie.symbol)
                     frac = site.frac_coords
                     atoms.append((z, frac[0], frac[1], frac[2]))
 
             except Exception:
                 # Fall back to all atoms
                 for site in structure.sites:
-                    z = CrystalD12Generator._get_atomic_number(
-                        site.specie.symbol
-                    )
+                    z = CrystalD12Generator._get_atomic_number(site.specie.symbol)
                     frac = site.frac_coords
                     atoms.append((z, frac[0], frac[1], frac[2]))
 
@@ -411,21 +494,15 @@ class CrystalD12Generator:
 
         # Space/layer group
         if symmetry_group is None:
-            symmetry_group, _ = CrystalD12Generator._get_symmetry_info(
-                structure, system
-            )
+            symmetry_group, _ = CrystalD12Generator._get_symmetry_info(structure, system)
         lines.append(str(symmetry_group))
 
         # Lattice parameters
-        lattice_lines = CrystalD12Generator._format_lattice_params(
-            structure, system
-        )
+        lattice_lines = CrystalD12Generator._format_lattice_params(structure, system)
         lines.extend(lattice_lines)
 
         # Get atoms (asymmetric unit for high symmetry, all for P1)
-        atoms = CrystalD12Generator._get_irreducible_atoms(
-            structure, symmetry_group
-        )
+        atoms = CrystalD12Generator._get_irreducible_atoms(structure, symmetry_group)
 
         # Number of atoms
         lines.append(str(len(atoms)))
@@ -469,9 +546,7 @@ class CrystalD12Generator:
                 if z in config.custom_basis:
                     lines.append(config.custom_basis[z])
                 else:
-                    raise ValueError(
-                        f"No custom basis set provided for element {element}"
-                    )
+                    raise ValueError(f"No custom basis set provided for element {element}")
 
             # End of basis sets marker
             lines.append("99 0")
@@ -624,9 +699,7 @@ class CrystalD12Generator:
 
         # 2. Optimization block (goes after geometry END, before basis)
         if optimization and optimization.enabled:
-            opt_block = CrystalD12Generator._format_optimization_block(
-                optimization
-            )
+            opt_block = CrystalD12Generator._format_optimization_block(optimization)
             # Insert OPTGEOM before the final END of geometry
             # Actually, OPTGEOM comes after geometry END in CRYSTAL23
             sections.append(opt_block)
@@ -635,15 +708,11 @@ class CrystalD12Generator:
         if basis_set is None:
             basis_config = BasisSetConfig()
         elif isinstance(basis_set, str):
-            basis_config = BasisSetConfig(
-                use_internal=True, library_name=basis_set
-            )
+            basis_config = BasisSetConfig(use_internal=True, library_name=basis_set)
         else:
             basis_config = basis_set
 
-        basis_block = CrystalD12Generator._format_basis_set_block(
-            structure, basis_config
-        )
+        basis_block = CrystalD12Generator._format_basis_set_block(structure, basis_config)
         sections.append(basis_block)
 
         # 4. Hamiltonian block

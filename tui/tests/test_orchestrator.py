@@ -68,9 +68,7 @@ def event_collector():
 def orchestrator(temp_db, mock_queue_manager, event_collector):
     """Create an orchestrator instance for testing."""
     return WorkflowOrchestrator(
-        database=temp_db,
-        queue_manager=mock_queue_manager,
-        event_callback=event_collector
+        database=temp_db, queue_manager=mock_queue_manager, event_callback=event_collector
     )
 
 
@@ -90,16 +88,16 @@ class TestWorkflowValidation:
                     job_name="job_b",
                     template="input B",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
                 WorkflowNode(
                     node_id="C",
                     job_name="job_c",
                     template="input C",
                     parameters={},
-                    dependencies=["B"]
+                    dependencies=["B"],
                 ),
-            ]
+            ],
         )
 
         # Should not raise
@@ -119,23 +117,23 @@ class TestWorkflowValidation:
                     job_name="job_b",
                     template="input B",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
                 WorkflowNode(
                     node_id="C",
                     job_name="job_c",
                     template="input C",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
                 WorkflowNode(
                     node_id="D",
                     job_name="job_d",
                     template="input D",
                     parameters={},
-                    dependencies=["B", "C"]
+                    dependencies=["B", "C"],
                 ),
-            ]
+            ],
         )
 
         # Should not raise
@@ -154,23 +152,23 @@ class TestWorkflowValidation:
                     job_name="job_a",
                     template="input A",
                     parameters={},
-                    dependencies=["C"]
+                    dependencies=["C"],
                 ),
                 WorkflowNode(
                     node_id="B",
                     job_name="job_b",
                     template="input B",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
                 WorkflowNode(
                     node_id="C",
                     job_name="job_c",
                     template="input C",
                     parameters={},
-                    dependencies=["B"]
+                    dependencies=["B"],
                 ),
-            ]
+            ],
         )
 
         with pytest.raises(CircularDependencyError):
@@ -188,9 +186,9 @@ class TestWorkflowValidation:
                     job_name="job_a",
                     template="input A",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
-            ]
+            ],
         )
 
         with pytest.raises(CircularDependencyError):
@@ -209,7 +207,7 @@ class TestWorkflowExecution:
             description="Simple workflow",
             nodes=[
                 WorkflowNode(node_id="A", job_name="job_a", template="CRYSTAL\nEND", parameters={}),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -242,7 +240,7 @@ class TestWorkflowExecution:
             description="Test pause/resume",
             nodes=[
                 WorkflowNode(node_id="A", job_name="job_a", template="CRYSTAL\nEND", parameters={}),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -272,7 +270,7 @@ class TestWorkflowExecution:
             description="Test cancellation",
             nodes=[
                 WorkflowNode(node_id="A", job_name="job_a", template="CRYSTAL\nEND", parameters={}),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -308,10 +306,10 @@ class TestParameterResolution:
                     node_id="A",
                     job_name="job_a",
                     template="ENERGY {{ energy }}",
-                    parameters={"energy": -100.5}
+                    parameters={"energy": -100.5},
                 ),
             ],
-            global_parameters={}
+            global_parameters={},
         )
 
         orchestrator.register_workflow(workflow)
@@ -334,13 +332,10 @@ class TestParameterResolution:
             description="Test global parameters",
             nodes=[
                 WorkflowNode(
-                    node_id="A",
-                    job_name="job_a",
-                    template="BASIS {{ basis_set }}",
-                    parameters={}
+                    node_id="A", job_name="job_a", template="BASIS {{ basis_set }}", parameters={}
                 ),
             ],
-            global_parameters={"basis_set": "6-31G"}
+            global_parameters={"basis_set": "6-31G"},
         )
 
         orchestrator.register_workflow(workflow)
@@ -357,20 +352,15 @@ class TestParameterResolution:
             name="Dependency Test",
             description="A -> B",
             nodes=[
-                WorkflowNode(
-                    node_id="A",
-                    job_name="job_a",
-                    template="SCF",
-                    parameters={}
-                ),
+                WorkflowNode(node_id="A", job_name="job_a", template="SCF", parameters={}),
                 WorkflowNode(
                     node_id="B",
                     job_name="job_b",
                     template="Energy from A: {{ A.final_energy }}",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -408,9 +398,9 @@ class TestParameterResolution:
                     node_id="A",
                     job_name="job_a",
                     template="Bad {{ syntax }}",
-                    parameters={"unclosed": "{{ value"}  # Invalid Jinja2
+                    parameters={"unclosed": "{{ value"},  # Invalid Jinja2
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -437,16 +427,16 @@ class TestFailureHandling:
                     job_name="job_a",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    failure_policy=FailurePolicy.ABORT
+                    failure_policy=FailurePolicy.ABORT,
                 ),
                 WorkflowNode(
                     node_id="B",
                     job_name="job_b",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -486,23 +476,23 @@ class TestFailureHandling:
                     job_name="job_a",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    failure_policy=FailurePolicy.SKIP_DEPENDENTS
+                    failure_policy=FailurePolicy.SKIP_DEPENDENTS,
                 ),
                 WorkflowNode(
                     node_id="B",
                     job_name="job_b",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
                 WorkflowNode(
                     node_id="C",
                     job_name="job_c",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    dependencies=["B"]
+                    dependencies=["B"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -543,9 +533,9 @@ class TestFailureHandling:
                     template="CRYSTAL\nEND",
                     parameters={},
                     failure_policy=FailurePolicy.RETRY,
-                    max_retries=2
+                    max_retries=2,
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -586,15 +576,15 @@ class TestFailureHandling:
                     job_name="job_a",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    failure_policy=FailurePolicy.CONTINUE
+                    failure_policy=FailurePolicy.CONTINUE,
                 ),
                 WorkflowNode(
                     node_id="B",
                     job_name="job_b",
                     template="CRYSTAL\nEND",
-                    parameters={}  # No dependencies
+                    parameters={},  # No dependencies
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -638,9 +628,9 @@ class TestWorkflowCompletion:
                     job_name="job_b",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -683,16 +673,16 @@ class TestWorkflowCompletion:
                     job_name="job_a",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    failure_policy=FailurePolicy.SKIP_DEPENDENTS
+                    failure_policy=FailurePolicy.SKIP_DEPENDENTS,
                 ),
                 WorkflowNode(
                     node_id="B",
                     job_name="job_b",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -729,7 +719,7 @@ class TestWorkflowCompletion:
                 WorkflowNode(node_id="A", job_name="job_a", template="CRYSTAL\nEND", parameters={}),
                 WorkflowNode(node_id="B", job_name="job_b", template="CRYSTAL\nEND", parameters={}),
                 WorkflowNode(node_id="C", job_name="job_c", template="CRYSTAL\nEND", parameters={}),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -776,7 +766,7 @@ class TestDependencyResolution:
             description="Single node",
             nodes=[
                 WorkflowNode(node_id="A", job_name="job_a", template="CRYSTAL\nEND", parameters={}),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -797,9 +787,9 @@ class TestDependencyResolution:
                     job_name="job_b",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -821,9 +811,9 @@ class TestDependencyResolution:
                     job_name="job_b",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -849,9 +839,9 @@ class TestDependencyResolution:
                     job_name="job_c",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    dependencies=["A", "B"]
+                    dependencies=["A", "B"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -882,7 +872,7 @@ class TestEventSystem:
             description="Test events",
             nodes=[
                 WorkflowNode(node_id="A", job_name="job_a", template="CRYSTAL\nEND", parameters={}),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -913,10 +903,7 @@ class TestScratchDirectoryManagement:
         """Test that CRY_SCRATCH_BASE environment variable is used."""
         custom_scratch = "/custom/scratch"
         with patch.dict(os.environ, {"CRY_SCRATCH_BASE": custom_scratch}):
-            orchestrator = WorkflowOrchestrator(
-                database=temp_db,
-                queue_manager=mock_queue_manager
-            )
+            orchestrator = WorkflowOrchestrator(database=temp_db, queue_manager=mock_queue_manager)
             assert orchestrator._scratch_base == Path(custom_scratch)
 
     def test_scratch_base_fallback_to_cry23_scrdir(self, temp_db, mock_queue_manager):
@@ -928,10 +915,7 @@ class TestScratchDirectoryManagement:
             if "CRY_SCRATCH_BASE" in os.environ:
                 del os.environ["CRY_SCRATCH_BASE"]
 
-            orchestrator = WorkflowOrchestrator(
-                database=temp_db,
-                queue_manager=mock_queue_manager
-            )
+            orchestrator = WorkflowOrchestrator(database=temp_db, queue_manager=mock_queue_manager)
             # Should use CRY23_SCRDIR
             assert orchestrator._scratch_base == Path(custom_scratch)
 
@@ -939,9 +923,7 @@ class TestScratchDirectoryManagement:
         """Test that explicit scratch_base parameter is used."""
         custom_scratch = tmp_path / "explicit_scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=custom_scratch
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=custom_scratch
         )
         assert orchestrator._scratch_base == custom_scratch
 
@@ -951,11 +933,7 @@ class TestScratchDirectoryManagement:
 
         # Test 1: CRY_SCRATCH_BASE has highest priority
         with patch.dict(
-            os.environ,
-            {
-                "CRY_SCRATCH_BASE": "/cry_scratch_base",
-                "CRY23_SCRDIR": "/cry23_scrdir"
-            }
+            os.environ, {"CRY_SCRATCH_BASE": "/cry_scratch_base", "CRY23_SCRDIR": "/cry23_scrdir"}
         ):
             result = WorkflowOrchestrator._get_scratch_base()
             assert result == Path("/cry_scratch_base")
@@ -977,9 +955,7 @@ class TestScratchDirectoryManagement:
         """Test that work directories are created in configured scratch base."""
         scratch_base = tmp_path / "crystal_scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=scratch_base
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=scratch_base
         )
 
         work_dir = orchestrator._create_work_directory(workflow_id=1, node_id="test_node")
@@ -989,15 +965,11 @@ class TestScratchDirectoryManagement:
         assert work_dir.is_dir()
         assert scratch_base in work_dir.parents or work_dir.parent == scratch_base
 
-    def test_create_work_directory_naming(
-        self, temp_db, mock_queue_manager, tmp_path
-    ):
+    def test_create_work_directory_naming(self, temp_db, mock_queue_manager, tmp_path):
         """Test that work directories have correct naming format."""
         scratch_base = tmp_path / "scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=scratch_base
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=scratch_base
         )
 
         work_dir = orchestrator._create_work_directory(workflow_id=42, node_id="calc_step_1")
@@ -1008,15 +980,11 @@ class TestScratchDirectoryManagement:
         assert "node_calc_step_1" in dir_name
         assert dir_name.count("_") >= 3  # At least workflow, node, timestamp, pid separators
 
-    def test_create_work_directory_uniqueness(
-        self, temp_db, mock_queue_manager, tmp_path
-    ):
+    def test_create_work_directory_uniqueness(self, temp_db, mock_queue_manager, tmp_path):
         """Test that multiple work directories get unique names."""
         scratch_base = tmp_path / "scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=scratch_base
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=scratch_base
         )
 
         # Create two work directories for same workflow/node
@@ -1028,15 +996,11 @@ class TestScratchDirectoryManagement:
         assert work_dir1.exists()
         assert work_dir2.exists()
 
-    def test_work_directory_registered_for_cleanup(
-        self, temp_db, mock_queue_manager, tmp_path
-    ):
+    def test_work_directory_registered_for_cleanup(self, temp_db, mock_queue_manager, tmp_path):
         """Test that created work directories are registered for cleanup."""
         scratch_base = tmp_path / "scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=scratch_base
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=scratch_base
         )
 
         work_dir = orchestrator._create_work_directory(workflow_id=1, node_id="test")
@@ -1044,15 +1008,11 @@ class TestScratchDirectoryManagement:
         # Verify directory is in cleanup set
         assert work_dir in orchestrator._work_dirs
 
-    def test_cleanup_work_directories(
-        self, temp_db, mock_queue_manager, tmp_path
-    ):
+    def test_cleanup_work_directories(self, temp_db, mock_queue_manager, tmp_path):
         """Test that work directories are cleaned up properly."""
         scratch_base = tmp_path / "scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=scratch_base
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=scratch_base
         )
 
         # Create work directories
@@ -1077,35 +1037,28 @@ class TestScratchDirectoryManagement:
         assert not work_dir1.exists()
         assert not work_dir2.exists()
 
-    def test_cleanup_handles_missing_directories(
-        self, temp_db, mock_queue_manager, tmp_path
-    ):
+    def test_cleanup_handles_missing_directories(self, temp_db, mock_queue_manager, tmp_path):
         """Test that cleanup handles directories that no longer exist."""
         scratch_base = tmp_path / "scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=scratch_base
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=scratch_base
         )
 
         work_dir = orchestrator._create_work_directory(workflow_id=1, node_id="test")
 
         # Manually remove the directory
         import shutil
+
         shutil.rmtree(work_dir)
 
         # Cleanup should not raise even though directory is gone
         orchestrator._cleanup_work_dirs()  # Should not raise
 
-    def test_cleanup_handles_permission_errors(
-        self, temp_db, mock_queue_manager, tmp_path
-    ):
+    def test_cleanup_handles_permission_errors(self, temp_db, mock_queue_manager, tmp_path):
         """Test that cleanup handles permission errors gracefully."""
         scratch_base = tmp_path / "scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=scratch_base
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=scratch_base
         )
 
         work_dir = orchestrator._create_work_directory(workflow_id=1, node_id="test")
@@ -1116,15 +1069,11 @@ class TestScratchDirectoryManagement:
             orchestrator._cleanup_work_dirs()  # Should not raise
 
     @pytest.mark.asyncio
-    async def test_submit_node_creates_work_directory(
-        self, temp_db, mock_queue_manager, tmp_path
-    ):
+    async def test_submit_node_creates_work_directory(self, temp_db, mock_queue_manager, tmp_path):
         """Test that _submit_node creates work directory in correct location."""
         scratch_base = tmp_path / "crystal_scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=scratch_base
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=scratch_base
         )
 
         workflow = WorkflowDefinition(
@@ -1133,12 +1082,9 @@ class TestScratchDirectoryManagement:
             description="Test",
             nodes=[
                 WorkflowNode(
-                    node_id="test_calc",
-                    job_name="job_test",
-                    template="CRYSTAL\nEND",
-                    parameters={}
+                    node_id="test_calc", job_name="job_test", template="CRYSTAL\nEND", parameters={}
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1165,9 +1111,7 @@ class TestScratchDirectoryManagement:
         """Test that work directory path is correctly stored in database."""
         scratch_base = tmp_path / "scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=scratch_base
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=scratch_base
         )
 
         workflow = WorkflowDefinition(
@@ -1176,12 +1120,9 @@ class TestScratchDirectoryManagement:
             description="Test",
             nodes=[
                 WorkflowNode(
-                    node_id="calc",
-                    job_name="job_calc",
-                    template="CRYSTAL\nEND",
-                    parameters={}
+                    node_id="calc", job_name="job_calc", template="CRYSTAL\nEND", parameters={}
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1218,12 +1159,9 @@ class TestJobSubmissionIntegration:
             description="Test queue submission",
             nodes=[
                 WorkflowNode(
-                    node_id="test_node",
-                    job_name="job_test",
-                    template="CRYSTAL\nEND",
-                    parameters={}
+                    node_id="test_node", job_name="job_test", template="CRYSTAL\nEND", parameters={}
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1254,20 +1192,15 @@ class TestJobSubmissionIntegration:
             name="Dependency Test",
             description="Test with dependencies",
             nodes=[
-                WorkflowNode(
-                    node_id="A",
-                    job_name="job_a",
-                    template="CRYSTAL\nEND",
-                    parameters={}
-                ),
+                WorkflowNode(node_id="A", job_name="job_a", template="CRYSTAL\nEND", parameters={}),
                 WorkflowNode(
                     node_id="B",
                     job_name="job_b",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1291,9 +1224,7 @@ class TestJobSubmissionIntegration:
         assert call_kwargs["dependencies"] == [node_a.job_id]
 
     @pytest.mark.asyncio
-    async def test_submit_node_registers_callback(
-        self, orchestrator, temp_db, tmp_path
-    ):
+    async def test_submit_node_registers_callback(self, orchestrator, temp_db, tmp_path):
         """Test that _submit_node registers a completion callback."""
         scratch_base = tmp_path / "scratch"
         orchestrator._scratch_base = scratch_base
@@ -1304,12 +1235,9 @@ class TestJobSubmissionIntegration:
             description="Test callback registration",
             nodes=[
                 WorkflowNode(
-                    node_id="test",
-                    job_name="job_test",
-                    template="CRYSTAL\nEND",
-                    parameters={}
+                    node_id="test", job_name="job_test", template="CRYSTAL\nEND", parameters={}
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1323,9 +1251,7 @@ class TestJobSubmissionIntegration:
         assert callback_data == (1, "test")  # (workflow_id, node_id)
 
     @pytest.mark.asyncio
-    async def test_on_node_complete_success(
-        self, orchestrator, temp_db, event_collector
-    ):
+    async def test_on_node_complete_success(self, orchestrator, temp_db, event_collector):
         """Test _on_node_complete processes successful job completion."""
         workflow = WorkflowDefinition(
             workflow_id=1,
@@ -1333,12 +1259,9 @@ class TestJobSubmissionIntegration:
             description="Test successful completion",
             nodes=[
                 WorkflowNode(
-                    node_id="test",
-                    job_name="job_test",
-                    template="CRYSTAL\nEND",
-                    parameters={}
+                    node_id="test", job_name="job_test", template="CRYSTAL\nEND", parameters={}
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1365,9 +1288,7 @@ class TestJobSubmissionIntegration:
         assert "test" in state.completed_nodes
 
     @pytest.mark.asyncio
-    async def test_on_node_complete_failure(
-        self, orchestrator, temp_db, event_collector
-    ):
+    async def test_on_node_complete_failure(self, orchestrator, temp_db, event_collector):
         """Test _on_node_complete processes job failure."""
         workflow = WorkflowDefinition(
             workflow_id=1,
@@ -1379,9 +1300,9 @@ class TestJobSubmissionIntegration:
                     job_name="job_test",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    failure_policy=FailurePolicy.ABORT
+                    failure_policy=FailurePolicy.ABORT,
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1416,20 +1337,15 @@ class TestJobSubmissionIntegration:
             name="E2E Test",
             description="End-to-end submission test",
             nodes=[
-                WorkflowNode(
-                    node_id="A",
-                    job_name="job_a",
-                    template="CRYSTAL\nEND",
-                    parameters={}
-                ),
+                WorkflowNode(node_id="A", job_name="job_a", template="CRYSTAL\nEND", parameters={}),
                 WorkflowNode(
                     node_id="B",
                     job_name="job_b",
                     template="CRYSTAL\nEND",
                     parameters={},
-                    dependencies=["A"]
+                    dependencies=["A"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1450,9 +1366,7 @@ class TestJobSubmissionIntegration:
         await orchestrator.stop()
 
     @pytest.mark.asyncio
-    async def test_job_submission_updates_database_status(
-        self, orchestrator, temp_db, tmp_path
-    ):
+    async def test_job_submission_updates_database_status(self, orchestrator, temp_db, tmp_path):
         """Test that job submission updates database status to QUEUED."""
         scratch_base = tmp_path / "scratch"
         orchestrator._scratch_base = scratch_base
@@ -1463,12 +1377,9 @@ class TestJobSubmissionIntegration:
             description="Test database status update",
             nodes=[
                 WorkflowNode(
-                    node_id="test",
-                    job_name="job_test",
-                    template="CRYSTAL\nEND",
-                    parameters={}
+                    node_id="test", job_name="job_test", template="CRYSTAL\nEND", parameters={}
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1492,9 +1403,7 @@ class TestWorkflowDirectoryCleanup:
         """Test that workflow directories are cleaned when orchestrator stops."""
         scratch_base = tmp_path / "scratch"
         orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager,
-            scratch_base=scratch_base
+            database=temp_db, queue_manager=mock_queue_manager, scratch_base=scratch_base
         )
 
         workflow = WorkflowDefinition(
@@ -1503,12 +1412,9 @@ class TestWorkflowDirectoryCleanup:
             description="Test directory cleanup",
             nodes=[
                 WorkflowNode(
-                    node_id="test",
-                    job_name="job_test",
-                    template="CRYSTAL\nEND",
-                    parameters={}
+                    node_id="test", job_name="job_test", template="CRYSTAL\nEND", parameters={}
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1534,14 +1440,11 @@ class TestWorkflowDirectoryCleanup:
 
     def test_atexit_handler_registered(self, temp_db, mock_queue_manager):
         """Test that cleanup handler is registered with atexit."""
-        orchestrator = WorkflowOrchestrator(
-            database=temp_db,
-            queue_manager=mock_queue_manager
-        )
+        orchestrator = WorkflowOrchestrator(database=temp_db, queue_manager=mock_queue_manager)
 
         # The atexit handler should be registered
         # We can't directly test atexit, but we can verify the method exists
-        assert hasattr(orchestrator, '_cleanup_work_dirs')
+        assert hasattr(orchestrator, "_cleanup_work_dirs")
         assert callable(orchestrator._cleanup_work_dirs)
 
 
@@ -1577,9 +1480,9 @@ class TestJinja2SecurityHardening:
                     # Malicious parameter trying to execute code
                     parameters={
                         "malicious": "{{ ''.__class__.__mro__[1].__subclasses__()[104].__init__.__globals__['sys'].exit() }}"
-                    }
+                    },
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1610,9 +1513,9 @@ class TestJinja2SecurityHardening:
                     job_name="job_a",
                     # Template tries to read /etc/passwd
                     template="{{ open('/etc/passwd').read() }}",
-                    parameters={}
+                    parameters={},
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1642,9 +1545,9 @@ class TestJinja2SecurityHardening:
                     job_name="job_a",
                     # Template tries to import os and execute command
                     template="{{ __import__('os').system('id') }}",
-                    parameters={}
+                    parameters={},
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1673,9 +1576,9 @@ class TestJinja2SecurityHardening:
                     job_name="job_a",
                     # Template tries to access config and globals
                     template="{{ config.__class__.__init__.__globals__['sys'].exit() }}",
-                    parameters={}
+                    parameters={},
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1703,18 +1606,16 @@ class TestJinja2SecurityHardening:
                     node_id="A",
                     job_name="job_a",
                     template="CRYSTAL\nEND",
-                    parameters={"energy": -100.5}
+                    parameters={"energy": -100.5},
                 ),
                 WorkflowNode(
                     node_id="B",
                     job_name="job_b",
                     template="Previous energy: {{ A.final_energy }}",
-                    parameters={
-                        "computed_value": "{{ A.final_energy * 2 }}"
-                    },
-                    dependencies=["A"]
+                    parameters={"computed_value": "{{ A.final_energy * 2 }}"},
+                    dependencies=["A"],
                 ),
-            ]
+            ],
         )
 
         orchestrator.register_workflow(workflow)
@@ -1750,17 +1651,12 @@ class TestJinja2SecurityHardening:
 
         for i, payload in enumerate(dangerous_payloads):
             workflow = WorkflowDefinition(
-                workflow_id=i+1,
-                name=f"Payload Test {i+1}",
-                description=f"Test malicious payload {i+1}",
+                workflow_id=i + 1,
+                name=f"Payload Test {i + 1}",
+                description=f"Test malicious payload {i + 1}",
                 nodes=[
-                    WorkflowNode(
-                        node_id="A",
-                        job_name="job_a",
-                        template=payload,
-                        parameters={}
-                    ),
-                ]
+                    WorkflowNode(node_id="A", job_name="job_a", template=payload, parameters={}),
+                ],
             )
 
             orchestrator.register_workflow(workflow)
@@ -1768,7 +1664,7 @@ class TestJinja2SecurityHardening:
 
             # All should fail safely
             try:
-                resolved = await orchestrator._resolve_parameters(i+1, node)
+                resolved = await orchestrator._resolve_parameters(i + 1, node)
                 rendered = orchestrator._render_template(node.template, resolved)
                 # If rendering succeeds, should not expose Python internals
                 assert "uid=" not in rendered
@@ -1798,6 +1694,7 @@ class TestOutputParsers:
     @pytest.mark.asyncio
     async def test_register_custom_parser(self, orchestrator):
         """Test registering a custom output parser."""
+
         # Define a custom parser
         async def custom_parser(work_dir: Path):
             return {"custom_value": 42}
@@ -1935,9 +1832,7 @@ class TestOutputParsers:
 
         # Create job in database
         job_id = temp_db.create_job(
-            name="test_job",
-            work_dir=str(work_dir),
-            input_content="TEST INPUT"
+            name="test_job", work_dir=str(work_dir), input_content="TEST INPUT"
         )
         temp_db.update_status(job_id, "COMPLETED")
         job = temp_db.get_job(job_id)
@@ -1948,7 +1843,7 @@ class TestOutputParsers:
             job_name="test_job",
             template="TEST",
             parameters={},
-            output_parsers=["energy", "bandgap"]
+            output_parsers=["energy", "bandgap"],
         )
 
         # Extract results
@@ -1961,19 +1856,18 @@ class TestOutputParsers:
         assert results["bandgap"] == 1.5
 
     @pytest.mark.asyncio
-    async def test_extract_node_results_missing_parser(self, orchestrator, temp_db, tmp_path, caplog):
+    async def test_extract_node_results_missing_parser(
+        self, orchestrator, temp_db, tmp_path, caplog
+    ):
         """Test _extract_node_results handles missing parser gracefully."""
         import logging
+
         caplog.set_level(logging.WARNING)
 
         work_dir = tmp_path / "job_work"
         work_dir.mkdir()
 
-        job_id = temp_db.create_job(
-            name="test_job",
-            work_dir=str(work_dir),
-            input_content="TEST"
-        )
+        job_id = temp_db.create_job(name="test_job", work_dir=str(work_dir), input_content="TEST")
         job = temp_db.get_job(job_id)
 
         # Create node with non-existent parser
@@ -1982,23 +1876,27 @@ class TestOutputParsers:
             job_name="test_job",
             template="TEST",
             parameters={},
-            output_parsers=["nonexistent_parser"]
+            output_parsers=["nonexistent_parser"],
         )
 
         # Should not raise, just log warning
         results = await orchestrator._extract_node_results(node, job)
 
         # Check warning was logged
-        assert any("Parser 'nonexistent_parser' not found" in record.message
-                   for record in caplog.records)
+        assert any(
+            "Parser 'nonexistent_parser' not found" in record.message for record in caplog.records
+        )
 
         # Results should be empty but not None
         assert results == {}
 
     @pytest.mark.asyncio
-    async def test_extract_node_results_parser_exception(self, orchestrator, temp_db, tmp_path, caplog):
+    async def test_extract_node_results_parser_exception(
+        self, orchestrator, temp_db, tmp_path, caplog
+    ):
         """Test _extract_node_results handles parser exceptions gracefully."""
         import logging
+
         caplog.set_level(logging.WARNING)
 
         # Register a parser that raises an exception
@@ -2010,11 +1908,7 @@ class TestOutputParsers:
         work_dir = tmp_path / "job_work"
         work_dir.mkdir()
 
-        job_id = temp_db.create_job(
-            name="test_job",
-            work_dir=str(work_dir),
-            input_content="TEST"
-        )
+        job_id = temp_db.create_job(name="test_job", work_dir=str(work_dir), input_content="TEST")
         job = temp_db.get_job(job_id)
 
         node = WorkflowNode(
@@ -2022,15 +1916,14 @@ class TestOutputParsers:
             job_name="test_job",
             template="TEST",
             parameters={},
-            output_parsers=["broken"]
+            output_parsers=["broken"],
         )
 
         # Should not raise, just log warning
         results = await orchestrator._extract_node_results(node, job)
 
         # Check warning was logged
-        assert any("Parser 'broken' failed" in record.message
-                   for record in caplog.records)
+        assert any("Parser 'broken' failed" in record.message for record in caplog.records)
 
         assert results == {}
 

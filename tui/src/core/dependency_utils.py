@@ -11,12 +11,12 @@ from typing import Dict, List, Set, Union
 
 class CircularDependencyError(Exception):
     """Raised when circular dependencies are detected in a dependency graph."""
+
     pass
 
 
 def assert_acyclic(
-    graph: Dict[Union[str, int], List[Union[str, int]]],
-    error_context: str = ""
+    graph: Dict[Union[str, int], List[Union[str, int]]], error_context: str = ""
 ) -> None:
     """
     Validate that a dependency graph contains no cycles.

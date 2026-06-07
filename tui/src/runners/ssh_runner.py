@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Security: Regex pattern for valid chemical element symbols (1-2 letters, first capitalized)
 # Prevents command injection when element is used in shell commands
-_ELEMENT_PATTERN = re.compile(r'^[A-Z][a-z]?$')
+_ELEMENT_PATTERN = re.compile(r"^[A-Z][a-z]?$")
 
 
 class SSHRunner(RemoteBaseRunner):
@@ -138,7 +138,7 @@ class SSHRunner(RemoteBaseRunner):
         input_file: Path,
         threads: Optional[int] = None,
         mpi_ranks: Optional[int] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> str:
         """
         Submit a DFT job for remote execution.
@@ -176,9 +176,7 @@ class SSHRunner(RemoteBaseRunner):
 
             # Create remote work directory
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            remote_work_dir = PurePosixPath(
-                self.remote_scratch_dir / f"job_{job_id}_{timestamp}"
-            )
+            remote_work_dir = PurePosixPath(self.remote_scratch_dir / f"job_{job_id}_{timestamp}")
 
             try:
                 async with self.connection_manager.get_connection(self.cluster_id) as conn:
@@ -196,7 +194,7 @@ class SSHRunner(RemoteBaseRunner):
                         input_file=input_file.name,
                         threads=threads,
                         mpi_ranks=mpi_ranks,
-                        **kwargs
+                        **kwargs,
                     )
 
                     # Write script to remote
@@ -244,7 +242,7 @@ class SSHRunner(RemoteBaseRunner):
                     # Spawn background task to monitor job and release slot when done
                     monitor_task = asyncio.create_task(
                         self._monitor_and_release_slot(job_handle),
-                        name=f"slot_monitor_{job_handle}"
+                        name=f"slot_monitor_{job_handle}",
                     )
                     self._slot_monitors[job_handle] = monitor_task
                     slot_acquired = False  # Monitor will release it
@@ -276,8 +274,12 @@ class SSHRunner(RemoteBaseRunner):
             while True:
                 try:
                     status = await self.get_status(job_handle)
-                    if status in (JobStatus.COMPLETED, JobStatus.FAILED,
-                                  JobStatus.CANCELLED, JobStatus.UNKNOWN):
+                    if status in (
+                        JobStatus.COMPLETED,
+                        JobStatus.FAILED,
+                        JobStatus.CANCELLED,
+                        JobStatus.UNKNOWN,
+                    ):
                         logger.debug(f"Job {job_handle} reached terminal state: {status}")
                         break
                 except Exception as e:
@@ -344,8 +346,7 @@ class SSHRunner(RemoteBaseRunner):
                 quoted_work_dir = shlex.quote(remote_work_dir)
                 try:
                     exit_code_cmd = (
-                        f"test -f {quoted_work_dir}/.exit_code && "
-                        f"cat {quoted_work_dir}/.exit_code"
+                        f"test -f {quoted_work_dir}/.exit_code && cat {quoted_work_dir}/.exit_code"
                     )
                     result = await conn.run(exit_code_cmd, check=False, timeout=5)
 
@@ -359,7 +360,9 @@ class SSHRunner(RemoteBaseRunner):
                                 job_info["status"] = JobStatus.FAILED
                                 return JobStatus.FAILED
                         except ValueError:
-                            logger.warning(f"Invalid exit code in .exit_code: {result.stdout.strip()}")
+                            logger.warning(
+                                f"Invalid exit code in .exit_code: {result.stdout.strip()}"
+                            )
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout reading exit code file")
                 except Exception as e:
@@ -375,22 +378,28 @@ class SSHRunner(RemoteBaseRunner):
                         output_lower = result.stdout.lower()
 
                         # Check for error indicators FIRST (more specific)
-                        if any(marker in output_lower for marker in [
-                            "error termination",
-                            "abnormal termination",
-                            "segmentation fault",
-                            "killed by signal"
-                        ]):
+                        if any(
+                            marker in output_lower
+                            for marker in [
+                                "error termination",
+                                "abnormal termination",
+                                "segmentation fault",
+                                "killed by signal",
+                            ]
+                        ):
                             job_info["status"] = JobStatus.FAILED
                             return JobStatus.FAILED
 
                         # Check for completion indicators (less specific)
-                        if any(marker in output_lower for marker in [
-                            "scf ended",
-                            "eeeeeeeeee termination",
-                            "terminated - job complete",
-                            "normal termination"
-                        ]):
+                        if any(
+                            marker in output_lower
+                            for marker in [
+                                "scf ended",
+                                "eeeeeeeeee termination",
+                                "terminated - job complete",
+                                "normal termination",
+                            ]
+                        ):
                             job_info["status"] = JobStatus.COMPLETED
                             return JobStatus.COMPLETED
                 except asyncio.TimeoutError:
@@ -515,7 +524,9 @@ class SSHRunner(RemoteBaseRunner):
                         break
                     await asyncio.sleep(1.0)
                 else:
-                    logger.warning(f"Output file not found after 30 seconds: {remote_work_dir}/output.log")
+                    logger.warning(
+                        f"Output file not found after 30 seconds: {remote_work_dir}/output.log"
+                    )
                     yield "⚠ Output file not created yet\n"
                     return
 
@@ -537,7 +548,11 @@ class SSHRunner(RemoteBaseRunner):
                             if now - last_status_check >= status_check_interval:
                                 last_status_check = now
                                 status = await self.get_status(job_handle)
-                                if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+                                if status in (
+                                    JobStatus.COMPLETED,
+                                    JobStatus.FAILED,
+                                    JobStatus.CANCELLED,
+                                ):
                                     # Read any remaining output
                                     break
 
@@ -601,7 +616,7 @@ class SSHRunner(RemoteBaseRunner):
                 convergence_status="UNKNOWN",
                 errors=[f"Failed to retrieve results: {e}"],
                 warnings=[],
-                metadata={"job_handle": job_handle, "status": status}
+                metadata={"job_handle": job_handle, "status": status},
             )
 
     def is_job_running(self, job_handle: str) -> bool:
@@ -786,7 +801,9 @@ class SSHRunner(RemoteBaseRunner):
         try:
             validated_pid = int(pid)
         except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid PID: must be an integer, got {type(pid).__name__}: {pid}") from e
+            raise ValueError(
+                f"Invalid PID: must be an integer, got {type(pid).__name__}: {pid}"
+            ) from e
 
         if validated_pid <= 0:
             raise ValueError(f"Invalid PID: must be > 0, got {validated_pid}")
@@ -824,7 +841,7 @@ class SSHRunner(RemoteBaseRunner):
         input_file: str,
         threads: Optional[int] = None,
         mpi_ranks: Optional[int] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> str:
         """
         Generate bash script for remote execution.
@@ -950,10 +967,7 @@ exit $EXIT_CODE
         return script
 
     async def _upload_files(
-        self,
-        conn: asyncssh.SSHClientConnection,
-        local_dir: Path,
-        remote_dir: PurePosixPath
+        self, conn: asyncssh.SSHClientConnection, local_dir: Path, remote_dir: PurePosixPath
     ) -> None:
         """
         Upload input files to remote machine via SFTP.
@@ -1000,10 +1014,7 @@ exit $EXIT_CODE
         logger.info("File upload complete")
 
     async def _retrieve_vasp_potcar(
-        self,
-        conn: asyncssh.SSHClientConnection,
-        local_dir: Path,
-        remote_dir: PurePosixPath
+        self, conn: asyncssh.SSHClientConnection, local_dir: Path, remote_dir: PurePosixPath
     ) -> None:
         """
         Retrieve and concatenate POTCARs from cluster's VASP_PP_PATH for VASP calculations.
@@ -1035,16 +1046,22 @@ exit $EXIT_CODE
 
         # Security: Validate potcar_type against known pseudopotential libraries
         _VALID_POTCAR_TYPES = {
-            "potpaw_PBE", "potpaw_LDA", "potpaw_GGA",
-            "PAW_PBE", "PAW_LDA", "PAW_GGA", "PAW_PW91",
-            "USPP_LDA", "USPP_GGA",
-            "potpaw_PBE.52", "potpaw_PBE.54",
+            "potpaw_PBE",
+            "potpaw_LDA",
+            "potpaw_GGA",
+            "PAW_PBE",
+            "PAW_LDA",
+            "PAW_GGA",
+            "PAW_PW91",
+            "USPP_LDA",
+            "USPP_GGA",
+            "potpaw_PBE.52",
+            "potpaw_PBE.54",
             "potpaw_PBE.64",
         }
         if potcar_type not in _VALID_POTCAR_TYPES:
             raise JobSubmissionError(
-                f"Invalid potcar_type '{potcar_type}': must be one of "
-                f"{sorted(_VALID_POTCAR_TYPES)}"
+                f"Invalid potcar_type '{potcar_type}': must be one of {sorted(_VALID_POTCAR_TYPES)}"
             )
 
         if not potcar_elements:
@@ -1067,7 +1084,7 @@ exit $EXIT_CODE
             raise ValueError(f"Cluster {self.cluster_id} not found in ConnectionManager")
 
         # Try to get explicit VASP_PP_PATH from cluster config, otherwise use env var
-        vasp_pp_path = getattr(cluster_config, 'vasp_pp_path', None)
+        vasp_pp_path = getattr(cluster_config, "vasp_pp_path", None)
         if vasp_pp_path:
             # Literal path: shlex.quote to protect against spaces/special chars
             base_path = shlex.quote(vasp_pp_path)
@@ -1127,13 +1144,12 @@ exit $EXIT_CODE
             copy_cmd = concat_cmd
 
         await conn.run(copy_cmd, check=True)
-        logger.info(f"Retrieved and concatenated {len(potcar_paths)} POTCARs for: {', '.join(potcar_elements)}")
+        logger.info(
+            f"Retrieved and concatenated {len(potcar_paths)} POTCARs for: {', '.join(potcar_elements)}"
+        )
 
     async def _download_files(
-        self,
-        conn: asyncssh.SSHClientConnection,
-        remote_dir: str,
-        local_dir: Path
+        self, conn: asyncssh.SSHClientConnection, remote_dir: str, local_dir: Path
     ) -> None:
         """
         Download output files from remote machine via SFTP.
@@ -1164,11 +1180,11 @@ exit $EXIT_CODE
             remote_files = await sftp.listdir(remote_dir)
 
             import fnmatch
+
             for filename in remote_files:
                 # Check if file matches our patterns using proper glob matching
                 should_download = any(
-                    fnmatch.fnmatch(filename, pattern)
-                    for pattern in output_files
+                    fnmatch.fnmatch(filename, pattern) for pattern in output_files
                 )
 
                 if should_download:
@@ -1210,7 +1226,7 @@ exit $EXIT_CODE
                 convergence_status="FAILED",
                 errors=["Output file not found"],
                 warnings=[],
-                metadata=metadata
+                metadata=metadata,
             )
 
         # Use code-specific parser
@@ -1220,9 +1236,9 @@ exit $EXIT_CODE
 
             # Determine success
             success = (
-                status == JobStatus.COMPLETED and
-                parse_result.convergence_status == "CONVERGED" and
-                len(parse_result.errors) == 0
+                status == JobStatus.COMPLETED
+                and parse_result.convergence_status == "CONVERGED"
+                and len(parse_result.errors) == 0
             )
 
             return JobResult(
@@ -1236,8 +1252,8 @@ exit $EXIT_CODE
                     **metadata,
                     "scf_cycles": parse_result.scf_cycles,
                     "geometry_converged": parse_result.geometry_converged,
-                    **parse_result.metadata
-                }
+                    **parse_result.metadata,
+                },
             )
         except Exception as e:
             return JobResult(
@@ -1247,5 +1263,5 @@ exit $EXIT_CODE
                 convergence_status="UNKNOWN",
                 errors=[f"Failed to parse output: {e}"],
                 warnings=[],
-                metadata=metadata
+                metadata=metadata,
             )

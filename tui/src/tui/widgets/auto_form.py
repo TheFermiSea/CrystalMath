@@ -29,6 +29,7 @@ from textual.validation import Function, Integer, Number, ValidationResult, Vali
 @dataclass
 class ValidationError:
     """Represents a validation error for a field."""
+
     field_name: str
     message: str
     severity: str = "error"  # error, warning, info
@@ -37,6 +38,7 @@ class ValidationError:
 @dataclass
 class FieldSchema:
     """Schema definition for a form field."""
+
     name: str
     type: str  # string, integer, float, boolean, select, multiselect, file, range, date, color
     label: str = ""
@@ -104,8 +106,12 @@ class PatternValidator(Validator):
 class RangeValidator(Validator):
     """Validator for numeric ranges."""
 
-    def __init__(self, min_val: Optional[float] = None, max_val: Optional[float] = None,
-                 value_type: str = "float"):
+    def __init__(
+        self,
+        min_val: Optional[float] = None,
+        max_val: Optional[float] = None,
+        value_type: str = "float",
+    ):
         self.min_val = min_val
         self.max_val = max_val
         self.value_type = value_type
@@ -249,23 +255,19 @@ class StringField(FormField):
 
         # Pattern validation
         if self.schema.pattern:
-            validators.append(PatternValidator(
-                self.schema.pattern,
-                f"Must match pattern: {self.schema.pattern}"
-            ))
+            validators.append(
+                PatternValidator(self.schema.pattern, f"Must match pattern: {self.schema.pattern}")
+            )
 
         # Custom validation
         if self.schema.validator:
-            validators.append(CustomValidator(
-                self.schema.validator,
-                self.schema.validator_message
-            ))
+            validators.append(CustomValidator(self.schema.validator, self.schema.validator_message))
 
         self.input_widget = Input(
             value=str(self.schema.default or ""),
             placeholder=self.schema.placeholder,
             validators=validators if validators else None,
-            id=f"input-{self.schema.name}"
+            id=f"input-{self.schema.name}",
         )
 
         yield from super().compose()
@@ -290,18 +292,14 @@ class IntegerField(FormField):
 
         # Range validation
         if self.schema.min is not None or self.schema.max is not None:
-            validators.append(RangeValidator(
-                self.schema.min,
-                self.schema.max,
-                "integer"
-            ))
+            validators.append(RangeValidator(self.schema.min, self.schema.max, "integer"))
 
         self.input_widget = Input(
             value=str(self.schema.default or ""),
             placeholder=self.schema.placeholder or "Enter integer",
             validators=validators,
             id=f"input-{self.schema.name}",
-            type="integer"
+            type="integer",
         )
 
         yield from super().compose()
@@ -329,18 +327,14 @@ class FloatField(FormField):
 
         # Range validation
         if self.schema.min is not None or self.schema.max is not None:
-            validators.append(RangeValidator(
-                self.schema.min,
-                self.schema.max,
-                "float"
-            ))
+            validators.append(RangeValidator(self.schema.min, self.schema.max, "float"))
 
         self.input_widget = Input(
             value=str(self.schema.default or ""),
             placeholder=self.schema.placeholder or "Enter number",
             validators=validators,
             id=f"input-{self.schema.name}",
-            type="number"
+            type="number",
         )
 
         yield from super().compose()
@@ -364,10 +358,7 @@ class BooleanField(FormField):
 
     def compose(self) -> ComposeResult:
         """Create switch widget."""
-        self.input_widget = Switch(
-            value=bool(self.schema.default),
-            id=f"input-{self.schema.name}"
-        )
+        self.input_widget = Switch(value=bool(self.schema.default), id=f"input-{self.schema.name}")
 
         yield from super().compose()
 
@@ -394,7 +385,7 @@ class SelectField(FormField):
             options=options_tuples,
             value=str(self.schema.default) if self.schema.default else None,
             id=f"input-{self.schema.name}",
-            allow_blank=not self.schema.required
+            allow_blank=not self.schema.required,
         )
 
         yield from super().compose()
@@ -428,11 +419,9 @@ class MultiSelectField(FormField):
         # Checkboxes container
         with Vertical(id=f"multiselect-{self.schema.name}"):
             defaults = self.schema.default or []
-            for option in (self.schema.options or []):
+            for option in self.schema.options or []:
                 yield Checkbox(
-                    str(option),
-                    value=(option in defaults),
-                    id=f"check-{self.schema.name}-{option}"
+                    str(option), value=(option in defaults), id=f"check-{self.schema.name}-{option}"
                 )
 
         # Error display
@@ -462,7 +451,7 @@ class FileField(FormField):
         self.input_widget = Input(
             value=str(self.schema.default or ""),
             placeholder="Enter file path or click Browse",
-            id=f"input-{self.schema.name}"
+            id=f"input-{self.schema.name}",
         )
 
         # Label
@@ -550,12 +539,14 @@ class AutoForm(Widget):
 
     class Submitted(Message):
         """Form submitted message."""
+
         def __init__(self, values: Dict[str, Any]) -> None:
             self.values = values
             super().__init__()
 
     class Changed(Message):
         """Form value changed message."""
+
         def __init__(self, field_name: str, value: Any) -> None:
             self.field_name = field_name
             self.value = value
@@ -655,10 +646,7 @@ class AutoForm(Widget):
         for field_name, field in self.fields.items():
             field_errors = field.validate_field()
             for error_msg in field_errors:
-                errors.append(ValidationError(
-                    field_name=field_name,
-                    message=error_msg
-                ))
+                errors.append(ValidationError(field_name=field_name, message=error_msg))
 
         # Cross-field validation
         errors.extend(self._validate_dependencies())
@@ -675,10 +663,11 @@ class AutoForm(Widget):
                 dep_field = field_schema.depends_on
                 if dep_field in values and not values[dep_field]:
                     if values.get(field_name):
-                        errors.append(ValidationError(
-                            field_name=field_name,
-                            message=f"Requires {dep_field} to be set"
-                        ))
+                        errors.append(
+                            ValidationError(
+                                field_name=field_name, message=f"Requires {dep_field} to be set"
+                            )
+                        )
 
         return errors
 
@@ -749,10 +738,7 @@ class AutoForm(Widget):
 
     def to_json(self) -> Dict[str, Any]:
         """Export form state to JSON."""
-        return {
-            "schema": self.schema,
-            "values": self.get_values()
-        }
+        return {"schema": self.schema, "values": self.get_values()}
 
     @classmethod
     def from_json(cls, data: Dict[str, Any]) -> "AutoForm":

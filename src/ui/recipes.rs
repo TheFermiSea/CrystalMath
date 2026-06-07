@@ -342,25 +342,27 @@ mod tests {
 
     #[test]
     fn test_recipe_browser_state_navigation() {
-        let mut state = RecipeBrowserState::default();
-        state.recipes = vec![
-            Recipe {
-                name: "relax_job".to_string(),
-                module: "quacc.recipes.vasp.core".to_string(),
-                fullname: "quacc.recipes.vasp.core.relax_job".to_string(),
-                docstring: "Relax".to_string(),
-                signature: "()".to_string(),
-                recipe_type: "job".to_string(),
-            },
-            Recipe {
-                name: "static_job".to_string(),
-                module: "quacc.recipes.vasp.core".to_string(),
-                fullname: "quacc.recipes.vasp.core.static_job".to_string(),
-                docstring: "Static".to_string(),
-                signature: "()".to_string(),
-                recipe_type: "job".to_string(),
-            },
-        ];
+        let mut state = RecipeBrowserState {
+            recipes: vec![
+                Recipe {
+                    name: "relax_job".to_string(),
+                    module: "quacc.recipes.vasp.core".to_string(),
+                    fullname: "quacc.recipes.vasp.core.relax_job".to_string(),
+                    docstring: "Relax".to_string(),
+                    signature: "()".to_string(),
+                    recipe_type: "job".to_string(),
+                },
+                Recipe {
+                    name: "static_job".to_string(),
+                    module: "quacc.recipes.vasp.core".to_string(),
+                    fullname: "quacc.recipes.vasp.core.static_job".to_string(),
+                    docstring: "Static".to_string(),
+                    signature: "()".to_string(),
+                    recipe_type: "job".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
         state.list_state.select(Some(0));
 
         state.next();
@@ -378,8 +380,10 @@ mod tests {
 
     #[test]
     fn test_recipe_browser_set_data() {
-        let mut state = RecipeBrowserState::default();
-        state.loading = true;
+        let mut state = RecipeBrowserState {
+            loading: true,
+            ..Default::default()
+        };
 
         let recipes = vec![Recipe {
             name: "test_job".to_string(),

@@ -570,18 +570,14 @@ class TestCodeBuildCommand:
 
     def test_qe_build_command(self):
         """Test QE command building with -in flag."""
-        cmd = QE_CONFIG.build_command(
-            Path("input.in"), Path("output.out"), parallel=False
-        )
+        cmd = QE_CONFIG.build_command(Path("input.in"), Path("output.out"), parallel=False)
         assert "pw.x" in cmd[-1]
         assert "-in input.in" in cmd[-1]
         assert "> output.out" in cmd[-1]
 
     def test_vasp_build_command(self):
         """Test VASP command building (CWD style)."""
-        cmd = VASP_CONFIG.build_command(
-            Path("POSCAR"), Path("output.out"), parallel=False
-        )
+        cmd = VASP_CONFIG.build_command(Path("POSCAR"), Path("output.out"), parallel=False)
         assert "vasp_std" in cmd[-1]
         assert "> output.out" in cmd[-1]
         # VASP CWD style shouldn't have input file in command
@@ -884,6 +880,7 @@ class TestVASPConfigAuxiliaryMappings:
     def test_vasp_invocation_is_cwd(self):
         """Test VASP uses CWD invocation style."""
         from src.core.codes.base import InvocationStyle
+
         assert VASP_CONFIG.invocation_style == InvocationStyle.CWD
 
 

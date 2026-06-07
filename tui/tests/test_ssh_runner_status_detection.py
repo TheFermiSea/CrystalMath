@@ -42,7 +42,7 @@ def ssh_runner(mock_connection_manager):
         connection_manager=mock_connection_manager,
         cluster_id=1,
         remote_dft_root=Path("/home/user/CRYSTAL23"),
-        remote_scratch_dir=Path("/home/user/crystal_jobs")
+        remote_scratch_dir=Path("/home/user/crystal_jobs"),
     )
 
     # Pre-populate with a test job
@@ -51,7 +51,7 @@ def ssh_runner(mock_connection_manager):
         "pid": 12345,
         "remote_work_dir": "/home/user/crystal_jobs/job_1",
         "local_work_dir": "/tmp/local_work",
-        "status": JobStatus.RUNNING
+        "status": JobStatus.RUNNING,
     }
 
     return runner
@@ -73,7 +73,10 @@ class TestStatusDetectionRunning:
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
         assert status == JobStatus.RUNNING
-        assert ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"] == JobStatus.RUNNING
+        assert (
+            ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"]
+            == JobStatus.RUNNING
+        )
 
         # Verify ps command was called
         mock_conn.run.assert_called_once()
@@ -100,10 +103,7 @@ class TestStatusDetectionRunning:
         mock_connection_manager.get_connection.return_value.__aenter__.return_value = mock_conn
 
         # Simulate rapid polling
-        tasks = [
-            ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
-            for _ in range(10)
-        ]
+        tasks = [ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1") for _ in range(10)]
 
         results = await asyncio.gather(*tasks)
 
@@ -130,9 +130,14 @@ class TestStatusDetectionCompleted:
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
         assert status == JobStatus.COMPLETED
-        assert ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"] == JobStatus.COMPLETED
+        assert (
+            ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"]
+            == JobStatus.COMPLETED
+        )
 
-    async def test_completed_via_exit_code_with_whitespace(self, ssh_runner, mock_connection_manager):
+    async def test_completed_via_exit_code_with_whitespace(
+        self, ssh_runner, mock_connection_manager
+    ):
         """Test that exit code is parsed correctly even with whitespace."""
         mock_conn = AsyncMock()
 
@@ -194,7 +199,10 @@ class TestStatusDetectionFailed:
         status = await ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1")
 
         assert status == JobStatus.FAILED
-        assert ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"] == JobStatus.FAILED
+        assert (
+            ssh_runner._active_jobs["1:12345:/home/user/crystal_jobs/job_1"]["status"]
+            == JobStatus.FAILED
+        )
 
     async def test_failed_via_exit_code_137(self, ssh_runner, mock_connection_manager):
         """Test detection of killed job (exit code 137 = SIGKILL)."""
@@ -211,7 +219,9 @@ class TestStatusDetectionFailed:
 
         assert status == JobStatus.FAILED
 
-    async def test_failed_via_output_parsing_error_termination(self, ssh_runner, mock_connection_manager):
+    async def test_failed_via_output_parsing_error_termination(
+        self, ssh_runner, mock_connection_manager
+    ):
         """Test fallback detection of error termination in output."""
         mock_conn = AsyncMock()
 
@@ -314,7 +324,7 @@ CRYSTAL23 OUTPUT
             "job_id": 999,
             "pid": "invalid",
             "remote_work_dir": "/home/user/jobs/test",
-            "status": "running"
+            "status": "running",
         }
 
         # ValueError from _parse_job_handle gets wrapped
@@ -371,7 +381,7 @@ class TestStatusDetectionSecurity:
             "job_id": 999,
             "pid": "12345; rm -rf /",
             "remote_work_dir": "/path",
-            "status": "running"
+            "status": "running",
         }
 
         # ValueError from parsing non-integer PID
@@ -384,7 +394,7 @@ class TestStatusDetectionSecurity:
             "job_id": 999,
             "pid": 0,
             "remote_work_dir": "/path",
-            "status": "running"
+            "status": "running",
         }
 
         with pytest.raises(JobNotFoundError, match="must be > 0"):
@@ -396,7 +406,7 @@ class TestStatusDetectionSecurity:
             "job_id": 999,
             "pid": -1,
             "remote_work_dir": "/path",
-            "status": "running"
+            "status": "running",
         }
 
         with pytest.raises(JobNotFoundError, match="must be > 0"):
@@ -455,6 +465,5 @@ class TestStatusDetectionPerformance:
         with pytest.raises(asyncio.TimeoutError):
             # Manually enforce timeout for test
             await asyncio.wait_for(
-                ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1"),
-                timeout=1.0
+                ssh_runner.get_status("1:12345:/home/user/crystal_jobs/job_1"), timeout=1.0
             )

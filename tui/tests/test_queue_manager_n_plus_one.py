@@ -25,7 +25,7 @@ from src.core.queue_manager import (
     Priority,
     QueueManagerError,
     InvalidJobError,
-    CircularDependencyError
+    CircularDependencyError,
 )
 
 
@@ -56,9 +56,7 @@ class TestJobExistsBatch:
     def test_job_exists_batch_single_job_exists(self, temp_db):
         """Test batch existence check with single existing job."""
         job_id = temp_db.create_job(
-            name="test_job",
-            work_dir="/tmp/test",
-            input_content="test input"
+            name="test_job", work_dir="/tmp/test", input_content="test input"
         )
 
         result = temp_db.job_exists_batch([job_id])
@@ -75,9 +73,7 @@ class TestJobExistsBatch:
         job_ids = []
         for i in range(5):
             job_id = temp_db.create_job(
-                name=f"job{i}",
-                work_dir=f"/tmp/job{i}",
-                input_content=f"input{i}"
+                name=f"job{i}", work_dir=f"/tmp/job{i}", input_content=f"input{i}"
             )
             job_ids.append(job_id)
 
@@ -99,16 +95,8 @@ class TestJobExistsBatch:
     def test_job_exists_batch_mixed_existing_nonexistent(self, temp_db):
         """Test batch existence check with mix of existing and non-existent jobs."""
         # Create some real jobs
-        real_id1 = temp_db.create_job(
-            name="job1",
-            work_dir="/tmp/job1",
-            input_content="input1"
-        )
-        real_id2 = temp_db.create_job(
-            name="job2",
-            work_dir="/tmp/job2",
-            input_content="input2"
-        )
+        real_id1 = temp_db.create_job(name="job1", work_dir="/tmp/job1", input_content="input1")
+        real_id2 = temp_db.create_job(name="job2", work_dir="/tmp/job2", input_content="input2")
 
         # Mix real and fake IDs
         mixed_ids = [real_id1, 999998, real_id2, 999999]
@@ -132,14 +120,13 @@ class TestJobExistsBatch:
         job_ids = []
         for i in range(50):
             job_id = temp_db.create_job(
-                name=f"job{i}",
-                work_dir=f"/tmp/job{i}",
-                input_content=f"input{i}"
+                name=f"job{i}", work_dir=f"/tmp/job{i}", input_content=f"input{i}"
             )
             job_ids.append(job_id)
 
         # Call batch method with large list
         import time
+
         start_time = time.time()
         result = temp_db.job_exists_batch(job_ids)
         elapsed_time = time.time() - start_time
@@ -150,8 +137,9 @@ class TestJobExistsBatch:
 
         # Should complete very quickly with batch query (under 100ms)
         # If it were using individual queries, this would be much slower
-        assert elapsed_time < 0.1, \
+        assert elapsed_time < 0.1, (
             f"Batch query took {elapsed_time:.4f}s, expected <0.1s (possible N+1 query problem)"
+        )
 
 
 class TestValidateDependenciesOptimization:
@@ -164,18 +152,12 @@ class TestValidateDependenciesOptimization:
         dep_ids = []
         for i in range(5):
             job_id = temp_db.create_job(
-                name=f"dep{i}",
-                work_dir=f"/tmp/dep{i}",
-                input_content=f"dep{i}"
+                name=f"dep{i}", work_dir=f"/tmp/dep{i}", input_content=f"dep{i}"
             )
             dep_ids.append(job_id)
 
         # Create main job
-        main_job_id = temp_db.create_job(
-            name="main",
-            work_dir="/tmp/main",
-            input_content="main"
-        )
+        main_job_id = temp_db.create_job(name="main", work_dir="/tmp/main", input_content="main")
 
         # Track calls to get_job (old method) vs job_exists_batch (new method)
         original_get_job = temp_db.get_job
@@ -195,11 +177,7 @@ class TestValidateDependenciesOptimization:
         temp_db.job_exists_batch = tracked_batch_exists
 
         # Enqueue with dependencies (this calls _validate_dependencies internally)
-        await queue_manager.enqueue(
-            main_job_id,
-            priority=Priority.NORMAL,
-            dependencies=dep_ids
-        )
+        await queue_manager.enqueue(main_job_id, priority=Priority.NORMAL, dependencies=dep_ids)
 
         # Should NOT use individual get_job calls for dependency existence check
         # (May still use get_job for other purposes like job status check)
@@ -216,18 +194,12 @@ class TestValidateDependenciesOptimization:
     async def test_validate_dependencies_invalid_job_error(self, queue_manager, temp_db):
         """Test that _validate_dependencies raises InvalidJobError for non-existent deps."""
         # Create main job
-        main_job_id = temp_db.create_job(
-            name="main",
-            work_dir="/tmp/main",
-            input_content="main"
-        )
+        main_job_id = temp_db.create_job(name="main", work_dir="/tmp/main", input_content="main")
 
         # Try to enqueue with non-existent dependency
         with pytest.raises(InvalidJobError, match="Dependency job 999999 not found"):
             await queue_manager.enqueue(
-                main_job_id,
-                priority=Priority.NORMAL,
-                dependencies=[999999]
+                main_job_id, priority=Priority.NORMAL, dependencies=[999999]
             )
 
     @pytest.mark.asyncio
@@ -235,41 +207,25 @@ class TestValidateDependenciesOptimization:
         """Test validation with mix of valid and invalid dependencies."""
         # Create one valid dependency
         valid_dep = temp_db.create_job(
-            name="valid_dep",
-            work_dir="/tmp/valid_dep",
-            input_content="valid"
+            name="valid_dep", work_dir="/tmp/valid_dep", input_content="valid"
         )
 
         # Create main job
-        main_job_id = temp_db.create_job(
-            name="main",
-            work_dir="/tmp/main",
-            input_content="main"
-        )
+        main_job_id = temp_db.create_job(name="main", work_dir="/tmp/main", input_content="main")
 
         # Try to enqueue with mixed dependencies
         with pytest.raises(InvalidJobError, match="Dependency job 999999 not found"):
             await queue_manager.enqueue(
-                main_job_id,
-                priority=Priority.NORMAL,
-                dependencies=[valid_dep, 999999]
+                main_job_id, priority=Priority.NORMAL, dependencies=[valid_dep, 999999]
             )
 
     @pytest.mark.asyncio
     async def test_validate_dependencies_self_reference(self, queue_manager, temp_db):
         """Test that self-dependency is caught."""
-        job_id = temp_db.create_job(
-            name="self_ref",
-            work_dir="/tmp/self_ref",
-            input_content="self"
-        )
+        job_id = temp_db.create_job(name="self_ref", work_dir="/tmp/self_ref", input_content="self")
 
         with pytest.raises(CircularDependencyError, match="cannot depend on itself"):
-            await queue_manager.enqueue(
-                job_id,
-                priority=Priority.NORMAL,
-                dependencies=[job_id]
-            )
+            await queue_manager.enqueue(job_id, priority=Priority.NORMAL, dependencies=[job_id])
 
 
 class TestDependenciesSatisfiedOptimization:
@@ -282,9 +238,7 @@ class TestDependenciesSatisfiedOptimization:
         dep_ids = []
         for i in range(5):
             job_id = temp_db.create_job(
-                name=f"dep{i}",
-                work_dir=f"/tmp/dep{i}",
-                input_content=f"dep{i}"
+                name=f"dep{i}", work_dir=f"/tmp/dep{i}", input_content=f"dep{i}"
             )
             dep_ids.append(job_id)
 
@@ -293,18 +247,10 @@ class TestDependenciesSatisfiedOptimization:
             temp_db.update_status(dep_id, "COMPLETED")
 
         # Create main job
-        main_job_id = temp_db.create_job(
-            name="main",
-            work_dir="/tmp/main",
-            input_content="main"
-        )
+        main_job_id = temp_db.create_job(name="main", work_dir="/tmp/main", input_content="main")
 
         # Enqueue with dependencies
-        await queue_manager.enqueue(
-            main_job_id,
-            priority=Priority.NORMAL,
-            dependencies=dep_ids
-        )
+        await queue_manager.enqueue(main_job_id, priority=Priority.NORMAL, dependencies=dep_ids)
 
         # Track batch query calls (optimized method)
         original_batch_query = queue_manager._get_job_statuses_batch
@@ -323,10 +269,8 @@ class TestDependenciesSatisfiedOptimization:
         assert satisfied is True
 
         # Should use batch query (not individual queries)
-        assert len(batch_calls) == 1, \
-            f"Expected 1 batch query call, got {len(batch_calls)}"
-        assert set(batch_calls[0]) == set(dep_ids), \
-            "Batch query should include all dependencies"
+        assert len(batch_calls) == 1, f"Expected 1 batch query call, got {len(batch_calls)}"
+        assert set(batch_calls[0]) == set(dep_ids), "Batch query should include all dependencies"
 
     @pytest.mark.asyncio
     async def test_dependencies_satisfied_all_completed(self, queue_manager, temp_db):
@@ -335,25 +279,15 @@ class TestDependenciesSatisfiedOptimization:
         dep_ids = []
         for i in range(3):
             job_id = temp_db.create_job(
-                name=f"dep{i}",
-                work_dir=f"/tmp/dep{i}",
-                input_content=f"dep{i}"
+                name=f"dep{i}", work_dir=f"/tmp/dep{i}", input_content=f"dep{i}"
             )
             temp_db.update_status(job_id, "COMPLETED")
             dep_ids.append(job_id)
 
         # Create main job
-        main_job_id = temp_db.create_job(
-            name="main",
-            work_dir="/tmp/main",
-            input_content="main"
-        )
+        main_job_id = temp_db.create_job(name="main", work_dir="/tmp/main", input_content="main")
 
-        await queue_manager.enqueue(
-            main_job_id,
-            priority=Priority.NORMAL,
-            dependencies=dep_ids
-        )
+        await queue_manager.enqueue(main_job_id, priority=Priority.NORMAL, dependencies=dep_ids)
 
         # Should be satisfied
         assert queue_manager._dependencies_satisfied(main_job_id) is True
@@ -363,30 +297,20 @@ class TestDependenciesSatisfiedOptimization:
         """Test _dependencies_satisfied when some dependencies are still PENDING."""
         # Create mixed-status dependencies
         completed_id = temp_db.create_job(
-            name="completed",
-            work_dir="/tmp/completed",
-            input_content="completed"
+            name="completed", work_dir="/tmp/completed", input_content="completed"
         )
         temp_db.update_status(completed_id, "COMPLETED")
 
         pending_id = temp_db.create_job(
-            name="pending",
-            work_dir="/tmp/pending",
-            input_content="pending"
+            name="pending", work_dir="/tmp/pending", input_content="pending"
         )
         # Leave as PENDING
 
         # Create main job
-        main_job_id = temp_db.create_job(
-            name="main",
-            work_dir="/tmp/main",
-            input_content="main"
-        )
+        main_job_id = temp_db.create_job(name="main", work_dir="/tmp/main", input_content="main")
 
         await queue_manager.enqueue(
-            main_job_id,
-            priority=Priority.NORMAL,
-            dependencies=[completed_id, pending_id]
+            main_job_id, priority=Priority.NORMAL, dependencies=[completed_id, pending_id]
         )
 
         # Should NOT be satisfied (pending job not done)
@@ -399,25 +323,15 @@ class TestDependenciesSatisfiedOptimization:
         dep_ids = []
         for i in range(3):
             job_id = temp_db.create_job(
-                name=f"dep{i}",
-                work_dir=f"/tmp/dep{i}",
-                input_content=f"dep{i}"
+                name=f"dep{i}", work_dir=f"/tmp/dep{i}", input_content=f"dep{i}"
             )
             dep_ids.append(job_id)
             # Leave as PENDING
 
         # Create main job
-        main_job_id = temp_db.create_job(
-            name="main",
-            work_dir="/tmp/main",
-            input_content="main"
-        )
+        main_job_id = temp_db.create_job(name="main", work_dir="/tmp/main", input_content="main")
 
-        await queue_manager.enqueue(
-            main_job_id,
-            priority=Priority.NORMAL,
-            dependencies=dep_ids
-        )
+        await queue_manager.enqueue(main_job_id, priority=Priority.NORMAL, dependencies=dep_ids)
 
         # Should NOT be satisfied
         assert queue_manager._dependencies_satisfied(main_job_id) is False
@@ -427,16 +341,10 @@ class TestDependenciesSatisfiedOptimization:
         """Test _dependencies_satisfied with no dependencies (should be satisfied)."""
         # Create job with no dependencies
         job_id = temp_db.create_job(
-            name="standalone",
-            work_dir="/tmp/standalone",
-            input_content="standalone"
+            name="standalone", work_dir="/tmp/standalone", input_content="standalone"
         )
 
-        await queue_manager.enqueue(
-            job_id,
-            priority=Priority.NORMAL,
-            dependencies=None
-        )
+        await queue_manager.enqueue(job_id, priority=Priority.NORMAL, dependencies=None)
 
         # Should be satisfied (no dependencies)
         assert queue_manager._dependencies_satisfied(job_id) is True
@@ -452,27 +360,17 @@ class TestPerformanceWithDependencies:
         dep_ids = []
         for i in range(50):
             job_id = temp_db.create_job(
-                name=f"dep{i}",
-                work_dir=f"/tmp/dep{i}",
-                input_content=f"dep{i}"
+                name=f"dep{i}", work_dir=f"/tmp/dep{i}", input_content=f"dep{i}"
             )
             temp_db.update_status(job_id, "COMPLETED")
             dep_ids.append(job_id)
 
         # Create main job
-        main_job_id = temp_db.create_job(
-            name="main",
-            work_dir="/tmp/main",
-            input_content="main"
-        )
+        main_job_id = temp_db.create_job(name="main", work_dir="/tmp/main", input_content="main")
 
         # Enqueue with all dependencies
         start_time = time.time()
-        await queue_manager.enqueue(
-            main_job_id,
-            priority=Priority.NORMAL,
-            dependencies=dep_ids
-        )
+        await queue_manager.enqueue(main_job_id, priority=Priority.NORMAL, dependencies=dep_ids)
         enqueue_time = time.time() - start_time
 
         # Check if schedulable
@@ -489,10 +387,12 @@ class TestPerformanceWithDependencies:
 
         # Should complete in reasonable time
         # With batch queries, should be very fast even with 50 dependencies
-        assert enqueue_time < 1.0, \
+        assert enqueue_time < 1.0, (
             f"Enqueue with 50 dependencies took {enqueue_time:.2f}s (too slow)"
-        assert schedule_time < 1.0, \
+        )
+        assert schedule_time < 1.0, (
             f"Scheduling with 50 dependencies took {schedule_time:.2f}s (too slow)"
+        )
 
     @pytest.mark.asyncio
     async def test_query_count_with_dependencies(self, queue_manager, temp_db):
@@ -501,29 +401,19 @@ class TestPerformanceWithDependencies:
         dep_ids = []
         for i in range(10):
             job_id = temp_db.create_job(
-                name=f"dep{i}",
-                work_dir=f"/tmp/dep{i}",
-                input_content=f"dep{i}"
+                name=f"dep{i}", work_dir=f"/tmp/dep{i}", input_content=f"dep{i}"
             )
             temp_db.update_status(job_id, "COMPLETED")
             dep_ids.append(job_id)
 
         # Create main job
-        main_job_id = temp_db.create_job(
-            name="main",
-            work_dir="/tmp/main",
-            input_content="main"
-        )
+        main_job_id = temp_db.create_job(name="main", work_dir="/tmp/main", input_content="main")
 
         # Track database method calls
         original_batch_status = temp_db.get_job_statuses_batch
         original_get_job = temp_db.get_job
 
-        call_tracker = {
-            "batch_status": 0,
-            "individual_get_job": 0,
-            "batch_status_total_jobs": 0
-        }
+        call_tracker = {"batch_status": 0, "individual_get_job": 0, "batch_status_total_jobs": 0}
 
         def tracked_batch_status(job_ids):
             call_tracker["batch_status"] += 1
@@ -538,11 +428,7 @@ class TestPerformanceWithDependencies:
         temp_db.get_job = tracked_get_job
 
         # Enqueue with dependencies
-        await queue_manager.enqueue(
-            main_job_id,
-            priority=Priority.NORMAL,
-            dependencies=dep_ids
-        )
+        await queue_manager.enqueue(main_job_id, priority=Priority.NORMAL, dependencies=dep_ids)
 
         # Schedule
         await queue_manager.schedule_jobs()
@@ -564,9 +450,7 @@ class TestPerformanceWithDependencies:
         job_ids = []
         for i in range(5):
             job_id = temp_db.create_job(
-                name=f"job{i}",
-                work_dir=f"/tmp/job{i}",
-                input_content=f"job{i}"
+                name=f"job{i}", work_dir=f"/tmp/job{i}", input_content=f"job{i}"
             )
             job_ids.append(job_id)
 
@@ -577,32 +461,16 @@ class TestPerformanceWithDependencies:
         await queue_manager.enqueue(job_ids[0], priority=Priority.NORMAL)
 
         # job1 depends on job0
-        await queue_manager.enqueue(
-            job_ids[1],
-            priority=Priority.NORMAL,
-            dependencies=[job_ids[0]]
-        )
+        await queue_manager.enqueue(job_ids[1], priority=Priority.NORMAL, dependencies=[job_ids[0]])
 
         # job2 depends on job1
-        await queue_manager.enqueue(
-            job_ids[2],
-            priority=Priority.NORMAL,
-            dependencies=[job_ids[1]]
-        )
+        await queue_manager.enqueue(job_ids[2], priority=Priority.NORMAL, dependencies=[job_ids[1]])
 
         # job3 depends on job2
-        await queue_manager.enqueue(
-            job_ids[3],
-            priority=Priority.NORMAL,
-            dependencies=[job_ids[2]]
-        )
+        await queue_manager.enqueue(job_ids[3], priority=Priority.NORMAL, dependencies=[job_ids[2]])
 
         # job4 depends on job3
-        await queue_manager.enqueue(
-            job_ids[4],
-            priority=Priority.NORMAL,
-            dependencies=[job_ids[3]]
-        )
+        await queue_manager.enqueue(job_ids[4], priority=Priority.NORMAL, dependencies=[job_ids[3]])
 
         enqueue_time = time.time() - start_time
 
@@ -625,10 +493,8 @@ class TestPerformanceWithDependencies:
         print(f"  Execution time: {execution_time:.4f}s")
 
         # Should complete in reasonable time
-        assert enqueue_time < 0.5, \
-            f"Enqueuing chain took {enqueue_time:.2f}s (too slow)"
-        assert execution_time < 2.0, \
-            f"Executing chain took {execution_time:.2f}s (too slow)"
+        assert enqueue_time < 0.5, f"Enqueuing chain took {enqueue_time:.2f}s (too slow)"
+        assert execution_time < 2.0, f"Executing chain took {execution_time:.2f}s (too slow)"
 
 
 class TestBatchQueryCorrectness:
@@ -641,11 +507,7 @@ class TestBatchQueryCorrectness:
 
     def test_batch_status_duplicate_ids(self, temp_db):
         """Test batch status query with duplicate job IDs."""
-        job_id = temp_db.create_job(
-            name="job",
-            work_dir="/tmp/job",
-            input_content="job"
-        )
+        job_id = temp_db.create_job(name="job", work_dir="/tmp/job", input_content="job")
 
         # Query with duplicates
         result = temp_db.get_job_statuses_batch([job_id, job_id, job_id])
@@ -660,11 +522,7 @@ class TestBatchQueryCorrectness:
 
     def test_batch_exists_duplicate_ids(self, temp_db):
         """Test batch existence check with duplicate IDs."""
-        job_id = temp_db.create_job(
-            name="job",
-            work_dir="/tmp/job",
-            input_content="job"
-        )
+        job_id = temp_db.create_job(name="job", work_dir="/tmp/job", input_content="job")
 
         # Query with duplicates
         result = temp_db.job_exists_batch([job_id, job_id, 999, 999])
@@ -678,9 +536,7 @@ class TestBatchQueryCorrectness:
         job_ids = []
         for i in range(100):
             job_id = temp_db.create_job(
-                name=f"job{i}",
-                work_dir=f"/tmp/job{i}",
-                input_content=f"job{i}"
+                name=f"job{i}", work_dir=f"/tmp/job{i}", input_content=f"job{i}"
             )
             job_ids.append(job_id)
 

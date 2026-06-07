@@ -773,6 +773,19 @@ class BaseAnalysisRunner(ABC):
 
         return params
 
+    def get_parameters(
+        self,
+        workflow_type: WorkflowType,
+        code: DFTCode,
+        **overrides: Any,
+    ) -> dict[str, Any]:
+        """Public, pure accessor for calculation parameters.
+
+        Side-effect-free delegator to :meth:`_get_parameters`; does not touch
+        ``self._runner`` or perform any IPC.
+        """
+        return self._get_parameters(workflow_type, code, **overrides)
+
     def _get_protocol_parameters(self, workflow_type: WorkflowType) -> dict[str, Any]:
         """Get parameters based on protocol level.
 

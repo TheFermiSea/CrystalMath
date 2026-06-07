@@ -48,11 +48,9 @@ class DatabaseProtocol(Protocol):
 
     def list_jobs(
         self, status: str | None = None, limit: int | None = None
-    ) -> list[dict[str, Any]]:
-        ...
+    ) -> list[dict[str, Any]]: ...
 
-    def get_job(self, job_id: int) -> dict[str, Any] | None:
-        ...
+    def get_job(self, job_id: int) -> dict[str, Any] | None: ...
 
     def create_job(
         self,
@@ -60,16 +58,14 @@ class DatabaseProtocol(Protocol):
         input_content: str,
         runner_type: str = "local",
         **kwargs: Any,
-    ) -> int:
-        ...
+    ) -> int: ...
 
     def update_job(
         self,
         job_id: int,
         status: str | None = None,
         **kwargs: Any,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
 
 def get_backend_mode() -> BackendMode:

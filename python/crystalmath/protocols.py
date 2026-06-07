@@ -104,15 +104,6 @@ class WorkflowType(str, Enum):
     SCREENING = "screening"
 
 
-class CalculationPriority(int, Enum):
-    """Priority levels for job scheduling."""
-
-    LOW = 1
-    NORMAL = 5
-    HIGH = 10
-    URGENT = 20
-
-
 class ErrorRecoveryStrategy(str, Enum):
     """Strategies for handling workflow failures."""
 
@@ -214,85 +205,6 @@ class WorkflowStep:
     resources: ResourceRequirements | None = None
     depends_on: list[str] = field(default_factory=list)  # Step names
     outputs_to_pass: list[str] = field(default_factory=list)  # Output keys
-
-
-# =============================================================================
-# Protocol: StructureProvider
-# =============================================================================
-
-
-@runtime_checkable
-class StructureProvider(Protocol):
-    """
-    Protocol for structure data sources.
-
-    Implementations provide crystal structures from various sources:
-    - Materials Project API
-    - Local CIF/POSCAR files
-    - AiiDA StructureData nodes
-    - pymatgen Structure objects
-    - Manual input
-    """
-
-    def get_structure(self, identifier: str) -> Any:
-        """
-        Retrieve a structure by identifier.
-
-        Args:
-            identifier: Structure ID (MP ID, file path, AiiDA PK, etc.)
-
-        Returns:
-            Structure object (implementation-specific type)
-        """
-        ...
-
-    def to_aiida_structure(self, structure: Any) -> Any:
-        """
-        Convert structure to AiiDA StructureData.
-
-        Args:
-            structure: Source structure object
-
-        Returns:
-            aiida.orm.StructureData node (not stored)
-        """
-        ...
-
-    def to_pymatgen_structure(self, structure: Any) -> Any:
-        """
-        Convert structure to pymatgen Structure.
-
-        Args:
-            structure: Source structure object
-
-        Returns:
-            pymatgen.core.Structure object
-        """
-        ...
-
-    def get_info(self, structure: Any) -> StructureInfo:
-        """
-        Extract metadata from structure.
-
-        Args:
-            structure: Structure object
-
-        Returns:
-            StructureInfo with formula, symmetry, etc.
-        """
-        ...
-
-    def validate(self, structure: Any) -> tuple[bool, list[str]]:
-        """
-        Validate structure for DFT calculations.
-
-        Args:
-            structure: Structure object
-
-        Returns:
-            Tuple of (is_valid, list_of_issues)
-        """
-        ...
 
 
 # =============================================================================
@@ -474,179 +386,6 @@ class Backend(Protocol):
 
 
 # =============================================================================
-# Protocol: ResultsCollector
-# =============================================================================
-
-
-@runtime_checkable
-class ResultsCollector(Protocol):
-    """
-    Protocol for collecting and aggregating workflow results.
-
-    Implementations handle result extraction from various backends:
-    - Parsing DFT code outputs
-    - Extracting key quantities (energy, bandgap, etc.)
-    - Aggregating results from multi-step workflows
-    - Storing results in databases or files
-    """
-
-    def collect(self, workflow_result: WorkflowResult) -> dict[str, Any]:
-        """
-        Collect and parse results from a workflow.
-
-        Args:
-            workflow_result: Result from WorkflowRunner
-
-        Returns:
-            Parsed results dictionary
-        """
-        ...
-
-    def get_energy(self, workflow_result: WorkflowResult) -> float | None:
-        """Extract total energy from results (Hartree)."""
-        ...
-
-    def get_bandgap(self, workflow_result: WorkflowResult) -> float | None:
-        """Extract band gap from results (eV)."""
-        ...
-
-    def get_structure(self, workflow_result: WorkflowResult) -> Any | None:
-        """Extract optimized/final structure from results."""
-        ...
-
-    def get_bands(self, workflow_result: WorkflowResult) -> Any | None:
-        """Extract band structure data."""
-        ...
-
-    def get_dos(self, workflow_result: WorkflowResult) -> Any | None:
-        """Extract DOS data."""
-        ...
-
-    def export_json(
-        self,
-        workflow_result: WorkflowResult,
-        output_path: Path,
-    ) -> None:
-        """Export results to JSON file."""
-        ...
-
-
-# =============================================================================
-# Protocol: ParameterGenerator
-# =============================================================================
-
-
-@runtime_checkable
-class ParameterGenerator(Protocol):
-    """
-    Protocol for generating DFT calculation parameters.
-
-    Implementations provide default parameters for different:
-    - DFT codes (CRYSTAL23, VASP, QE)
-    - Workflow types (SCF, relax, bands)
-    - Accuracy levels (fast, moderate, precise)
-    """
-
-    def generate(
-        self,
-        structure: Any,
-        workflow_type: WorkflowType,
-        code: DFTCode,
-        protocol: str = "moderate",
-        **overrides: Any,
-    ) -> dict[str, Any]:
-        """
-        Generate calculation parameters.
-
-        Args:
-            structure: Input structure
-            workflow_type: Type of calculation
-            code: Target DFT code
-            protocol: Accuracy level
-            **overrides: Parameter overrides
-
-        Returns:
-            Complete parameter dictionary
-        """
-        ...
-
-    def get_k_points(
-        self,
-        structure: Any,
-        density: float = 0.04,  # 1/Angstrom
-    ) -> Any:
-        """Generate k-point mesh based on structure."""
-        ...
-
-    def get_basis_set(
-        self,
-        elements: list[str],
-        code: DFTCode,
-        quality: str = "moderate",
-    ) -> dict[str, Any]:
-        """Get basis set configuration for elements."""
-        ...
-
-
-# =============================================================================
-# Protocol: ErrorHandler
-# =============================================================================
-
-
-@runtime_checkable
-class ErrorHandler(Protocol):
-    """
-    Protocol for workflow error handling and recovery.
-
-    Implementations provide strategies for:
-    - Diagnosing calculation failures
-    - Recommending parameter adjustments
-    - Implementing self-healing workflows
-    - Managing restarts from checkpoints
-    """
-
-    def diagnose(self, workflow_result: WorkflowResult) -> dict[str, Any]:
-        """
-        Diagnose failure cause.
-
-        Args:
-            workflow_result: Failed workflow result
-
-        Returns:
-            Diagnosis dict with cause, severity, recommendations
-        """
-        ...
-
-    def can_recover(self, workflow_result: WorkflowResult) -> bool:
-        """Check if workflow can be recovered."""
-        ...
-
-    def get_recovery_strategy(
-        self,
-        workflow_result: WorkflowResult,
-    ) -> ErrorRecoveryStrategy:
-        """Determine best recovery strategy."""
-        ...
-
-    def apply_recovery(
-        self,
-        workflow_result: WorkflowResult,
-        runner: WorkflowRunner,
-    ) -> WorkflowResult:
-        """
-        Apply recovery and resubmit workflow.
-
-        Args:
-            workflow_result: Failed workflow result
-            runner: Runner to use for resubmission
-
-        Returns:
-            New WorkflowResult from recovery attempt
-        """
-        ...
-
-
-# =============================================================================
 # Protocol: ProgressCallback
 # =============================================================================
 
@@ -690,49 +429,6 @@ class ProgressCallback(Protocol):
 
 
 # =============================================================================
-# Protocol: WorkflowComposer (for chaining workflows)
-# =============================================================================
-
-
-@runtime_checkable
-class WorkflowComposer(Protocol):
-    """
-    Protocol for composing complex multi-step workflows.
-
-    Enables declarative workflow definition:
-        workflow = composer.create()
-            .add_step("relax", WorkflowType.RELAX, code="vasp")
-            .add_step("scf", WorkflowType.SCF, depends_on=["relax"])
-            .add_step("bands", WorkflowType.BANDS, depends_on=["scf"])
-            .build()
-    """
-
-    def create(self) -> WorkflowComposer:
-        """Create new composition context."""
-        ...
-
-    def add_step(
-        self,
-        name: str,
-        workflow_type: WorkflowType,
-        code: DFTCode = "crystal23",
-        parameters: dict[str, Any] | None = None,
-        depends_on: list[str] | None = None,
-        outputs_to_pass: list[str] | None = None,
-    ) -> WorkflowComposer:
-        """Add a step to the workflow."""
-        ...
-
-    def build(self) -> Sequence[WorkflowStep]:
-        """Build the workflow definition."""
-        ...
-
-    def validate(self) -> tuple[bool, list[str]]:
-        """Validate workflow is well-formed (no cycles, etc.)."""
-        ...
-
-
-# =============================================================================
 # Factory Functions
 # =============================================================================
 
@@ -769,59 +465,6 @@ def get_runner(backend_type: BackendType = "aiida") -> WorkflowRunner:
     )
 
 
-def get_structure_provider(source: str = "auto") -> StructureProvider:
-    """
-    Factory function to get appropriate StructureProvider.
-
-    Args:
-        source: Source type ("mp", "aiida", "file", "auto")
-
-    Returns:
-        Configured StructureProvider instance
-
-    Raises:
-        NotImplementedError: If provider not yet implemented (Phase 3)
-
-    Note:
-        Provider implementations will be created in Phase 3:
-        - crystalmath.providers.auto_provider.AutoStructureProvider
-        - crystalmath.providers.mp_provider.MaterialsProjectProvider
-        - crystalmath.providers.aiida_provider.AiiDAStructureProvider
-        - crystalmath.providers.file_provider.FileStructureProvider
-    """
-    # Phase 3 implementation - providers not yet created
-    raise NotImplementedError(
-        f"StructureProvider for '{source}' will be implemented in Phase 3. "
-        f"See docs/architecture/UNIFIED-WORKFLOW-ARCHITECTURE.md for design."
-    )
-
-
-def get_parameter_generator(code: DFTCode = "crystal23") -> ParameterGenerator:
-    """
-    Factory function to get appropriate ParameterGenerator.
-
-    Args:
-        code: Target DFT code
-
-    Returns:
-        Configured ParameterGenerator instance
-
-    Raises:
-        NotImplementedError: If generator not yet implemented (Phase 3)
-
-    Note:
-        Generator implementations will be created in Phase 3:
-        - crystalmath.generators.crystal_params.CrystalParameterGenerator
-        - crystalmath.generators.vasp_params.VASPParameterGenerator
-        - crystalmath.generators.qe_params.QEParameterGenerator
-    """
-    # Phase 3 implementation - generators not yet created
-    raise NotImplementedError(
-        f"ParameterGenerator for '{code}' will be implemented in Phase 3. "
-        f"See docs/architecture/UNIFIED-WORKFLOW-ARCHITECTURE.md for design."
-    )
-
-
 # =============================================================================
 # Module Exports
 # =============================================================================
@@ -829,7 +472,6 @@ def get_parameter_generator(code: DFTCode = "crystal23") -> ParameterGenerator:
 __all__ = [
     # Enums
     "WorkflowType",
-    "CalculationPriority",
     "ErrorRecoveryStrategy",
     # Type aliases
     "WorkflowState",
@@ -841,16 +483,9 @@ __all__ = [
     "StructureInfo",
     "WorkflowStep",
     # Protocols
-    "StructureProvider",
     "WorkflowRunner",
     "Backend",
-    "ResultsCollector",
-    "ParameterGenerator",
-    "ErrorHandler",
     "ProgressCallback",
-    "WorkflowComposer",
     # Factory functions
     "get_runner",
-    "get_structure_provider",
-    "get_parameter_generator",
 ]

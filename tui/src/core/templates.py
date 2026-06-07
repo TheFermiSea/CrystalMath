@@ -88,9 +88,7 @@ class ParameterDefinition:
 
         elif self.type == "select":
             if self.options and value not in self.options:
-                errors.append(
-                    f"Parameter '{self.name}' must be one of {self.options}"
-                )
+                errors.append(f"Parameter '{self.name}' must be one of {self.options}")
 
         elif self.type == "multiselect":
             if not isinstance(value, list):
@@ -224,6 +222,7 @@ class TemplateManager:
             # Use centralized templates from crystalmath core package
             try:
                 from crystalmath.templates import get_template_dir
+
                 template_dir = get_template_dir()
             except ImportError:
                 # Fallback to local templates/ directory if core not available
@@ -337,12 +336,10 @@ class TemplateManager:
 
         # SECURITY: Reject absolute paths
         if path_obj.is_absolute():
-            raise ValueError(
-                f"Absolute paths not allowed for security: {path}"
-            )
+            raise ValueError(f"Absolute paths not allowed for security: {path}")
 
         # SECURITY: Extension allowlist - only .yml and .yaml files
-        if path_obj.suffix.lower() not in ['.yml', '.yaml']:
+        if path_obj.suffix.lower() not in [".yml", ".yaml"]:
             raise ValueError(
                 f"Invalid file extension '{path_obj.suffix}': only .yml and .yaml allowed"
             )
@@ -353,9 +350,7 @@ class TemplateManager:
         # SECURITY: Reject symlinks to prevent symlink attacks
         # Must check BEFORE resolve() since resolve() dereferences symlinks
         if full_path.is_symlink():
-            raise ValueError(
-                f"Symlinks not allowed for security: {path}"
-            )
+            raise ValueError(f"Symlinks not allowed for security: {path}")
 
         # Now resolve to canonical form for traversal check
         resolved_path = full_path.resolve()

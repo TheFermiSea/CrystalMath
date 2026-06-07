@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Security: Pattern for sanitizing IDs used in filesystem paths
 # Allows alphanumeric, dashes, and underscores only
-_SAFE_ID_PATTERN = re.compile(r'[^a-zA-Z0-9_-]')
+_SAFE_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_-]")
 
 
 def _sanitize_path_component(value: str) -> str:
@@ -45,18 +45,23 @@ def _sanitize_path_component(value: str) -> str:
         A safe string containing only alphanumeric chars, dashes, and underscores
     """
     # Replace any unsafe characters with underscores
-    sanitized = _SAFE_ID_PATTERN.sub('_', str(value))
+    sanitized = _SAFE_ID_PATTERN.sub("_", str(value))
     # Collapse multiple underscores
-    sanitized = re.sub(r'_+', '_', sanitized)
+    sanitized = re.sub(r"_+", "_", sanitized)
     # Strip leading/trailing underscores
-    return sanitized.strip('_') or 'unknown'
+    return sanitized.strip("_") or "unknown"
+
 
 from .database import Database, Job
-from .dependency_utils import assert_acyclic, CircularDependencyError as DependencyUtilsCircularError
+from .dependency_utils import (
+    assert_acyclic,
+    CircularDependencyError as DependencyUtilsCircularError,
+)
 
 
 class NodeStatus(Enum):
     """Status of a workflow node."""
+
     PENDING = "pending"
     READY = "ready"
     QUEUED = "queued"
@@ -68,6 +73,7 @@ class NodeStatus(Enum):
 
 class NodeType(Enum):
     """Type of workflow node."""
+
     JOB = "job"  # Single DFT calculation job (default)
     BATCH = "batch"  # Expands to N parallel jobs (foreach, parameter_sweep)
     SCRIPT = "script"  # Run a shell script or command
@@ -76,6 +82,7 @@ class NodeType(Enum):
 
 class WorkflowStatus(Enum):
     """Status of the entire workflow."""
+
     PENDING = "pending"
     RUNNING = "running"
     PAUSED = "paused"
@@ -86,6 +93,7 @@ class WorkflowStatus(Enum):
 
 class FailurePolicy(Enum):
     """Policy for handling node failures."""
+
     ABORT = "abort"  # Stop entire workflow
     SKIP_DEPENDENTS = "skip_dependents"  # Skip nodes that depend on failed node
     RETRY = "retry"  # Retry failed node N times
@@ -109,6 +117,7 @@ class WorkflowNode:
     For data_transfer nodes (node_type=DATA_TRANSFER), files are copied
     between directories with optional renaming.
     """
+
     node_id: str
     job_name: str
     template: str  # Input template with Jinja2 placeholders
@@ -156,6 +165,7 @@ class WorkflowDefinition:
     A workflow represents a multi-step calculation where some steps
     depend on the results of previous steps.
     """
+
     workflow_id: int
     name: str
     description: str
@@ -172,6 +182,7 @@ class WorkflowState:
     Tracks which nodes have completed, which are running,
     and maintains the overall workflow status.
     """
+
     workflow_id: int
     status: WorkflowStatus
     started_at: Optional[datetime] = None
@@ -187,6 +198,7 @@ class WorkflowState:
 @dataclass
 class WorkflowEvent:
     """Base class for workflow events."""
+
     workflow_id: int
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -194,6 +206,7 @@ class WorkflowEvent:
 @dataclass
 class WorkflowStarted(WorkflowEvent):
     """Emitted when a workflow starts execution."""
+
     def __init__(self, workflow_id: int):
         super().__init__(workflow_id=workflow_id)
 
@@ -201,6 +214,7 @@ class WorkflowStarted(WorkflowEvent):
 @dataclass
 class NodeStarted(WorkflowEvent):
     """Emitted when a node starts execution."""
+
     node_id: str = ""
     job_id: int = 0
 
@@ -213,11 +227,14 @@ class NodeStarted(WorkflowEvent):
 @dataclass
 class NodeCompleted(WorkflowEvent):
     """Emitted when a node completes successfully."""
+
     node_id: str = ""
     job_id: int = 0
     results: Optional[Dict[str, Any]] = None
 
-    def __init__(self, workflow_id: int, node_id: str, job_id: int, results: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self, workflow_id: int, node_id: str, job_id: int, results: Optional[Dict[str, Any]] = None
+    ):
         super().__init__(workflow_id=workflow_id)
         self.node_id = node_id
         self.job_id = job_id
@@ -227,6 +244,7 @@ class NodeCompleted(WorkflowEvent):
 @dataclass
 class NodeFailed(WorkflowEvent):
     """Emitted when a node fails."""
+
     node_id: str = ""
     job_id: int = 0
     error: str = ""
@@ -243,11 +261,14 @@ class NodeFailed(WorkflowEvent):
 @dataclass
 class WorkflowCompleted(WorkflowEvent):
     """Emitted when entire workflow completes."""
+
     total_nodes: int = 0
     successful_nodes: int = 0
     failed_nodes: int = 0
 
-    def __init__(self, workflow_id: int, total_nodes: int, successful_nodes: int, failed_nodes: int):
+    def __init__(
+        self, workflow_id: int, total_nodes: int, successful_nodes: int, failed_nodes: int
+    ):
         super().__init__(workflow_id=workflow_id)
         self.total_nodes = total_nodes
         self.successful_nodes = successful_nodes
@@ -257,6 +278,7 @@ class WorkflowCompleted(WorkflowEvent):
 @dataclass
 class WorkflowFailed(WorkflowEvent):
     """Emitted when workflow fails."""
+
     reason: str = ""
 
     def __init__(self, workflow_id: int, reason: str):
@@ -267,6 +289,7 @@ class WorkflowFailed(WorkflowEvent):
 @dataclass
 class WorkflowCancelled(WorkflowEvent):
     """Emitted when workflow is cancelled by user."""
+
     reason: str = ""
 
     def __init__(self, workflow_id: int, reason: str):
@@ -276,21 +299,25 @@ class WorkflowCancelled(WorkflowEvent):
 
 class OrchestratorError(Exception):
     """Base exception for orchestrator errors."""
+
     pass
 
 
 class WorkflowNotFoundError(OrchestratorError):
     """Raised when workflow ID doesn't exist."""
+
     pass
 
 
 class CircularDependencyError(OrchestratorError):
     """Raised when workflow contains circular dependencies."""
+
     pass
 
 
 class ParameterResolutionError(OrchestratorError):
     """Raised when parameter templates cannot be resolved."""
+
     pass
 
 
@@ -318,7 +345,7 @@ class WorkflowOrchestrator:
         database: Database,
         queue_manager: Any,  # Will be QueueManager when implemented
         event_callback: Optional[Callable[[WorkflowEvent], None]] = None,
-        scratch_base: Optional[Path] = None
+        scratch_base: Optional[Path] = None,
     ):
         """
         Initialize the orchestrator.
@@ -449,11 +476,11 @@ class WorkflowOrchestrator:
         """
         # Priority order of output file patterns
         patterns = [
-            "output.d12",      # LocalRunner with CRYSTAL
-            "output.out",      # LocalRunner generic
-            "output.log",      # SSHRunner
-            "job.out",         # Legacy pattern
-            "*.out",           # Fallback glob
+            "output.d12",  # LocalRunner with CRYSTAL
+            "output.out",  # LocalRunner generic
+            "output.log",  # SSHRunner
+            "job.out",  # Legacy pattern
+            "*.out",  # Fallback glob
         ]
 
         for pattern in patterns:
@@ -463,10 +490,7 @@ class WorkflowOrchestrator:
                 if matches:
                     # Sort by name first (deterministic), then by mtime (tie-breaker)
                     # This ensures reproducible behavior even with multiple .out files
-                    sorted_matches = sorted(
-                        matches,
-                        key=lambda p: (p.name, -p.stat().st_mtime)
-                    )
+                    sorted_matches = sorted(matches, key=lambda p: (p.name, -p.stat().st_mtime))
                     # Prefer files that look like main output (not slurm logs, etc.)
                     for match in sorted_matches:
                         name = match.name.lower()
@@ -661,12 +685,12 @@ class WorkflowOrchestrator:
             Path object for the scratch base directory
         """
         # Try CRY_SCRATCH_BASE first (preferred newer convention)
-        scratch_base = os.environ.get('CRY_SCRATCH_BASE')
+        scratch_base = os.environ.get("CRY_SCRATCH_BASE")
         if scratch_base:
             return Path(scratch_base)
 
         # Fall back to CRY23_SCRDIR (CRYSTAL23 convention)
-        scratch_dir = os.environ.get('CRY23_SCRDIR')
+        scratch_dir = os.environ.get("CRY23_SCRDIR")
         if scratch_dir:
             return Path(scratch_dir)
 
@@ -693,7 +717,7 @@ class WorkflowOrchestrator:
             OSError: If directory creation fails
             ValueError: If path validation fails (path traversal attempt)
         """
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         pid = os.getpid()
 
         # Security: Sanitize IDs to prevent path traversal attacks
@@ -773,14 +797,11 @@ class WorkflowOrchestrator:
         self._workflows[workflow.workflow_id] = workflow
 
         # Create node lookup
-        self._node_lookup[workflow.workflow_id] = {
-            node.node_id: node for node in workflow.nodes
-        }
+        self._node_lookup[workflow.workflow_id] = {node.node_id: node for node in workflow.nodes}
 
         # Initialize state
         self._workflow_states[workflow.workflow_id] = WorkflowState(
-            workflow_id=workflow.workflow_id,
-            status=WorkflowStatus.PENDING
+            workflow_id=workflow.workflow_id, status=WorkflowStatus.PENDING
         )
 
     def _validate_dag(self, workflow: WorkflowDefinition) -> None:
@@ -821,9 +842,7 @@ class WorkflowOrchestrator:
         state = self._workflow_states[workflow_id]
 
         if state.status != WorkflowStatus.PENDING:
-            raise OrchestratorError(
-                f"Cannot start workflow in state {state.status.value}"
-            )
+            raise OrchestratorError(f"Cannot start workflow in state {state.status.value}")
 
         # Update state
         state.status = WorkflowStatus.RUNNING
@@ -855,9 +874,7 @@ class WorkflowOrchestrator:
         state = self._workflow_states[workflow_id]
 
         if state.status != WorkflowStatus.RUNNING:
-            raise OrchestratorError(
-                f"Cannot pause workflow in state {state.status.value}"
-            )
+            raise OrchestratorError(f"Cannot pause workflow in state {state.status.value}")
 
         state.status = WorkflowStatus.PAUSED
         state.paused_at = datetime.now()
@@ -875,9 +892,7 @@ class WorkflowOrchestrator:
         state = self._workflow_states[workflow_id]
 
         if state.status != WorkflowStatus.PAUSED:
-            raise OrchestratorError(
-                f"Cannot resume workflow in state {state.status.value}"
-            )
+            raise OrchestratorError(f"Cannot resume workflow in state {state.status.value}")
 
         state.status = WorkflowStatus.RUNNING
         state.paused_at = None
@@ -991,12 +1006,11 @@ class WorkflowOrchestrator:
             state.running_nodes.discard(node_id)
 
             # Emit event
-            self._emit_event(NodeCompleted(
-                workflow_id=workflow_id,
-                node_id=node_id,
-                job_id=job_id,
-                results=results
-            ))
+            self._emit_event(
+                NodeCompleted(
+                    workflow_id=workflow_id, node_id=node_id, job_id=job_id, results=results
+                )
+            )
 
             # Submit dependent nodes that are now ready
             await self._submit_ready_nodes(workflow_id)
@@ -1109,9 +1123,7 @@ class WorkflowOrchestrator:
 
             # Create database job (async to prevent event loop blocking)
             job_id = await self._db_create_job(
-                name=node.job_name,
-                work_dir=str(work_dir),
-                input_content=input_content
+                name=node.job_name, work_dir=str(work_dir), input_content=input_content
             )
 
             node.job_id = job_id
@@ -1139,7 +1151,7 @@ class WorkflowOrchestrator:
                 dependencies=dep_job_ids if dep_job_ids else None,
                 runner_type=job.runner_type or "local",
                 cluster_id=job.cluster_id,
-                user_id=None
+                user_id=None,
             )
 
             # Register completion callback with queue manager
@@ -1151,7 +1163,7 @@ class WorkflowOrchestrator:
             self.queue_manager.register_callback(job_id, job_completion_callback)
 
             # Also store in local tracking dict for debugging/monitoring
-            if not hasattr(self, '_node_callbacks'):
+            if not hasattr(self, "_node_callbacks"):
                 self._node_callbacks = {}
             self._node_callbacks[job_id] = (workflow_id, node.node_id)
 
@@ -1159,21 +1171,16 @@ class WorkflowOrchestrator:
             await self._db_update_status(job_id, "QUEUED")
 
             # Emit event
-            self._emit_event(NodeStarted(
-                workflow_id=workflow_id,
-                node_id=node.node_id,
-                job_id=job_id
-            ))
-
-        except Exception as e:
-            await self._handle_node_failure(
-                workflow_id,
-                node.node_id,
-                node.job_id or 0,
-                str(e)
+            self._emit_event(
+                NodeStarted(workflow_id=workflow_id, node_id=node.node_id, job_id=job_id)
             )
 
-    async def _on_node_complete(self, workflow_id: int, node: WorkflowNode, job_status: str) -> None:
+        except Exception as e:
+            await self._handle_node_failure(workflow_id, node.node_id, node.job_id or 0, str(e))
+
+    async def _on_node_complete(
+        self, workflow_id: int, node: WorkflowNode, job_status: str
+    ) -> None:
         """
         Handle completion of a workflow node.
 
@@ -1192,17 +1199,10 @@ class WorkflowOrchestrator:
             await self.process_node_completion(workflow_id, node.node_id, node.job_id)
         elif job_status == "FAILED":
             await self._handle_node_failure(
-                workflow_id,
-                node.node_id,
-                node.job_id,
-                "Job execution failed"
+                workflow_id, node.node_id, node.job_id, "Job execution failed"
             )
 
-    async def _resolve_parameters(
-        self,
-        workflow_id: int,
-        node: WorkflowNode
-    ) -> Dict[str, Any]:
+    async def _resolve_parameters(self, workflow_id: int, node: WorkflowNode) -> Dict[str, Any]:
         """
         Resolve parameter templates using results from completed dependencies.
 
@@ -1244,9 +1244,7 @@ class WorkflowOrchestrator:
                         f"Template syntax error in parameter '{key}': {e}"
                     )
                 except Exception as e:
-                    raise ParameterResolutionError(
-                        f"Error resolving parameter '{key}': {e}"
-                    )
+                    raise ParameterResolutionError(f"Error resolving parameter '{key}': {e}")
             else:
                 resolved[key] = value
 
@@ -1270,15 +1268,9 @@ class WorkflowOrchestrator:
             jinja_template = self._jinja_env.from_string(template)
             return jinja_template.render(parameters)
         except Exception as e:
-            raise ParameterResolutionError(
-                f"Error rendering template: {e}"
-            )
+            raise ParameterResolutionError(f"Error rendering template: {e}")
 
-    async def _extract_node_results(
-        self,
-        node: WorkflowNode,
-        job: Job
-    ) -> Dict[str, Any]:
+    async def _extract_node_results(self, node: WorkflowNode, job: Job) -> Dict[str, Any]:
         """
         Extract results from completed job output.
 
@@ -1326,11 +1318,7 @@ class WorkflowOrchestrator:
         return results
 
     async def _handle_node_failure(
-        self,
-        workflow_id: int,
-        node_id: str,
-        job_id: int,
-        error: str
+        self, workflow_id: int, node_id: str, job_id: int, error: str
     ) -> None:
         """
         Handle failure of a workflow node according to its failure policy.
@@ -1354,13 +1342,15 @@ class WorkflowOrchestrator:
             node.retry_count += 1
 
             # Emit event with updated retry count
-            self._emit_event(NodeFailed(
-                workflow_id=workflow_id,
-                node_id=node_id,
-                job_id=job_id,
-                error=error,
-                retry_count=node.retry_count
-            ))
+            self._emit_event(
+                NodeFailed(
+                    workflow_id=workflow_id,
+                    node_id=node_id,
+                    job_id=job_id,
+                    error=error,
+                    retry_count=node.retry_count,
+                )
+            )
 
             # Retry the node
             node.status = NodeStatus.PENDING
@@ -1369,13 +1359,15 @@ class WorkflowOrchestrator:
 
         elif policy == FailurePolicy.SKIP_DEPENDENTS:
             # Emit event
-            self._emit_event(NodeFailed(
-                workflow_id=workflow_id,
-                node_id=node_id,
-                job_id=job_id,
-                error=error,
-                retry_count=node.retry_count
-            ))
+            self._emit_event(
+                NodeFailed(
+                    workflow_id=workflow_id,
+                    node_id=node_id,
+                    job_id=job_id,
+                    error=error,
+                    retry_count=node.retry_count,
+                )
+            )
 
             # Mark node as failed
             node.status = NodeStatus.FAILED
@@ -1390,13 +1382,15 @@ class WorkflowOrchestrator:
 
         elif policy == FailurePolicy.CONTINUE:
             # Emit event
-            self._emit_event(NodeFailed(
-                workflow_id=workflow_id,
-                node_id=node_id,
-                job_id=job_id,
-                error=error,
-                retry_count=node.retry_count
-            ))
+            self._emit_event(
+                NodeFailed(
+                    workflow_id=workflow_id,
+                    node_id=node_id,
+                    job_id=job_id,
+                    error=error,
+                    retry_count=node.retry_count,
+                )
+            )
 
             # Mark as failed but continue
             node.status = NodeStatus.FAILED
@@ -1409,13 +1403,15 @@ class WorkflowOrchestrator:
 
         else:  # ABORT
             # Emit event
-            self._emit_event(NodeFailed(
-                workflow_id=workflow_id,
-                node_id=node_id,
-                job_id=job_id,
-                error=error,
-                retry_count=node.retry_count
-            ))
+            self._emit_event(
+                NodeFailed(
+                    workflow_id=workflow_id,
+                    node_id=node_id,
+                    job_id=job_id,
+                    error=error,
+                    retry_count=node.retry_count,
+                )
+            )
 
             # Abort entire workflow
             node.status = NodeStatus.FAILED
@@ -1424,10 +1420,9 @@ class WorkflowOrchestrator:
             state.status = WorkflowStatus.FAILED
             state.completed_at = datetime.now()
 
-            self._emit_event(WorkflowFailed(
-                workflow_id=workflow_id,
-                reason=f"Node {node_id} failed: {error}"
-            ))
+            self._emit_event(
+                WorkflowFailed(workflow_id=workflow_id, reason=f"Node {node_id} failed: {error}")
+            )
 
     async def _skip_dependent_nodes(self, workflow_id: int, failed_node_id: str) -> None:
         """
@@ -1477,11 +1472,7 @@ class WorkflowOrchestrator:
 
         # Check if all nodes are in terminal state
         all_done = all(
-            node.status in (
-                NodeStatus.COMPLETED,
-                NodeStatus.FAILED,
-                NodeStatus.SKIPPED
-            )
+            node.status in (NodeStatus.COMPLETED, NodeStatus.FAILED, NodeStatus.SKIPPED)
             for node in workflow.nodes
         )
 
@@ -1491,25 +1482,28 @@ class WorkflowOrchestrator:
 
             if len(state.failed_nodes) == 0:
                 state.status = WorkflowStatus.COMPLETED
-                self._emit_event(WorkflowCompleted(
-                    workflow_id=workflow_id,
-                    total_nodes=total_nodes,
-                    successful_nodes=len(state.completed_nodes),
-                    failed_nodes=0
-                ))
+                self._emit_event(
+                    WorkflowCompleted(
+                        workflow_id=workflow_id,
+                        total_nodes=total_nodes,
+                        successful_nodes=len(state.completed_nodes),
+                        failed_nodes=0,
+                    )
+                )
             else:
                 state.status = WorkflowStatus.FAILED
-                self._emit_event(WorkflowFailed(
-                    workflow_id=workflow_id,
-                    reason=f"{len(state.failed_nodes)} nodes failed"
-                ))
+                self._emit_event(
+                    WorkflowFailed(
+                        workflow_id=workflow_id, reason=f"{len(state.failed_nodes)} nodes failed"
+                    )
+                )
 
             # Clean up in-memory state to prevent memory leaks
             # Schedule cleanup after a short delay to allow event handlers to complete
             asyncio.get_event_loop().call_later(
                 5.0,  # 5 second delay
                 self._cleanup_completed_workflow,
-                workflow_id
+                workflow_id,
             )
 
     async def _monitor_workflows(self) -> None:
@@ -1526,7 +1520,8 @@ class WorkflowOrchestrator:
             try:
                 # Get all active workflows
                 active_workflows = [
-                    wf_id for wf_id, state in self._workflow_states.items()
+                    wf_id
+                    for wf_id, state in self._workflow_states.items()
                     if state.status == WorkflowStatus.RUNNING
                 ]
 
@@ -1698,9 +1693,7 @@ class WorkflowOrchestrator:
 
                 # Create database job (async to prevent event loop blocking)
                 job_id = await self._db_create_job(
-                    name=sub_node.job_name,
-                    work_dir=str(work_dir),
-                    input_content=input_content
+                    name=sub_node.job_name, work_dir=str(work_dir), input_content=input_content
                 )
 
                 node.batch_jobs.append(job_id)
@@ -1719,7 +1712,7 @@ class WorkflowOrchestrator:
                     completed_job_id: int,
                     status: str,
                     parent_node: WorkflowNode = node,
-                    batch_idx: int = idx
+                    batch_idx: int = idx,
                 ) -> None:
                     await self._process_batch_job_completion(
                         workflow_id, parent_node, completed_job_id, status, batch_idx
@@ -1732,26 +1725,24 @@ class WorkflowOrchestrator:
                     dependencies=None,
                     runner_type=job.runner_type or "local",
                     cluster_id=job.cluster_id,
-                    user_id=None
+                    user_id=None,
                 )
                 self.queue_manager.register_callback(job_id, batch_job_callback)
                 await self._db_update_status(job_id, "QUEUED")
 
             # Emit batch start event
-            self._emit_event(NodeStarted(
-                workflow_id=workflow_id,
-                node_id=node.node_id,
-                job_id=node.batch_jobs[0] if node.batch_jobs else 0
-            ))
+            self._emit_event(
+                NodeStarted(
+                    workflow_id=workflow_id,
+                    node_id=node.node_id,
+                    job_id=node.batch_jobs[0] if node.batch_jobs else 0,
+                )
+            )
 
         except Exception as e:
             await self._handle_node_failure(workflow_id, node.node_id, 0, str(e))
 
-    async def _expand_foreach(
-        self,
-        workflow_id: int,
-        node: WorkflowNode
-    ) -> List[Dict[str, Any]]:
+    async def _expand_foreach(self, workflow_id: int, node: WorkflowNode) -> List[Dict[str, Any]]:
         """
         Expand a foreach glob pattern into parameter dictionaries.
 
@@ -1784,22 +1775,19 @@ class WorkflowOrchestrator:
             matches = list(dep_work_dir.glob(pattern))
 
             for match in sorted(matches):
-                items.append({
-                    "_file": str(match),
-                    "_filename": match.name,
-                    "_stem": match.stem,
-                    "_source_dir": str(dep_work_dir),
-                })
+                items.append(
+                    {
+                        "_file": str(match),
+                        "_filename": match.name,
+                        "_stem": match.stem,
+                        "_source_dir": str(dep_work_dir),
+                    }
+                )
 
         return items
 
     async def _process_batch_job_completion(
-        self,
-        workflow_id: int,
-        node: WorkflowNode,
-        job_id: int,
-        status: str,
-        batch_idx: int
+        self, workflow_id: int, node: WorkflowNode, job_id: int, status: str, batch_idx: int
     ) -> None:
         """
         Process completion of a single batch sub-job.
@@ -1840,8 +1828,7 @@ class WorkflowOrchestrator:
 
         total = len(node.batch_jobs)
         logger.debug(
-            f"Batch {node.node_id}: {completed_count}/{total} completed, "
-            f"{failed_count} failed"
+            f"Batch {node.node_id}: {completed_count}/{total} completed, {failed_count} failed"
         )
 
         # Check if batch is complete
@@ -1853,10 +1840,7 @@ class WorkflowOrchestrator:
                 state.failed_nodes.add(node.node_id)
                 state.running_nodes.discard(node.node_id)
                 await self._handle_node_failure(
-                    workflow_id,
-                    node.node_id,
-                    0,
-                    f"{failed_count}/{total} batch jobs failed"
+                    workflow_id, node.node_id, 0, f"{failed_count}/{total} batch jobs failed"
                 )
             else:
                 # Batch completed (possibly with some failures)
@@ -1870,12 +1854,14 @@ class WorkflowOrchestrator:
                 state.completed_nodes.add(node.node_id)
                 state.running_nodes.discard(node.node_id)
 
-                self._emit_event(NodeCompleted(
-                    workflow_id=workflow_id,
-                    node_id=node.node_id,
-                    job_id=0,
-                    results=node.results
-                ))
+                self._emit_event(
+                    NodeCompleted(
+                        workflow_id=workflow_id,
+                        node_id=node.node_id,
+                        job_id=0,
+                        results=node.results,
+                    )
+                )
 
                 # Submit dependent nodes
                 await self._submit_ready_nodes(workflow_id)
@@ -1914,13 +1900,34 @@ class WorkflowOrchestrator:
 
             # Security: Validate executable against allowlist
             _SAFE_EXECUTABLES = {
-                "bash", "sh",
-                "crystal", "crystalOMP", "properties",
-                "vasp", "vasp_std", "vasp_gam", "vasp_ncl",
-                "pw.x", "ph.x", "pp.x", "bands.x", "dos.x", "projwfc.x",
-                "mpirun", "mpiexec", "srun",
-                "yambo", "p2y",
-                "cp", "mv", "cat", "mkdir", "echo", "grep", "sed", "awk",
+                "bash",
+                "sh",
+                "crystal",
+                "crystalOMP",
+                "properties",
+                "vasp",
+                "vasp_std",
+                "vasp_gam",
+                "vasp_ncl",
+                "pw.x",
+                "ph.x",
+                "pp.x",
+                "bands.x",
+                "dos.x",
+                "projwfc.x",
+                "mpirun",
+                "mpiexec",
+                "srun",
+                "yambo",
+                "p2y",
+                "cp",
+                "mv",
+                "cat",
+                "mkdir",
+                "echo",
+                "grep",
+                "sed",
+                "awk",
             }
             cmd_parts = shlex.split(command)
             executable = Path(cmd_parts[0]).name if cmd_parts else ""
@@ -1957,7 +1964,7 @@ class WorkflowOrchestrator:
                 try:
                     stdout, stderr = await asyncio.wait_for(
                         process.communicate(),
-                        timeout=3600  # 1 hour timeout
+                        timeout=3600,  # 1 hour timeout
                     )
                 except asyncio.TimeoutError:
                     process.kill()
@@ -1968,9 +1975,7 @@ class WorkflowOrchestrator:
                 stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
                 stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
             except asyncio.TimeoutError:
-                await self._handle_node_failure(
-                    workflow_id, node.node_id, 0, "Script timed out"
-                )
+                await self._handle_node_failure(workflow_id, node.node_id, 0, "Script timed out")
                 return
 
             if returncode == 0:
@@ -1983,35 +1988,28 @@ class WorkflowOrchestrator:
                 state.completed_nodes.add(node.node_id)
                 state.running_nodes.discard(node.node_id)
 
-                self._emit_event(NodeCompleted(
-                    workflow_id=workflow_id,
-                    node_id=node.node_id,
-                    job_id=0,
-                    results=node.results
-                ))
+                self._emit_event(
+                    NodeCompleted(
+                        workflow_id=workflow_id,
+                        node_id=node.node_id,
+                        job_id=0,
+                        results=node.results,
+                    )
+                )
 
                 await self._submit_ready_nodes(workflow_id)
                 await self._check_workflow_completion(workflow_id)
             else:
                 await self._handle_node_failure(
-                    workflow_id,
-                    node.node_id,
-                    0,
-                    f"Script failed: {stderr_text[:500]}"
+                    workflow_id, node.node_id, 0, f"Script failed: {stderr_text[:500]}"
                 )
 
         except asyncio.TimeoutError:
-            await self._handle_node_failure(
-                workflow_id, node.node_id, 0, "Script timed out"
-            )
+            await self._handle_node_failure(workflow_id, node.node_id, 0, "Script timed out")
         except Exception as e:
             await self._handle_node_failure(workflow_id, node.node_id, 0, str(e))
 
-    async def _submit_data_transfer_node(
-        self,
-        workflow_id: int,
-        node: WorkflowNode
-    ) -> None:
+    async def _submit_data_transfer_node(self, workflow_id: int, node: WorkflowNode) -> None:
         """
         Execute a data transfer node.
 
@@ -2057,11 +2055,13 @@ class WorkflowOrchestrator:
                         dest_file = dest_dir / dest_name
 
                         await asyncio.to_thread(shutil.copy2, src_file, dest_file)
-                        copied_files.append({
-                            "source": str(src_file),
-                            "dest": str(dest_file),
-                            "renamed": src_file.name != dest_name,
-                        })
+                        copied_files.append(
+                            {
+                                "source": str(src_file),
+                                "dest": str(dest_file),
+                                "renamed": src_file.name != dest_name,
+                            }
+                        )
 
             # Mark as completed
             node.status = NodeStatus.COMPLETED
@@ -2076,19 +2076,19 @@ class WorkflowOrchestrator:
 
             # Create a dummy job entry for work_dir tracking (async)
             job_id = await self._db_create_job(
-                name=node.job_name,
-                work_dir=str(dest_dir),
-                input_content=""
+                name=node.job_name, work_dir=str(dest_dir), input_content=""
             )
             node.job_id = job_id
             await self._db_update_status(job_id, "COMPLETED")
 
-            self._emit_event(NodeCompleted(
-                workflow_id=workflow_id,
-                node_id=node.node_id,
-                job_id=job_id,
-                results=node.results
-            ))
+            self._emit_event(
+                NodeCompleted(
+                    workflow_id=workflow_id,
+                    node_id=node.node_id,
+                    job_id=job_id,
+                    results=node.results,
+                )
+            )
 
             await self._submit_ready_nodes(workflow_id)
             await self._check_workflow_completion(workflow_id)
@@ -2113,16 +2113,14 @@ class WorkflowOrchestrator:
 
         # Clean up callback tracking for this workflow's jobs
         callbacks_to_remove = [
-            job_id for job_id, (wf_id, _) in self._node_callbacks.items()
-            if wf_id == workflow_id
+            job_id for job_id, (wf_id, _) in self._node_callbacks.items() if wf_id == workflow_id
         ]
         for job_id in callbacks_to_remove:
             self._node_callbacks.pop(job_id, None)
 
         # Clean up work directories for this workflow
         dirs_to_remove = [
-            work_dir for work_dir, wf_id in self._work_dirs.items()
-            if wf_id == workflow_id
+            work_dir for work_dir, wf_id in self._work_dirs.items() if wf_id == workflow_id
         ]
         for work_dir in dirs_to_remove:
             try:

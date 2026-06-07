@@ -91,12 +91,10 @@ class MaterialsSettings:
             mp_api_key=os.getenv("MP_API_KEY"),
             mpcontribs_api_key=os.getenv("MPCONTRIBS_API_KEY"),
             optimade_mp_base_url=os.getenv(
-                "OPTIMADE_MP_BASE_URL",
-                "https://optimade.materialsproject.org"
+                "OPTIMADE_MP_BASE_URL", "https://optimade.materialsproject.org"
             ),
             mpcontribs_api_host=os.getenv(
-                "MPCONTRIBS_API_HOST",
-                "contribs-api.materialsproject.org"
+                "MPCONTRIBS_API_HOST", "contribs-api.materialsproject.org"
             ),
             cache_ttl_days=int(os.getenv("MATERIALS_CACHE_TTL_DAYS", "30")),
             max_concurrent_requests=int(os.getenv("MATERIALS_MAX_CONCURRENT", "8")),

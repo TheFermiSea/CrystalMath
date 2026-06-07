@@ -9,8 +9,16 @@ from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.containers import Container, Vertical, Horizontal, ScrollableContainer
 from textual.widgets import (
-    Input, Button, Static, Label, Select, Tree, TextArea,
-    Checkbox, RadioSet, RadioButton
+    Input,
+    Button,
+    Static,
+    Label,
+    Select,
+    Tree,
+    TextArea,
+    Checkbox,
+    RadioSet,
+    RadioButton,
 )
 from textual.widget import Widget
 from textual.message import Message
@@ -33,12 +41,7 @@ class TemplateSelected(Message):
 class ParameterForm(Widget):
     """Dynamic form for editing template parameters."""
 
-    def __init__(
-        self,
-        template: Template,
-        id: Optional[str] = None,
-        classes: Optional[str] = None
-    ):
+    def __init__(self, template: Template, id: Optional[str] = None, classes: Optional[str] = None):
         super().__init__(id=id, classes=classes)
         self.template = template
         self.parameter_widgets: Dict[str, Widget] = {}
@@ -76,9 +79,10 @@ class ParameterForm(Widget):
 
                         yield Select(
                             options=options,
-                            value=param_def.default or (param_def.options[0] if param_def.options else None),
+                            value=param_def.default
+                            or (param_def.options[0] if param_def.options else None),
                             id=widget_id,
-                            classes="parameter_input"
+                            classes="parameter_input",
                         )
 
                     elif param_def.type == "boolean":
@@ -87,7 +91,7 @@ class ParameterForm(Widget):
                             f"Enable {param_name}",
                             value=bool(param_def.default),
                             id=widget_id,
-                            classes="parameter_input"
+                            classes="parameter_input",
                         )
 
                     elif param_def.type == "integer":
@@ -101,7 +105,7 @@ class ParameterForm(Widget):
                             placeholder=placeholder,
                             type="integer",
                             id=widget_id,
-                            classes="parameter_input"
+                            classes="parameter_input",
                         )
 
                     elif param_def.type == "float":
@@ -115,7 +119,7 @@ class ParameterForm(Widget):
                             placeholder=placeholder,
                             type="number",
                             id=widget_id,
-                            classes="parameter_input"
+                            classes="parameter_input",
                         )
 
                     elif param_def.type == "file":
@@ -124,7 +128,7 @@ class ParameterForm(Widget):
                             value=str(param_def.default) if param_def.default else "",
                             placeholder="Path to file",
                             id=widget_id,
-                            classes="parameter_input"
+                            classes="parameter_input",
                         )
 
                     else:  # string or default
@@ -133,7 +137,7 @@ class ParameterForm(Widget):
                             value=str(param_def.default) if param_def.default else "",
                             placeholder=f"Enter {param_name}",
                             id=widget_id,
-                            classes="parameter_input"
+                            classes="parameter_input",
                         )
 
                     # Validation error placeholder
@@ -408,7 +412,7 @@ class TemplateBrowserScreen(ModalScreen):
         calculations_dir: Path,
         template_dir: Optional[Path] = None,
         name: Optional[str] = None,
-        id: Optional[str] = None
+        id: Optional[str] = None,
     ):
         super().__init__(name=name, id=id)
         self.database = database
@@ -476,7 +480,7 @@ class TemplateBrowserScreen(ModalScreen):
             "basic": [],
             "advanced": [],
             "workflows": [],
-            "other": []
+            "other": [],
         }
 
         for template in templates:
@@ -499,12 +503,9 @@ class TemplateBrowserScreen(ModalScreen):
             if not category_templates:
                 continue
 
-            icon = {
-                "basic": "📄",
-                "advanced": "🔬",
-                "workflows": "🔄",
-                "other": "📦"
-            }.get(category, "📦")
+            icon = {"basic": "📄", "advanced": "🔬", "workflows": "🔄", "other": "📦"}.get(
+                category, "📦"
+            )
 
             category_label = f"{icon} {category.title()} ({len(category_templates)})"
             category_node = root.add(category_label, expand=False)
@@ -543,7 +544,9 @@ class TemplateBrowserScreen(ModalScreen):
                 yield Static(f"[bold]{template.name}[/bold]", classes="metadata_row")
                 yield Static(f"[dim]Author:[/dim] {template.author}", classes="metadata_row")
                 yield Static(f"[dim]Version:[/dim] {template.version}", classes="metadata_row")
-                yield Static(f"[dim]Description:[/dim] {template.description}", classes="metadata_row")
+                yield Static(
+                    f"[dim]Description:[/dim] {template.description}", classes="metadata_row"
+                )
                 yield Static(f"[dim]Tags:[/dim] {', '.join(template.tags)}", classes="metadata_row")
 
             # Parameters section
@@ -564,7 +567,7 @@ class TemplateBrowserScreen(ModalScreen):
                     id="preview_textarea",
                     language="text",
                     read_only=True,
-                    show_line_numbers=True
+                    show_line_numbers=True,
                 )
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -593,8 +596,10 @@ class TemplateBrowserScreen(ModalScreen):
         for template in templates:
             # Search filter
             if search_text:
-                if search_text not in template.name.lower() and \
-                   search_text not in template.description.lower():
+                if (
+                    search_text not in template.name.lower()
+                    and search_text not in template.description.lower()
+                ):
                     continue
 
             # Tag filter

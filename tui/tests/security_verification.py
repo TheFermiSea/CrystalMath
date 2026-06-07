@@ -42,7 +42,7 @@ def test_parameter_validation():
     print("=" * 60)
 
     manager = Mock()
-    manager._configs = {1: {'host': 'localhost'}}
+    manager._configs = {1: {"host": "localhost"}}
     runner = SSHRunner(manager, cluster_id=1)
 
     # Test invalid mpi_ranks
@@ -52,9 +52,7 @@ def test_parameter_validation():
     for value in invalid_mpi:
         try:
             runner._generate_execution_script(
-                remote_work_dir=PurePosixPath('/tmp/test'),
-                input_file='test.d12',
-                mpi_ranks=value
+                remote_work_dir=PurePosixPath("/tmp/test"), input_file="test.d12", mpi_ranks=value
             )
             print(f"  ✗ {value!r} was accepted (VULNERABILITY!)")
         except (ValueError, TypeError):
@@ -67,9 +65,7 @@ def test_parameter_validation():
     for value in invalid_threads:
         try:
             runner._generate_execution_script(
-                remote_work_dir=PurePosixPath('/tmp/test'),
-                input_file='test.d12',
-                threads=value
+                remote_work_dir=PurePosixPath("/tmp/test"), input_file="test.d12", threads=value
             )
             print(f"  ✗ {value!r} was accepted (VULNERABILITY!)")
         except (ValueError, TypeError):
@@ -79,10 +75,10 @@ def test_parameter_validation():
     print("\nValid parameter values:")
     try:
         script = runner._generate_execution_script(
-            remote_work_dir=PurePosixPath('/tmp/test'),
-            input_file='test.d12',
+            remote_work_dir=PurePosixPath("/tmp/test"),
+            input_file="test.d12",
             threads=4,
-            mpi_ranks=8
+            mpi_ranks=8,
         )
         print(f"  ✓ threads=4, mpi_ranks=8 accepted")
         assert "OMP_NUM_THREADS=4" in script

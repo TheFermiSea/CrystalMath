@@ -88,6 +88,7 @@ class MaterialRecord:
         if "structure" in data and data["structure"]:
             try:
                 from pymatgen.core import Structure
+
                 structure = Structure.from_dict(data["structure"])
             except Exception:
                 pass  # Structure reconstruction failed

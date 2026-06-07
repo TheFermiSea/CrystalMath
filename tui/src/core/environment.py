@@ -41,6 +41,7 @@ class CrystalConfig:
 
 class EnvironmentError(Exception):
     """Custom exception for environment configuration errors."""
+
     pass
 
 
@@ -68,9 +69,9 @@ def _find_bashrc_path(explicit_path: Optional[Path] = None) -> Path:
         return explicit_path.resolve()
 
     # 2. CRY23_ROOT environment variable
-    cry23_root = os.environ.get('CRY23_ROOT')
+    cry23_root = os.environ.get("CRY23_ROOT")
     if cry23_root:
-        bashrc = Path(cry23_root) / 'utils23' / 'cry23.bashrc'
+        bashrc = Path(cry23_root) / "utils23" / "cry23.bashrc"
         if bashrc.exists():
             return bashrc.resolve()
 
@@ -78,7 +79,7 @@ def _find_bashrc_path(explicit_path: Optional[Path] = None) -> Path:
     # This file is in: CRYSTAL23/crystalmath/tui/src/core/environment.py
     # bashrc is in: CRYSTAL23/utils23/cry23.bashrc
     # Path structure: environment.py -> core -> src -> tui -> crystalmath -> CRYSTAL23
-    dev_bashrc = Path(__file__).resolve().parents[4] / 'utils23' / 'cry23.bashrc'
+    dev_bashrc = Path(__file__).resolve().parents[4] / "utils23" / "cry23.bashrc"
     if dev_bashrc.exists():
         return dev_bashrc
 
@@ -88,8 +89,7 @@ def _find_bashrc_path(explicit_path: Optional[Path] = None) -> Path:
 
 
 def load_crystal_environment(
-    bashrc_path: Optional[Path] = None,
-    force_reload: bool = False
+    bashrc_path: Optional[Path] = None, force_reload: bool = False
 ) -> CrystalConfig:
     """
     Load CRYSTAL23 environment configuration with proper fallback chain.
@@ -137,23 +137,21 @@ def load_crystal_environment(
         config_data = _source_bashrc(bashrc_path)
     except subprocess.CalledProcessError as e:
         raise EnvironmentError(
-            f"Failed to source cry23.bashrc: {e}\n"
-            f"Return code: {e.returncode}\n"
-            f"Output: {e.output}"
+            f"Failed to source cry23.bashrc: {e}\nReturn code: {e.returncode}\nOutput: {e.output}"
         )
     except Exception as e:
         raise EnvironmentError(f"Error loading environment: {e}")
 
     # Extract configuration paths
-    root_dir = Path(config_data['CRY23_ROOT'])
-    executable_dir = Path(config_data['CRY23_EXEDIR'])
-    scratch_dir = Path(config_data['CRY23_SCRDIR'])
-    utils_dir = Path(config_data['CRY23_UTILS'])
-    architecture = config_data['CRY23_ARCH']
-    version = config_data['VERSION']
+    root_dir = Path(config_data["CRY23_ROOT"])
+    executable_dir = Path(config_data["CRY23_EXEDIR"])
+    scratch_dir = Path(config_data["CRY23_SCRDIR"])
+    utils_dir = Path(config_data["CRY23_UTILS"])
+    architecture = config_data["CRY23_ARCH"]
+    version = config_data["VERSION"]
 
     # Construct full path to crystalOMP
-    executable_path = executable_dir / 'crystalOMP'
+    executable_path = executable_dir / "crystalOMP"
 
     # Validate configuration
     _validate_environment(executable_dir, executable_path, scratch_dir)
@@ -166,7 +164,7 @@ def load_crystal_environment(
         utils_dir=utils_dir,
         architecture=architecture,
         version=version,
-        executable_path=executable_path
+        executable_path=executable_path,
     )
 
     # Cache and return
@@ -200,27 +198,36 @@ def _source_bashrc(bashrc_path: Path) -> dict[str, str]:
     """
 
     # Execute command
-    result = subprocess.run(
-        ['bash', '-c', bash_cmd],
-        capture_output=True,
-        text=True,
-        check=True
-    )
+    result = subprocess.run(["bash", "-c", bash_cmd], capture_output=True, text=True, check=True)
 
     # Parse output
     config_data = {}
-    for line in result.stdout.strip().split('\n'):
+    for line in result.stdout.strip().split("\n"):
         # Skip empty lines
-        if not line or '=' not in line:
+        if not line or "=" not in line:
             continue
 
         # Parse KEY=VALUE lines
-        key, value = line.split('=', 1)
-        if key in ['CRY23_ROOT', 'CRY23_EXEDIR', 'CRY23_SCRDIR', 'CRY23_UTILS', 'CRY23_ARCH', 'VERSION']:
+        key, value = line.split("=", 1)
+        if key in [
+            "CRY23_ROOT",
+            "CRY23_EXEDIR",
+            "CRY23_SCRDIR",
+            "CRY23_UTILS",
+            "CRY23_ARCH",
+            "VERSION",
+        ]:
             config_data[key] = value
 
     # Validate we got all required variables
-    required = ['CRY23_ROOT', 'CRY23_EXEDIR', 'CRY23_SCRDIR', 'CRY23_UTILS', 'CRY23_ARCH', 'VERSION']
+    required = [
+        "CRY23_ROOT",
+        "CRY23_EXEDIR",
+        "CRY23_SCRDIR",
+        "CRY23_UTILS",
+        "CRY23_ARCH",
+        "VERSION",
+    ]
     missing = [var for var in required if var not in config_data]
     if missing:
         raise EnvironmentError(
@@ -231,11 +238,7 @@ def _source_bashrc(bashrc_path: Path) -> dict[str, str]:
     return config_data
 
 
-def _validate_environment(
-    executable_dir: Path,
-    executable_path: Path,
-    scratch_dir: Path
-) -> None:
+def _validate_environment(executable_dir: Path, executable_path: Path, scratch_dir: Path) -> None:
     """
     Validate that the environment is properly configured.
 
@@ -255,9 +258,7 @@ def _validate_environment(
         )
 
     if not executable_dir.is_dir():
-        raise EnvironmentError(
-            f"Executable path is not a directory: {executable_dir}"
-        )
+        raise EnvironmentError(f"Executable path is not a directory: {executable_dir}")
 
     # Check crystalOMP exists
     if not executable_path.exists():
@@ -278,16 +279,12 @@ def _validate_environment(
     try:
         scratch_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        raise EnvironmentError(
-            f"Failed to create scratch directory: {scratch_dir}\n"
-            f"Error: {e}"
-        )
+        raise EnvironmentError(f"Failed to create scratch directory: {scratch_dir}\nError: {e}")
 
     # Verify scratch directory is writable
     if not os.access(scratch_dir, os.W_OK):
         raise EnvironmentError(
-            f"Scratch directory is not writable: {scratch_dir}\n"
-            f"Please check permissions."
+            f"Scratch directory is not writable: {scratch_dir}\nPlease check permissions."
         )
 
 

@@ -175,9 +175,7 @@ class TestConnectionManager:
         """Test storing password in keyring."""
         connection_manager.set_password(1, "secret123")
 
-        mock_keyring.set_password.assert_called_once_with(
-            "crystal-tui", "cluster_1", "secret123"
-        )
+        mock_keyring.set_password.assert_called_once_with("crystal-tui", "cluster_1", "secret123")
 
     @patch("src.core.connection_manager.keyring")
     def test_get_password(self, mock_keyring, connection_manager):
@@ -207,9 +205,7 @@ class TestConnectionManager:
             return mock_conn
 
         mock_connect.side_effect = mock_connect_coro
-        connection_manager.register_cluster(
-            1, "test.example.com", key_file=Path("/path/to/key")
-        )
+        connection_manager.register_cluster(1, "test.example.com", key_file=Path("/path/to/key"))
 
         conn = await connection_manager.connect(1)
 
@@ -226,9 +222,7 @@ class TestConnectionManager:
     @pytest.mark.asyncio
     @patch("src.core.connection_manager.asyncssh.connect")
     @patch("src.core.connection_manager.keyring")
-    async def test_connect_with_password(
-        self, mock_keyring, mock_connect, connection_manager
-    ):
+    async def test_connect_with_password(self, mock_keyring, mock_connect, connection_manager):
         """Test connecting with password authentication."""
         mock_conn = mock_ssh_connection()
 
@@ -527,9 +521,7 @@ class TestConnectionManager:
             return mock_conn
 
         mock_connect.side_effect = mock_connect_coro
-        connection_manager.register_cluster(
-            1, "test.example.com", strict_host_key_checking=False
-        )
+        connection_manager.register_cluster(1, "test.example.com", strict_host_key_checking=False)
 
         await connection_manager.connect(1)
 
@@ -541,6 +533,7 @@ class TestConnectionManager:
     @patch("src.core.connection_manager.asyncssh.connect")
     async def test_connect_host_key_verification_failure(self, mock_connect, connection_manager):
         """Test handling of host key verification failure."""
+
         async def mock_connect_coro(*args, **kwargs):
             raise asyncssh.HostKeyNotVerifiable("Host key could not be verified")
 
@@ -574,9 +567,7 @@ class TestConnectionManager:
 
     def test_get_known_hosts_file_disabled(self):
         """Test that empty Path() disables host key checking."""
-        config = ConnectionConfig(
-            host="test.example.com", known_hosts_file=Path()
-        )
+        config = ConnectionConfig(host="test.example.com", known_hosts_file=Path())
         known_hosts = ConnectionManager._get_known_hosts_file(config)
 
         # Empty Path() should return empty tuple

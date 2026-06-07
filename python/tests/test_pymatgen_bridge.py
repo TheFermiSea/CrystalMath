@@ -297,7 +297,10 @@ class TestStructureFromCIF:
 
         structure = structure_from_cif(cif_file)
         assert structure is not None
-        assert structure.num_sites == 2
+        # The CIF declares Fm-3m (225) rocksalt with 2 asymmetric-unit atoms.
+        # pymatgen's CifParser defaults to primitive=False, so the symmetry
+        # operations expand these to the full conventional cell: Na4 Cl4 = 8 sites.
+        assert structure.num_sites == 8
 
     def test_structure_from_cif_raises_without_pymatgen(self, tmp_path: Path) -> None:
         """Test that function raises DependencyError when pymatgen not installed."""
@@ -643,7 +646,10 @@ class TestSymmetryAnalysis:
             get_symmetry_info,
         )
 
-        # Create a simple cubic structure
+        # Create a simple cubic structure. With one atom at (0,0,0) and the
+        # other at (1/2,1/2,1/2) on a primitive cubic lattice, this is a
+        # CsCl-type cell occupying Wyckoff sites 1a/1b => Pm-3m (221),
+        # not the face-centred rocksalt Fm-3m (225).
         lattice = Lattice.cubic(5.64)
         structure = Structure(
             lattice,
@@ -653,7 +659,8 @@ class TestSymmetryAnalysis:
 
         info = get_symmetry_info(structure)
         assert isinstance(info, SymmetryInfo)
-        assert info.space_group_number == 225
+        assert info.space_group_number == 221
+        assert info.space_group_symbol == "Pm-3m"
         assert info.crystal_system.value == "cubic"
 
     @pytest.mark.skipif(not HAS_PYMATGEN, reason="pymatgen not installed")
@@ -880,6 +887,8 @@ class TestPymatgenIntegration:
         """Test symmetry analysis with real structure."""
         from crystalmath.integrations.pymatgen_bridge import get_symmetry_info
 
+        # CsCl-type cell (atoms at 1a/1b of a primitive cubic lattice) =>
+        # Pm-3m (221), not rocksalt Fm-3m (225).
         lattice = Lattice.cubic(5.64)
         structure = Structure(
             lattice,
@@ -889,7 +898,7 @@ class TestPymatgenIntegration:
 
         info = get_symmetry_info(structure)
         assert info.crystal_system.value == "cubic"
-        assert info.space_group_number == 225
+        assert info.space_group_number == 221
 
     def test_full_workflow_cif_to_validation(self, cif_file: Path) -> None:
         """Test full workflow from CIF file to validation."""

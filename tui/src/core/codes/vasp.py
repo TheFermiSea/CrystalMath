@@ -30,16 +30,16 @@ VASP_OPTIONAL_INPUTS = ["WAVECAR", "CHGCAR", "CONTCAR"]
 
 # VASP output files to retrieve
 VASP_OUTPUT_FILES = [
-    "OUTCAR",       # Main text output
-    "CONTCAR",      # Final structure
-    "OSZICAR",      # SCF convergence info
+    "OUTCAR",  # Main text output
+    "CONTCAR",  # Final structure
+    "OSZICAR",  # SCF convergence info
     "vasprun.xml",  # XML output for parsing
-    "EIGENVAL",     # Eigenvalues
-    "DOSCAR",       # Density of states
-    "IBZKPT",       # Irreducible k-points
-    "PROCAR",       # Projected density (if LORBIT)
-    "CHGCAR",       # Charge density
-    "WAVECAR",      # Wavefunction (for restarts)
+    "EIGENVAL",  # Eigenvalues
+    "DOSCAR",  # Density of states
+    "IBZKPT",  # Irreducible k-points
+    "PROCAR",  # Projected density (if LORBIT)
+    "CHGCAR",  # Charge density
+    "WAVECAR",  # Wavefunction (for restarts)
 ]
 
 
@@ -52,14 +52,14 @@ class VASPInputFiles:
     """
 
     poscar: str  # Structure in VASP POSCAR format
-    incar: str   # Calculation parameters
+    incar: str  # Calculation parameters
     kpoints: str  # K-point specification
     potcar: str  # Pseudopotentials (concatenated)
 
     # Optional restart files
     wavecar: Optional[Path] = None  # Binary file, keep as path
-    chgcar: Optional[Path] = None   # Binary file, keep as path
-    contcar: Optional[str] = None   # Alternative structure
+    chgcar: Optional[Path] = None  # Binary file, keep as path
+    contcar: Optional[str] = None  # Alternative structure
 
     def validate(self) -> List[str]:
         """Validate input files and return list of issues.
@@ -90,9 +90,7 @@ class VASPInputFiles:
             incar_upper = self.incar.upper()
             # Check for common required tags
             if "ENCUT" not in incar_upper and "PREC" not in incar_upper:
-                issues.append(
-                    "INCAR missing ENCUT or PREC - energy cutoff not specified"
-                )
+                issues.append("INCAR missing ENCUT or PREC - energy cutoff not specified")
 
         return issues
 
@@ -123,12 +121,14 @@ class VASPInputFiles:
         # Copy optional binary files if provided
         if self.wavecar and self.wavecar.exists():
             import shutil
+
             dst = work_dir / "WAVECAR"
             shutil.copy2(self.wavecar, dst)
             written["WAVECAR"] = dst
 
         if self.chgcar and self.chgcar.exists():
             import shutil
+
             dst = work_dir / "CHGCAR"
             shutil.copy2(self.chgcar, dst)
             written["CHGCAR"] = dst
