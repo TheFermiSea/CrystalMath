@@ -3917,7 +3917,8 @@ impl<'a> App<'a> {
             last_error: &mut self.last_error,
             needs_redraw: &mut self.needs_redraw,
         };
-        self.cluster_manager.fetch_clusters(self.bridge.as_ref(), &mut ctx);
+        self.cluster_manager
+            .fetch_clusters(self.bridge.as_ref(), &mut ctx);
     }
 
     /// Request to create a new cluster from form data.
@@ -3930,7 +3931,8 @@ impl<'a> App<'a> {
             last_error: &mut self.last_error,
             needs_redraw: &mut self.needs_redraw,
         };
-        self.cluster_manager.create_from_form(self.bridge.as_ref(), &mut ctx);
+        self.cluster_manager
+            .create_from_form(self.bridge.as_ref(), &mut ctx);
     }
 
     /// Request to update an existing cluster from form data.
@@ -3943,7 +3945,8 @@ impl<'a> App<'a> {
             last_error: &mut self.last_error,
             needs_redraw: &mut self.needs_redraw,
         };
-        self.cluster_manager.update_from_form(self.bridge.as_ref(), &mut ctx);
+        self.cluster_manager
+            .update_from_form(self.bridge.as_ref(), &mut ctx);
     }
 
     /// Request to delete the selected cluster.
@@ -3956,7 +3959,8 @@ impl<'a> App<'a> {
             last_error: &mut self.last_error,
             needs_redraw: &mut self.needs_redraw,
         };
-        self.cluster_manager.delete_selected(self.bridge.as_ref(), &mut ctx);
+        self.cluster_manager
+            .delete_selected(self.bridge.as_ref(), &mut ctx);
     }
 
     /// Request to test SSH connection to the selected cluster.
@@ -3969,7 +3973,8 @@ impl<'a> App<'a> {
             last_error: &mut self.last_error,
             needs_redraw: &mut self.needs_redraw,
         };
-        self.cluster_manager.test_connection(self.bridge.as_ref(), &mut ctx);
+        self.cluster_manager
+            .test_connection(self.bridge.as_ref(), &mut ctx);
     }
 
     /// Dispatch a key event to the cluster-manager Handler.
@@ -3983,7 +3988,8 @@ impl<'a> App<'a> {
             last_error: &mut self.last_error,
             needs_redraw: &mut self.needs_redraw,
         };
-        self.cluster_manager.handle_key(key, self.bridge.as_ref(), &mut ctx);
+        self.cluster_manager
+            .handle_key(key, self.bridge.as_ref(), &mut ctx);
     }
 
     // ===== SLURM Queue Modal =====

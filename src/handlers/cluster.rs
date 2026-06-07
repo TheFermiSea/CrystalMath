@@ -175,97 +175,91 @@ impl Handler for ClusterManagerState {
         }
 
         match self.mode {
-            ClusterManagerMode::List => {
-                match key.code {
-                    KeyCode::Esc => {
-                        self.close();
-                        ctx.mark_dirty();
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        self.select_next();
-                        self.connection_result = None;
-                        ctx.mark_dirty();
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        self.select_prev();
-                        self.connection_result = None;
-                        ctx.mark_dirty();
-                    }
-                    KeyCode::Char('a') => {
-                        self.start_add();
-                        ctx.mark_dirty();
-                    }
-                    KeyCode::Char('e') if self.selected_index.is_some() => {
-                        self.start_edit();
-                        ctx.mark_dirty();
-                    }
-                    KeyCode::Char('d') if self.selected_index.is_some() => {
-                        self.start_delete();
-                        ctx.mark_dirty();
-                    }
-                    KeyCode::Char('t') => {
-                        self.test_connection(bridge, ctx);
-                    }
-                    KeyCode::Char('r') => {
-                        self.fetch_clusters(bridge, ctx);
-                    }
-                    _ => {}
+            ClusterManagerMode::List => match key.code {
+                KeyCode::Esc => {
+                    self.close();
+                    ctx.mark_dirty();
                 }
-            }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.select_next();
+                    self.connection_result = None;
+                    ctx.mark_dirty();
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.select_prev();
+                    self.connection_result = None;
+                    ctx.mark_dirty();
+                }
+                KeyCode::Char('a') => {
+                    self.start_add();
+                    ctx.mark_dirty();
+                }
+                KeyCode::Char('e') if self.selected_index.is_some() => {
+                    self.start_edit();
+                    ctx.mark_dirty();
+                }
+                KeyCode::Char('d') if self.selected_index.is_some() => {
+                    self.start_delete();
+                    ctx.mark_dirty();
+                }
+                KeyCode::Char('t') => {
+                    self.test_connection(bridge, ctx);
+                }
+                KeyCode::Char('r') => {
+                    self.fetch_clusters(bridge, ctx);
+                }
+                _ => {}
+            },
 
-            ClusterManagerMode::Add | ClusterManagerMode::Edit => {
-                match key.code {
-                    KeyCode::Esc => {
-                        self.cancel();
-                        ctx.mark_dirty();
-                    }
-                    KeyCode::Enter => {
-                        if self.mode == ClusterManagerMode::Add {
-                            self.create_from_form(bridge, ctx);
-                        } else {
-                            self.update_from_form(bridge, ctx);
-                        }
-                    }
-                    KeyCode::Tab | KeyCode::Down => {
-                        self.focused_field = self.focused_field.next();
-                        self.error = None;
-                        ctx.mark_dirty();
-                    }
-                    KeyCode::BackTab | KeyCode::Up => {
-                        self.focused_field = self.focused_field.prev();
-                        self.error = None;
-                        ctx.mark_dirty();
-                    }
-                    KeyCode::Char(' ') => {
-                        if self.focused_field == ClusterFormField::ClusterType {
-                            self.form_cluster_type = self.form_cluster_type.cycle();
-                            ctx.mark_dirty();
-                        } else {
-                            cluster_form_push_char(self, ' ', ctx);
-                        }
-                    }
-                    KeyCode::Backspace => {
-                        cluster_form_pop_char(self, ctx);
-                    }
-                    KeyCode::Char(c) => {
-                        cluster_form_push_char(self, c, ctx);
-                    }
-                    _ => {}
+            ClusterManagerMode::Add | ClusterManagerMode::Edit => match key.code {
+                KeyCode::Esc => {
+                    self.cancel();
+                    ctx.mark_dirty();
                 }
-            }
+                KeyCode::Enter => {
+                    if self.mode == ClusterManagerMode::Add {
+                        self.create_from_form(bridge, ctx);
+                    } else {
+                        self.update_from_form(bridge, ctx);
+                    }
+                }
+                KeyCode::Tab | KeyCode::Down => {
+                    self.focused_field = self.focused_field.next();
+                    self.error = None;
+                    ctx.mark_dirty();
+                }
+                KeyCode::BackTab | KeyCode::Up => {
+                    self.focused_field = self.focused_field.prev();
+                    self.error = None;
+                    ctx.mark_dirty();
+                }
+                KeyCode::Char(' ') => {
+                    if self.focused_field == ClusterFormField::ClusterType {
+                        self.form_cluster_type = self.form_cluster_type.cycle();
+                        ctx.mark_dirty();
+                    } else {
+                        cluster_form_push_char(self, ' ', ctx);
+                    }
+                }
+                KeyCode::Backspace => {
+                    cluster_form_pop_char(self, ctx);
+                }
+                KeyCode::Char(c) => {
+                    cluster_form_push_char(self, c, ctx);
+                }
+                _ => {}
+            },
 
-            ClusterManagerMode::ConfirmDelete => {
-                match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        self.delete_selected(bridge, ctx);
-                    }
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                        self.cancel();
-                        ctx.mark_dirty();
-                    }
-                    _ => {}
+            ClusterManagerMode::ConfirmDelete => match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.delete_selected(bridge, ctx);
                 }
-            }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.cancel();
+                    ctx.mark_dirty();
+                }
+                _ => {}
+            },
         }
 
         true // We always consume keys while the cluster modal is active.
@@ -440,9 +434,9 @@ fn cluster_form_push_char(state: &mut ClusterManagerState, c: char, ctx: &mut Ha
         ClusterFormField::Cry23Root => &mut state.form_cry23_root,
         ClusterFormField::VaspRoot => &mut state.form_vasp_root,
         // Port / MaxConcurrent / ClusterType already handled above.
-        ClusterFormField::Port | ClusterFormField::MaxConcurrent | ClusterFormField::ClusterType => {
-            return
-        }
+        ClusterFormField::Port
+        | ClusterFormField::MaxConcurrent
+        | ClusterFormField::ClusterType => return,
     };
 
     field.push(c);
@@ -507,10 +501,10 @@ mod tests {
 
     impl BridgeService for MockBridge {
         fn request_rpc(&self, rpc_request: JsonRpcRequest, request_id: usize) -> Result<()> {
-            self.requests
-                .lock()
-                .unwrap()
-                .push(format!("Rpc(method={}, request_id={})", rpc_request.method, request_id));
+            self.requests.lock().unwrap().push(format!(
+                "Rpc(method={}, request_id={})",
+                rpc_request.method, request_id
+            ));
             Ok(())
         }
 
@@ -632,7 +626,10 @@ mod tests {
 
         assert_eq!(state.mode, ClusterManagerMode::Add);
         assert!(dirty, "mark_dirty should have been called");
-        assert!(bridge.recorded().is_empty(), "no RPC expected for Add mode entry");
+        assert!(
+            bridge.recorded().is_empty(),
+            "no RPC expected for Add mode entry"
+        );
     }
 
     /// Pressing Esc in Add mode returns to List mode without an RPC.
@@ -779,7 +776,11 @@ mod tests {
         let claimed = state.handle_response(&resp, &bridge, &mut ctx);
 
         assert!(claimed);
-        assert_eq!(state.mode, ClusterManagerMode::List, "cancel() should have reset mode");
+        assert_eq!(
+            state.mode,
+            ClusterManagerMode::List,
+            "cancel() should have reset mode"
+        );
         let recorded = bridge.recorded();
         assert!(
             recorded.iter().any(|r| r.starts_with("FetchClusters(")),
