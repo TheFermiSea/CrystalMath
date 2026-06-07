@@ -1,6 +1,6 @@
 # Architecture Overview
 
-> **Warning: Historical / superseded.** This document predates the ADR-007–027 redesign and describes the pre-redesign architecture overview that the redesign replaces. Authoritative direction: [ADR-006](adr-006-unify-on-rust-tui.md), [ADR-007](adr-007-redesign-overview-adopt-ecosystem.md) and [REDESIGN.md](REDESIGN.md). Kept for background only.
+> **⚠️ Historical / superseded.** This document predates the ADR-007–027 redesign and describes the pre-redesign architecture overview that the redesign replaces. Authoritative direction: [ADR-006](adr-006-unify-on-rust-tui.md), [ADR-007](adr-007-redesign-overview-adopt-ecosystem.md) and [REDESIGN.md](REDESIGN.md). Kept for background only.
 
 This document provides a high-level overview of the CrystalMath monorepo architecture, covering both the CLI and TUI components.
 
