@@ -135,7 +135,14 @@ class TestVaspInputGenerator:
 
         # Check POSCAR content
         assert "Si" in inputs.poscar
-        assert "5.43" in inputs.poscar or "5.4300" in inputs.poscar
+        # The pymatgen Poscar writer emits full float precision (e.g.
+        # "5.4299999999999997"), so a substring check on "5.43" is brittle.
+        # Parse the lattice constant from the first lattice vector (line 3,
+        # after the comment and scale-factor lines) and compare numerically.
+        poscar_lines = inputs.poscar.splitlines()
+        first_lattice_vector = poscar_lines[2].split()
+        lattice_constant = float(first_lattice_vector[0])
+        assert lattice_constant == pytest.approx(5.43)
 
         # Check INCAR content
         assert "ENCUT" in inputs.incar

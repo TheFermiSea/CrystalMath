@@ -5747,8 +5747,10 @@ mod tests {
 
     #[test]
     fn test_materials_search_state_select_next() {
-        let mut state = MaterialsSearchState::default();
-        state.results = vec![test_material("mp-1", "A"), test_material("mp-2", "B")];
+        let mut state = MaterialsSearchState {
+            results: vec![test_material("mp-1", "A"), test_material("mp-2", "B")],
+            ..Default::default()
+        };
         state.table_state.select(Some(0));
 
         state.select_next();
@@ -5761,8 +5763,10 @@ mod tests {
 
     #[test]
     fn test_materials_search_state_select_prev() {
-        let mut state = MaterialsSearchState::default();
-        state.results = vec![test_material("mp-1", "A"), test_material("mp-2", "B")];
+        let mut state = MaterialsSearchState {
+            results: vec![test_material("mp-1", "A"), test_material("mp-2", "B")],
+            ..Default::default()
+        };
         state.table_state.select(Some(0));
 
         // Wrap around
