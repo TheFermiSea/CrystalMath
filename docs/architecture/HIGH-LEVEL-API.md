@@ -1,5 +1,12 @@
 # High-Level API Design
 
+> **⚠️ Historical / superseded.** This document predates the ADR-007–027 redesign and describes the
+> `high_level/` "Phase 3" aspiration layer that the redesign schedules for deletion/replacement, not
+> completion. Authoritative direction:
+> [ADR-019](adr-019-delete-phase3-protocols-aspiration-layer.md),
+> [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) and [REDESIGN.md](REDESIGN.md). Kept
+> for background only.
+
 **Version:** 1.0.0
 **Status:** Design Phase
 **Date:** 2026-01-09

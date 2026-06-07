@@ -22,6 +22,7 @@ from crystalmath.models import DftCode, JobSubmission, RunnerType, SchedulerOpti
 @dataclass
 class BatchJobConfig:
     """Configuration for a single job in the batch."""
+
     name: str
     input_file: Path
     cluster: str = "local"
@@ -169,7 +170,7 @@ class BatchSubmissionScreen(ModalScreen):
         calculations_dir: Path,
         core_client: CrystalCoreClient | None = None,
         name: Optional[str] = None,
-        id: Optional[str] = None
+        id: Optional[str] = None,
     ):
         super().__init__(name=name, id=id)
         self.database = database
@@ -193,37 +194,31 @@ class BatchSubmissionScreen(ModalScreen):
                         [("Local", "local"), ("HPC-Cluster", "hpc")],
                         value="local",
                         id="cluster_select",
-                        classes="settings_input"
+                        classes="settings_input",
                     )
                     yield Label("Partition:", classes="settings_label")
                     yield Input(
                         placeholder="compute",
                         value="compute",
                         id="partition_input",
-                        classes="settings_input"
+                        classes="settings_input",
                     )
 
                 with Horizontal(classes="settings_row"):
                     yield Label("MPI Ranks:", classes="settings_label")
                     yield Input(
-                        placeholder="14",
-                        value="14",
-                        id="mpi_ranks_input",
-                        classes="settings_input"
+                        placeholder="14", value="14", id="mpi_ranks_input", classes="settings_input"
                     )
                     yield Label("Threads:", classes="settings_label")
                     yield Input(
-                        placeholder="4",
-                        value="4",
-                        id="threads_input",
-                        classes="settings_input"
+                        placeholder="4", value="4", id="threads_input", classes="settings_input"
                     )
                     yield Label("Time Limit:", classes="settings_label")
                     yield Input(
                         placeholder="24:00:00",
                         value="24:00:00",
                         id="time_limit_input",
-                        classes="settings_input"
+                        classes="settings_input",
                     )
 
             # Jobs List Section
@@ -305,7 +300,7 @@ class BatchSubmissionScreen(ModalScreen):
             mpi_ranks=mpi_ranks,
             threads=threads,
             partition=partition,
-            time_limit=time_limit
+            time_limit=time_limit,
         )
 
         self.job_configs.append(config)
@@ -331,7 +326,9 @@ class BatchSubmissionScreen(ModalScreen):
             removed_job = self.job_configs.pop(row_index)
             self._refresh_jobs_table()
             self._update_job_count()
-            self._show_status(f"Removed job '{removed_job.name}'. Total jobs: {len(self.job_configs)}")
+            self._show_status(
+                f"Removed job '{removed_job.name}'. Total jobs: {len(self.job_configs)}"
+            )
 
     def action_submit_all(self) -> None:
         """Validate and submit all jobs in the batch."""
@@ -364,7 +361,7 @@ class BatchSubmissionScreen(ModalScreen):
 
             for i, config in enumerate(self.job_configs):
                 # Update progress
-                progress_msg = f"Submitting job {i+1}/{len(self.job_configs)}: {config.name}"
+                progress_msg = f"Submitting job {i + 1}/{len(self.job_configs)}: {config.name}"
                 self._show_progress(progress_msg)
                 self._update_job_status(i, "SUBMITTING")
 
@@ -411,21 +408,20 @@ class BatchSubmissionScreen(ModalScreen):
                 dest_input.write_text(input_content)
 
                 import json
+
                 metadata = {
                     "mpi_ranks": config.mpi_ranks,
                     "threads": config.threads,
                     "cluster": config.cluster,
                     "partition": config.partition,
                     "time_limit": config.time_limit,
-                    "parallel_mode": "parallel" if config.mpi_ranks > 1 else "serial"
+                    "parallel_mode": "parallel" if config.mpi_ranks > 1 else "serial",
                 }
                 metadata_file = work_dir / "job_metadata.json"
                 metadata_file.write_text(json.dumps(metadata, indent=2))
 
                 job_id = self.database.create_job(
-                    name=config.name,
-                    work_dir=str(work_dir),
-                    input_content=input_content
+                    name=config.name, work_dir=str(work_dir), input_content=input_content
                 )
 
                 job_ids.append(job_id)
@@ -441,6 +437,7 @@ class BatchSubmissionScreen(ModalScreen):
 
             # Wait a moment for user to see success message
             import asyncio
+
             await asyncio.sleep(1.5)
 
             self.dismiss(job_ids)
@@ -464,21 +461,21 @@ class BatchSubmissionScreen(ModalScreen):
         for i, config in enumerate(self.job_configs):
             # Validate name
             if not config.name or not config.name.strip():
-                errors.append(f"Job {i+1}: Name is empty")
+                errors.append(f"Job {i + 1}: Name is empty")
 
             if not all(c.isalnum() or c in "_-" for c in config.name):
-                errors.append(f"Job {i+1}: Invalid characters in name '{config.name}'")
+                errors.append(f"Job {i + 1}: Invalid characters in name '{config.name}'")
 
             # Check if name conflicts with existing jobs
             if config.name in existing_names:
-                errors.append(f"Job {i+1}: Name '{config.name}' already exists")
+                errors.append(f"Job {i + 1}: Name '{config.name}' already exists")
 
             # Validate resources
             if config.mpi_ranks < 1:
-                errors.append(f"Job {i+1}: MPI ranks must be >= 1")
+                errors.append(f"Job {i + 1}: MPI ranks must be >= 1")
 
             if config.threads < 1:
-                errors.append(f"Job {i+1}: Threads must be >= 1")
+                errors.append(f"Job {i + 1}: Threads must be >= 1")
 
         return errors
 
@@ -499,7 +496,9 @@ class BatchSubmissionScreen(ModalScreen):
 
         return []
 
-    def _read_input_content(self, config: BatchJobConfig, allow_placeholder: bool = False) -> Optional[str]:
+    def _read_input_content(
+        self, config: BatchJobConfig, allow_placeholder: bool = False
+    ) -> Optional[str]:
         """Read input content for a job config, returning None if missing."""
         if config.input_file.exists():
             return config.input_file.read_text()
@@ -508,9 +507,7 @@ class BatchSubmissionScreen(ModalScreen):
         return None
 
     def _build_submission_from_config(
-        self,
-        config: BatchJobConfig,
-        input_content: str
+        self, config: BatchJobConfig, input_content: str
     ) -> JobSubmission:
         """Construct a JobSubmission object from a batch config."""
         runner_type = self._map_runner_type(config.cluster)
@@ -552,13 +549,7 @@ class BatchSubmissionScreen(ModalScreen):
             resources = f"{config.mpi_ranks}×{config.threads}"
             input_file_name = config.input_file.name if config.input_file else "N/A"
 
-            table.add_row(
-                config.name,
-                input_file_name,
-                "READY",
-                config.cluster,
-                resources
-            )
+            table.add_row(config.name, input_file_name, "READY", config.cluster, resources)
 
     def _update_job_status(self, job_index: int, status: str) -> None:
         """Update the status of a specific job in the table."""

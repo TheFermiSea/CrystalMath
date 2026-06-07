@@ -80,7 +80,8 @@ class TestInputValidation:
         input_textarea.text = "CRYSTAL\nEND\nEND\n"
         error_message = Mock(spec=Static)
 
-        with patch.object(screen, 'query_one') as mock_query:
+        with patch.object(screen, "query_one") as mock_query:
+
             def query_side_effect(selector, widget_type=None):
                 if "job_name_input" in selector:
                     return job_name_input
@@ -88,6 +89,7 @@ class TestInputValidation:
                     return input_textarea
                 elif "error_message" in selector:
                     return error_message
+
             mock_query.side_effect = query_side_effect
 
             screen.action_submit()
@@ -116,7 +118,8 @@ class TestInputValidation:
             input_textarea.text = "CRYSTAL\nEND\nEND\n"
             error_message = Mock(spec=Static)
 
-            with patch.object(screen, 'query_one') as mock_query:
+            with patch.object(screen, "query_one") as mock_query:
+
                 def query_side_effect(selector, widget_type=None):
                     if "job_name_input" in selector:
                         return job_name_input
@@ -124,6 +127,7 @@ class TestInputValidation:
                         return input_textarea
                     elif "error_message" in selector:
                         return error_message
+
                 mock_query.side_effect = query_side_effect
 
                 screen.action_submit()
@@ -168,7 +172,8 @@ class TestInputValidation:
         input_textarea.text = "CRYSTAL\nEND\nEND\n"
         error_message = Mock(spec=Static)
 
-        with patch.object(screen, 'query_one') as mock_query:
+        with patch.object(screen, "query_one") as mock_query:
+
             def query_side_effect(selector, widget_type=None):
                 if "job_name_input" in selector:
                     return job_name_input
@@ -176,6 +181,7 @@ class TestInputValidation:
                     return input_textarea
                 elif "error_message" in selector:
                     return error_message
+
             mock_query.side_effect = query_side_effect
 
             screen.action_submit()
@@ -199,7 +205,8 @@ class TestCrystalInputValidation:
         input_textarea.text = "   "
         error_message = Mock(spec=Static)
 
-        with patch.object(screen, 'query_one') as mock_query:
+        with patch.object(screen, "query_one") as mock_query:
+
             def query_side_effect(selector, widget_type=None):
                 if "job_name_input" in selector:
                     return job_name_input
@@ -207,6 +214,7 @@ class TestCrystalInputValidation:
                     return input_textarea
                 elif "error_message" in selector:
                     return error_message
+
             mock_query.side_effect = query_side_effect
 
             screen.action_submit()
@@ -293,7 +301,8 @@ class TestJobCreationWorkflow:
         screen.dismiss = Mock()
         screen.post_message = Mock()
 
-        with patch.object(screen, 'query_one') as mock_query:
+        with patch.object(screen, "query_one") as mock_query:
+
             def query_side_effect(selector, widget_type=None):
                 if "job_name_input" in selector:
                     return job_name_input
@@ -301,6 +310,7 @@ class TestJobCreationWorkflow:
                     return input_textarea
                 elif "error_message" in selector:
                     return error_message
+
             mock_query.side_effect = query_side_effect
 
             screen.action_submit()
@@ -346,7 +356,8 @@ class TestJobCreationWorkflow:
         screen.dismiss = Mock()
         screen.post_message = Mock()
 
-        with patch.object(screen, 'query_one') as mock_query:
+        with patch.object(screen, "query_one") as mock_query:
+
             def query_side_effect(selector, widget_type=None):
                 if "job_name_input" in selector:
                     return job_name_input
@@ -354,6 +365,7 @@ class TestJobCreationWorkflow:
                     return input_textarea
                 elif "error_message" in selector:
                     return error_message
+
             mock_query.side_effect = query_side_effect
 
             screen.action_submit()
@@ -380,7 +392,8 @@ class TestJobCreationWorkflow:
         input_textarea.text = "CRYSTAL\n0 0 0\n225\n4.21\nEND\n12 3\nEND"
         error_message = Mock(spec=Static)
 
-        with patch.object(screen, 'query_one') as mock_query:
+        with patch.object(screen, "query_one") as mock_query:
+
             def query_side_effect(selector, widget_type=None):
                 if "job_name_input" in selector:
                     return job_name_input
@@ -388,6 +401,7 @@ class TestJobCreationWorkflow:
                     return input_textarea
                 elif "error_message" in selector:
                     return error_message
+
             mock_query.side_effect = query_side_effect
 
             screen.action_submit()
@@ -471,7 +485,7 @@ class TestErrorMessageDisplay:
 
         error_message = Mock(spec=Static)
 
-        with patch.object(screen, 'query_one', return_value=error_message):
+        with patch.object(screen, "query_one", return_value=error_message):
             screen._show_error("Test error message")
 
             error_message.update.assert_called_once()
@@ -493,7 +507,8 @@ class TestErrorMessageDisplay:
         input_textarea.text = "CRYSTAL\nEND\nEND\n"
         error_message = Mock(spec=Static)
 
-        with patch.object(screen, 'query_one') as mock_query:
+        with patch.object(screen, "query_one") as mock_query:
+
             def query_side_effect(selector, widget_type=None):
                 if "job_name_input" in selector:
                     return job_name_input
@@ -501,6 +516,7 @@ class TestErrorMessageDisplay:
                     return input_textarea
                 elif "error_message" in selector:
                     return error_message
+
             mock_query.side_effect = query_side_effect
 
             # First submission

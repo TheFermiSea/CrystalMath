@@ -99,12 +99,14 @@ def _safe_eval_condition(expr: str, context: Dict[str, Any]) -> bool:
     }
     return bool(eval(code, safe_globals, context))
 
+
 if TYPE_CHECKING:
     from ..runners.base import BaseRunner, JobHandle, JobStatus, JobResult
 
 
 class NodeStatus(Enum):
     """Status of a workflow node."""
+
     PENDING = "PENDING"
     READY = "READY"  # Dependencies met, ready to run
     RUNNING = "RUNNING"
@@ -115,6 +117,7 @@ class NodeStatus(Enum):
 
 class WorkflowStatus(Enum):
     """Overall workflow status."""
+
     CREATED = "CREATED"
     VALIDATING = "VALIDATING"
     VALID = "VALID"
@@ -127,6 +130,7 @@ class WorkflowStatus(Enum):
 
 class NodeType(Enum):
     """Type of workflow node."""
+
     CALCULATION = "CALCULATION"  # CRYSTAL calculation job
     DATA_TRANSFER = "DATA_TRANSFER"  # Copy files between jobs
     CONDITION = "CONDITION"  # Branch based on results
@@ -181,6 +185,7 @@ class WorkflowNode:
 @dataclass
 class WorkflowEdge:
     """Represents a dependency edge in the workflow DAG."""
+
     from_node: str
     to_node: str
     condition: Optional[str] = None  # Optional condition for edge activation
@@ -263,11 +268,11 @@ class Workflow:
         Returns:
             Path object for the scratch base directory
         """
-        scratch_base = os.environ.get('CRY_SCRATCH_BASE')
+        scratch_base = os.environ.get("CRY_SCRATCH_BASE")
         if scratch_base:
             return Path(scratch_base)
 
-        scratch_dir = os.environ.get('CRY23_SCRDIR')
+        scratch_dir = os.environ.get("CRY23_SCRDIR")
         if scratch_dir:
             return Path(scratch_dir)
 
@@ -280,7 +285,7 @@ class Workflow:
         node_id: Optional[str] = None,
         node_type: NodeType = NodeType.CALCULATION,
         max_retries: int = 0,
-        **kwargs
+        **kwargs,
     ) -> WorkflowNode:
         """
         Add a calculation node to the workflow.
@@ -311,18 +316,14 @@ class Workflow:
             job_template=template,
             parameters=params,
             max_retries=max_retries,
-            **kwargs
+            **kwargs,
         )
 
         self.nodes[node_id] = node
         return node
 
     def add_data_transfer_node(
-        self,
-        node_id: str,
-        source_node: str,
-        source_files: List[str],
-        target_node: str
+        self, node_id: str, source_node: str, source_files: List[str], target_node: str
     ) -> WorkflowNode:
         """
         Add a data transfer node that copies files between jobs.
@@ -342,7 +343,7 @@ class Workflow:
             source_node=source_node,
             source_files=source_files,
             target_node=target_node,
-            dependencies=[source_node]
+            dependencies=[source_node],
         )
 
         self.nodes[node_id] = node
@@ -354,7 +355,7 @@ class Workflow:
         condition_expr: str,
         true_branch: List[str],
         false_branch: List[str],
-        dependencies: List[str]
+        dependencies: List[str],
     ) -> WorkflowNode:
         """
         Add a conditional branching node.
@@ -375,17 +376,14 @@ class Workflow:
             condition_expr=condition_expr,
             true_branch=true_branch,
             false_branch=false_branch,
-            dependencies=dependencies
+            dependencies=dependencies,
         )
 
         self.nodes[node_id] = node
         return node
 
     def add_aggregation_node(
-        self,
-        node_id: str,
-        aggregation_func: str,
-        dependencies: List[str]
+        self, node_id: str, aggregation_func: str, dependencies: List[str]
     ) -> WorkflowNode:
         """
         Add an aggregation node that combines results from multiple nodes.
@@ -405,7 +403,7 @@ class Workflow:
             node_id=node_id,
             node_type=NodeType.AGGREGATION,
             aggregation_func=aggregation_func,
-            dependencies=dependencies
+            dependencies=dependencies,
         )
 
         self.nodes[node_id] = node
@@ -540,7 +538,7 @@ class Workflow:
         errors = []
 
         # Pattern to match {{ node_id.field }} references
-        template_pattern = r'\{\{\s*(\w+)\.(\w+)\s*\}\}'
+        template_pattern = r"\{\{\s*(\w+)\.(\w+)\s*\}\}"
 
         for key, value in node.parameters.items():
             if isinstance(value, str):
@@ -617,10 +615,7 @@ class Workflow:
                 continue
 
             # Check if all dependencies are completed
-            deps_met = all(
-                dep in self._completed_nodes
-                for dep in node.dependencies
-            )
+            deps_met = all(dep in self._completed_nodes for dep in node.dependencies)
 
             if deps_met:
                 node.status = NodeStatus.READY
@@ -648,10 +643,11 @@ class Workflow:
             Dictionary with resolved parameters
         """
         resolved = {}
-        template_pattern = r'\{\{\s*(\w+)\.(\w+)\s*\}\}'
+        template_pattern = r"\{\{\s*(\w+)\.(\w+)\s*\}\}"
 
         for key, value in node.parameters.items():
             if isinstance(value, str):
+
                 def replacer(match):
                     ref_node = match.group(1)
                     field = match.group(2)
@@ -790,6 +786,7 @@ class Workflow:
         else:
             # Import here to avoid circular imports
             from ..runners.local import LocalRunner
+
             self._runner = LocalRunner()
 
         return self._runner
@@ -809,7 +806,7 @@ class Workflow:
         """
         pid = os.getpid()
         # Sanitize node_id for filesystem (replace special chars)
-        safe_node_id = re.sub(r'[^\w\-]', '_', node.node_id)
+        safe_node_id = re.sub(r"[^\w\-]", "_", node.node_id)
         dir_name = f"workflow_{self.workflow_id}_{safe_node_id}_{pid}"
         work_dir = self._scratch_base / dir_name
 
@@ -822,10 +819,7 @@ class Workflow:
         return work_dir
 
     def _stage_input_files(
-        self,
-        node: WorkflowNode,
-        work_dir: Path,
-        resolved_params: Dict[str, Any]
+        self, node: WorkflowNode, work_dir: Path, resolved_params: Dict[str, Any]
     ) -> Path:
         """
         Stage input files for a calculation node.
@@ -843,6 +837,7 @@ class Workflow:
         """
         # Import template system for parameter resolution
         from jinja2.sandbox import SandboxedEnvironment
+
         jinja_env = SandboxedEnvironment(autoescape=False)
 
         # Get or generate input content
@@ -874,7 +869,7 @@ class Workflow:
         job_handle: "JobHandle",
         runner: "BaseRunner",
         timeout: Optional[float] = None,
-        poll_interval: float = 1.0
+        poll_interval: float = 1.0,
     ) -> "JobStatus":
         """
         Wait for a job to complete with polling.
@@ -927,10 +922,7 @@ class Workflow:
             await asyncio.sleep(poll_interval)
 
     async def _collect_job_output(
-        self,
-        node: WorkflowNode,
-        job_handle: "JobHandle",
-        runner: "BaseRunner"
+        self, node: WorkflowNode, job_handle: "JobHandle", runner: "BaseRunner"
     ) -> List[str]:
         """
         Collect output from a running job.
@@ -953,10 +945,7 @@ class Workflow:
         return output_lines
 
     async def _parse_job_results(
-        self,
-        node: WorkflowNode,
-        work_dir: Path,
-        status: "JobStatus"
+        self, node: WorkflowNode, work_dir: Path, status: "JobStatus"
     ) -> Dict[str, Any]:
         """
         Parse results from a completed job.
@@ -995,15 +984,17 @@ class Workflow:
                 parser = get_parser(dft_code)
                 parse_result = await parser.parse(output_file)
 
-                results.update({
-                    "energy": parse_result.final_energy,
-                    "energy_unit": parse_result.energy_unit,
-                    "converged": parse_result.convergence_status == "CONVERGED",
-                    "convergence_status": parse_result.convergence_status,
-                    "scf_cycles": parse_result.scf_cycles,
-                    "errors": parse_result.errors,
-                    "warnings": parse_result.warnings,
-                })
+                results.update(
+                    {
+                        "energy": parse_result.final_energy,
+                        "energy_unit": parse_result.energy_unit,
+                        "converged": parse_result.convergence_status == "CONVERGED",
+                        "convergence_status": parse_result.convergence_status,
+                        "scf_cycles": parse_result.scf_cycles,
+                        "errors": parse_result.errors,
+                        "warnings": parse_result.warnings,
+                    }
+                )
             except Exception as e:
                 # Fall back to basic result
                 results["parse_error"] = str(e)
@@ -1033,8 +1024,7 @@ class Workflow:
                     # Look for common error patterns
                     if "ERROR" in content:
                         error_lines = [
-                            line for line in content.split('\n')
-                            if 'ERROR' in line.upper()
+                            line for line in content.split("\n") if "ERROR" in line.upper()
                         ]
                         if error_lines:
                             results["error"] = error_lines[-1]
@@ -1073,8 +1063,9 @@ class Workflow:
         # Check if we have actual input content for real execution
         # A template name like "opt" is NOT real input - need actual content
         has_real_input = (
-            "input_content" in resolved_params or
-            "input_content" in node.parameters or
+            "input_content" in resolved_params
+            or "input_content" in node.parameters
+            or
             # job_template with newlines is actual content, not just a name
             (node.job_template and "\n" in node.job_template)
         )
@@ -1108,7 +1099,7 @@ class Workflow:
                 job_id=hash(f"{self.workflow_id}_{node.node_id}") % 2**31,
                 input_file=input_file,
                 work_dir=work_dir,
-                threads=threads
+                threads=threads,
             )
 
             # Track handle for cancellation support
@@ -1116,12 +1107,13 @@ class Workflow:
 
             # Wait for completion
             from ..runners.base import JobStatus
+
             status = await self._wait_for_job(
                 node=node,
                 job_handle=job_handle,
                 runner=runner,
                 timeout=timeout,
-                poll_interval=resolved_params.get("poll_interval", 1.0)
+                poll_interval=resolved_params.get("poll_interval", 1.0),
             )
 
             # Parse results
@@ -1137,9 +1129,7 @@ class Workflow:
             self._node_handles.pop(node.node_id, None)
 
     async def _execute_calculation_node_stub(
-        self,
-        node: WorkflowNode,
-        resolved_params: Dict[str, Any]
+        self, node: WorkflowNode, resolved_params: Dict[str, Any]
     ) -> None:
         """
         Stub implementation for calculation nodes without proper configuration.
@@ -1187,9 +1177,7 @@ class Workflow:
             target_work_dir = self._work_dirs[target_node_id]
         else:
             # Create work directory for target if it doesn't exist
-            target_work_dir = self._prepare_work_dir(
-                self.nodes.get(target_node_id, node)
-            )
+            target_work_dir = self._prepare_work_dir(self.nodes.get(target_node_id, node))
 
         # Copy files matching the specified patterns
         files_copied = 0
@@ -1209,7 +1197,7 @@ class Workflow:
             "copied_files": copied_files,
             "source_dir": str(source_work_dir),
             "target_dir": str(target_work_dir),
-            "success": True
+            "success": True,
         }
 
     async def _execute_condition_node(self, node: WorkflowNode) -> None:
@@ -1299,18 +1287,19 @@ class Workflow:
             "description": self.description,
             "metadata": self.metadata,
             "nodes": {nid: node.to_dict() for nid, node in self.nodes.items()},
-            "edges": [{"from": e.from_node, "to": e.to_node, "condition": e.condition}
-                     for e in self.edges],
+            "edges": [
+                {"from": e.from_node, "to": e.to_node, "condition": e.condition} for e in self.edges
+            ],
             "status": self.status.value,
             "created_at": self.created_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
-            "execution_order": self.execution_order
+            "execution_order": self.execution_order,
         }
 
     def to_json(self, filepath: Path) -> None:
         """Save workflow to JSON file."""
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
 
     @classmethod
@@ -1320,7 +1309,7 @@ class Workflow:
             workflow_id=data["workflow_id"],
             name=data["name"],
             description=data.get("description", ""),
-            metadata=data.get("metadata")
+            metadata=data.get("metadata"),
         )
 
         workflow.status = WorkflowStatus(data["status"])
@@ -1335,18 +1324,20 @@ class Workflow:
 
         # Restore edges
         for edge_data in data["edges"]:
-            workflow.edges.append(WorkflowEdge(
-                from_node=edge_data["from"],
-                to_node=edge_data["to"],
-                condition=edge_data.get("condition")
-            ))
+            workflow.edges.append(
+                WorkflowEdge(
+                    from_node=edge_data["from"],
+                    to_node=edge_data["to"],
+                    condition=edge_data.get("condition"),
+                )
+            )
 
         return workflow
 
     @classmethod
     def from_json(cls, filepath: Path) -> "Workflow":
         """Load workflow from JSON file."""
-        with open(filepath, 'r') as f:
+        with open(filepath, "r") as f:
             data = json.load(f)
         return cls.from_dict(data)
 
@@ -1370,18 +1361,22 @@ class Workflow:
                 NodeStatus.RUNNING: "lightblue",
                 NodeStatus.COMPLETED: "lightgreen",
                 NodeStatus.FAILED: "lightcoral",
-                NodeStatus.SKIPPED: "gray"
+                NodeStatus.SKIPPED: "gray",
             }.get(node.status, "white")
 
             label = f"{node_id}\\n({node.node_type.value})"
-            lines.append(f'    "{node_id}" [label="{label}", fillcolor={color}, style="rounded,filled"];')
+            lines.append(
+                f'    "{node_id}" [label="{label}", fillcolor={color}, style="rounded,filled"];'
+            )
 
         lines.append("")
 
         # Add edges
         for edge in self.edges:
             if edge.condition:
-                lines.append(f'    "{edge.from_node}" -> "{edge.to_node}" [label="{edge.condition}"];')
+                lines.append(
+                    f'    "{edge.from_node}" -> "{edge.to_node}" [label="{edge.condition}"];'
+                )
             else:
                 lines.append(f'    "{edge.from_node}" -> "{edge.to_node}";')
 
@@ -1407,7 +1402,7 @@ class Workflow:
                     NodeStatus.RUNNING: "●",
                     NodeStatus.COMPLETED: "✓",
                     NodeStatus.FAILED: "✗",
-                    NodeStatus.SKIPPED: "⊘"
+                    NodeStatus.SKIPPED: "⊘",
                 }.get(node.status, "?")
 
                 deps = f" (depends on: {', '.join(node.dependencies)})" if node.dependencies else ""
@@ -1420,7 +1415,7 @@ class Workflow:
                     NodeStatus.RUNNING: "●",
                     NodeStatus.COMPLETED: "✓",
                     NodeStatus.FAILED: "✗",
-                    NodeStatus.SKIPPED: "⊘"
+                    NodeStatus.SKIPPED: "⊘",
                 }.get(node.status, "?")
 
                 deps = f" (depends on: {', '.join(node.dependencies)})" if node.dependencies else ""
@@ -1439,7 +1434,9 @@ class Workflow:
         completed = len([n for n in self.nodes.values() if n.status == NodeStatus.COMPLETED])
         failed = len([n for n in self.nodes.values() if n.status == NodeStatus.FAILED])
         running = len([n for n in self.nodes.values() if n.status == NodeStatus.RUNNING])
-        pending = len([n for n in self.nodes.values() if n.status in [NodeStatus.PENDING, NodeStatus.READY]])
+        pending = len(
+            [n for n in self.nodes.values() if n.status in [NodeStatus.PENDING, NodeStatus.READY]]
+        )
 
         return {
             "total_nodes": total,
@@ -1449,7 +1446,7 @@ class Workflow:
             "pending": pending,
             "skipped": len([n for n in self.nodes.values() if n.status == NodeStatus.SKIPPED]),
             "percent_complete": (completed / total * 100) if total > 0 else 0,
-            "status": self.status.value
+            "status": self.status.value,
         }
 
     async def cancel(self, reason: str = "User cancelled") -> None:

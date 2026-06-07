@@ -26,6 +26,7 @@ _KEYRING_WARNING_SHOWN = False
 
 try:
     import keyring
+
     # Test if keyring backend is functional
     try:
         keyring.get_keyring()
@@ -477,9 +478,7 @@ class ConnectionManager:
             pool = self._pools.get(cluster_id, set())
             total = len(pool)
             in_use = sum(1 for pc in pool if pc.in_use)
-            avg_age = (
-                sum(time.time() - pc.created_at for pc in pool) / total if total > 0 else 0
-            )
+            avg_age = sum(time.time() - pc.created_at for pc in pool) / total if total > 0 else 0
             avg_idle = (
                 sum(time.time() - pc.last_used for pc in pool if not pc.in_use)
                 / max(1, total - in_use)
@@ -559,9 +558,7 @@ class ConnectionManager:
                 return pooled_conn
 
         # Pool is full - wait and retry
-        logger.warning(
-            f"Pool full for cluster {cluster_id}, waiting for available connection"
-        )
+        logger.warning(f"Pool full for cluster {cluster_id}, waiting for available connection")
         await asyncio.sleep(0.5)
         return await self._acquire_connection(cluster_id)
 
@@ -606,10 +603,10 @@ class ConnectionManager:
         Lock is held only for microseconds during state reads/writes, not during
         network I/O operations.
         """
-        logger.info("Health check loop started", extra={
-            "component": "connection_manager",
-            "interval_seconds": 60
-        })
+        logger.info(
+            "Health check loop started",
+            extra={"component": "connection_manager", "interval_seconds": 60},
+        )
 
         loop_iteration = 0
 
@@ -650,12 +647,12 @@ class ConnectionManager:
 
                 # Step 3: Perform health checks in parallel (slow, lock-free)
                 if connections_to_check:
+
                     async def check_one(cluster_id: int, pooled_conn: PooledConnection):
                         """Health check a single connection."""
                         try:
                             result = await asyncio.wait_for(
-                                pooled_conn.connection.run("true", check=False),
-                                timeout=5.0
+                                pooled_conn.connection.run("true", check=False), timeout=5.0
                             )
                             is_healthy = result.exit_status == 0
                             return (cluster_id, pooled_conn, is_healthy, None)
@@ -665,7 +662,7 @@ class ConnectionManager:
                     # Run all health checks in parallel
                     results = await asyncio.gather(
                         *[check_one(cid, pc) for cid, pc in connections_to_check],
-                        return_exceptions=True
+                        return_exceptions=True,
                     )
 
                     # Step 4: Update state based on results (fast, under lock)
@@ -690,9 +687,14 @@ class ConnectionManager:
                                 pooled_conn.health_check_failures += 1
                                 unhealthy_count += 1
                                 if error:
-                                    logger.warning(f"Health check failed for cluster {cluster_id}: {error}")
+                                    logger.warning(
+                                        f"Health check failed for cluster {cluster_id}: {error}"
+                                    )
 
-                                if pooled_conn.health_check_failures >= self.MAX_HEALTH_CHECK_FAILURES:
+                                if (
+                                    pooled_conn.health_check_failures
+                                    >= self.MAX_HEALTH_CHECK_FAILURES
+                                ):
                                     logger.warning(
                                         f"Removing unhealthy connection for cluster {cluster_id} "
                                         f"after {pooled_conn.health_check_failures} failures"
@@ -707,35 +709,45 @@ class ConnectionManager:
 
                     # Log iteration completion
                     elapsed = time.time() - start_time
-                    logger.debug("Health check iteration completed", extra={
-                        "iteration": loop_iteration,
-                        "elapsed_seconds": round(elapsed, 3),
-                        "connections_checked": len(connections_to_check),
-                        "stale_removed": len(connections_to_remove_stale),
-                        "healthy": healthy_count,
-                        "unhealthy": unhealthy_count,
-                        "unhealthy_removed": len(connections_to_remove_unhealthy)
-                    })
+                    logger.debug(
+                        "Health check iteration completed",
+                        extra={
+                            "iteration": loop_iteration,
+                            "elapsed_seconds": round(elapsed, 3),
+                            "connections_checked": len(connections_to_check),
+                            "stale_removed": len(connections_to_remove_stale),
+                            "healthy": healthy_count,
+                            "unhealthy": unhealthy_count,
+                            "unhealthy_removed": len(connections_to_remove_unhealthy),
+                        },
+                    )
                 else:
                     # No connections to check
                     elapsed = time.time() - start_time
-                    logger.debug("Health check iteration completed", extra={
-                        "iteration": loop_iteration,
-                        "elapsed_seconds": round(elapsed, 3),
-                        "connections_checked": 0,
-                        "stale_removed": len(connections_to_remove_stale)
-                    })
+                    logger.debug(
+                        "Health check iteration completed",
+                        extra={
+                            "iteration": loop_iteration,
+                            "elapsed_seconds": round(elapsed, 3),
+                            "connections_checked": 0,
+                            "stale_removed": len(connections_to_remove_stale),
+                        },
+                    )
 
             except asyncio.CancelledError:
                 logger.info("Health check loop stopped")
                 break
             except Exception as e:
                 elapsed = time.time() - start_time
-                logger.error("Health check loop error", extra={
-                    "iteration": loop_iteration,
-                    "elapsed_seconds": round(elapsed, 3),
-                    "error": str(e)
-                }, exc_info=True)
+                logger.error(
+                    "Health check loop error",
+                    extra={
+                        "iteration": loop_iteration,
+                        "elapsed_seconds": round(elapsed, 3),
+                        "error": str(e),
+                    },
+                    exc_info=True,
+                )
 
     async def _remove_connection(self, pooled_conn: PooledConnection) -> None:
         """Remove and close a connection from the pool."""

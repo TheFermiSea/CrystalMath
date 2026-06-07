@@ -23,7 +23,10 @@ from typing import Dict, List, Optional, Set, Tuple, Any
 import json
 
 from .database import Database
-from .dependency_utils import assert_acyclic, CircularDependencyError as DependencyUtilsCircularError
+from .dependency_utils import (
+    assert_acyclic,
+    CircularDependencyError as DependencyUtilsCircularError,
+)
 from .constants import JobStatus
 
 
@@ -32,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 class Priority(IntEnum):
     """Job priority levels (lower number = higher priority)."""
+
     CRITICAL = 0
     HIGH = 1
     NORMAL = 2
@@ -42,6 +46,7 @@ class Priority(IntEnum):
 @dataclass
 class QueuedJob:
     """Represents a job in the queue with scheduling metadata."""
+
     job_id: int
     priority: Priority
     enqueued_at: datetime
@@ -64,6 +69,7 @@ class QueuedJob:
 @dataclass
 class ClusterState:
     """Tracks the state of a cluster/runner."""
+
     cluster_id: int
     max_concurrent_jobs: int
     running_jobs: Set[int] = field(default_factory=set)
@@ -79,6 +85,7 @@ class ClusterState:
 @dataclass
 class SchedulerMetrics:
     """Metrics for monitoring scheduler performance."""
+
     total_jobs_scheduled: int = 0
     total_jobs_completed: int = 0
     total_jobs_failed: int = 0
@@ -92,16 +99,19 @@ class SchedulerMetrics:
 
 class QueueManagerError(Exception):
     """Base exception for queue manager errors."""
+
     pass
 
 
 class CircularDependencyError(QueueManagerError):
     """Raised when circular dependencies are detected."""
+
     pass
 
 
 class InvalidJobError(QueueManagerError):
     """Raised when a job is invalid or not found."""
+
     pass
 
 
@@ -138,7 +148,7 @@ class QueueManager:
         database: Database,
         default_max_concurrent: int = 4,
         scheduling_interval: float = 1.0,
-        enable_fair_share: bool = False
+        enable_fair_share: bool = False,
     ):
         """
         Initialize the queue manager.
@@ -165,8 +175,7 @@ class QueueManager:
         # Cluster state tracking
         self._clusters: Dict[int, ClusterState] = {}
         self._default_cluster = ClusterState(
-            cluster_id=0,
-            max_concurrent_jobs=default_max_concurrent
+            cluster_id=0, max_concurrent_jobs=default_max_concurrent
         )
 
         # Dependency graph (job_id -> set of dependent job_ids)
@@ -309,7 +318,7 @@ class QueueManager:
                     runner_type=runner_type,
                     cluster_id=cluster_id,
                     user_id=user_id,
-                    resource_requirements=resource_requirements
+                    resource_requirements=resource_requirements,
                 )
 
                 self._jobs[job_id] = queued_job
@@ -330,7 +339,7 @@ class QueueManager:
                 running_cursor = conn.execute(
                     f"SELECT id FROM jobs WHERE status = '{JobStatus.RUNNING}' AND id IN "
                     "(SELECT job_id FROM queue_state WHERE cluster_id = ?)",
-                    (cluster_id,)
+                    (cluster_id,),
                 )
                 running_jobs = {row[0] for row in running_cursor.fetchall()}
 
@@ -339,7 +348,7 @@ class QueueManager:
                     max_concurrent_jobs=max_concurrent,
                     running_jobs=running_jobs,
                     paused=paused,
-                    available_resources=available_resources
+                    available_resources=available_resources,
                 )
 
             # Restore metrics
@@ -354,12 +363,11 @@ class QueueManager:
                     average_wait_time_seconds=row[5],
                     jobs_per_hour=row[6],
                     failed_job_rate=row[7],
-                    last_updated=datetime.fromisoformat(row[8]) if row[8] else None
+                    last_updated=datetime.fromisoformat(row[8]) if row[8] else None,
                 )
 
         logger.info(
-            f"Restored queue state: {len(self._jobs)} queued jobs, "
-            f"{len(self._clusters)} clusters"
+            f"Restored queue state: {len(self._jobs)} queued jobs, {len(self._clusters)} clusters"
         )
 
     async def start(self) -> None:
@@ -403,7 +411,7 @@ class QueueManager:
         cluster_id: Optional[int] = None,
         user_id: Optional[str] = None,
         max_retries: int = 3,
-        resource_requirements: Optional[Dict[str, Any]] = None
+        resource_requirements: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Add a job to the queue.
@@ -443,7 +451,7 @@ class QueueManager:
                 runner_type=runner_type,
                 cluster_id=cluster_id,
                 user_id=user_id,
-                resource_requirements=resource_requirements or {}
+                resource_requirements=resource_requirements or {},
             )
 
             self._jobs[job_id] = queued_job
@@ -460,10 +468,7 @@ class QueueManager:
             # Persist queue state (non-blocking via thread)
             await self._run_db(self._persist_job_to_database, queued_job)
 
-            logger.info(
-                f"Enqueued job {job_id} with priority {priority} "
-                f"(dependencies: {deps})"
-            )
+            logger.info(f"Enqueued job {job_id} with priority {priority} (dependencies: {deps})")
 
     def _validate_dependencies(self, job_id: int, dependencies: Set[int]) -> None:
         """
@@ -482,9 +487,7 @@ class QueueManager:
         """
         # Check for self-dependency
         if job_id in dependencies:
-            raise CircularDependencyError(
-                f"Job {job_id} cannot depend on itself"
-            )
+            raise CircularDependencyError(f"Job {job_id} cannot depend on itself")
 
         # Check all dependencies exist (OPTIMIZATION: single batch query)
         # This is DB-specific validation that dependency_utils doesn't handle
@@ -681,11 +684,7 @@ class QueueManager:
 
         return True
 
-    def _resources_available(
-        self,
-        cluster: ClusterState,
-        requirements: Dict[str, Any]
-    ) -> bool:
+    def _resources_available(self, cluster: ClusterState, requirements: Dict[str, Any]) -> bool:
         """
         Check if cluster has sufficient resources for job.
 
@@ -750,8 +749,7 @@ class QueueManager:
 
         if cluster_id not in self._clusters:
             self._clusters[cluster_id] = ClusterState(
-                cluster_id=cluster_id,
-                max_concurrent_jobs=self.default_max_concurrent
+                cluster_id=cluster_id, max_concurrent_jobs=self.default_max_concurrent
             )
 
         return self._clusters[cluster_id]
@@ -806,9 +804,7 @@ class QueueManager:
             # Persist change (non-blocking via thread)
             await self._run_db(self._persist_job_to_database, queued_job)
 
-            logger.info(
-                f"Reordered job {job_id}: priority {old_priority} → {new_priority}"
-            )
+            logger.info(f"Reordered job {job_id}: priority {old_priority} → {new_priority}")
 
     async def cancel_job(self, job_id: int) -> bool:
         """
@@ -833,7 +829,9 @@ class QueueManager:
                 logger.warning(f"Cannot cancel job {job_id}: not found")
                 return False
 
-            current_status = job.get("status") if isinstance(job, dict) else getattr(job, "status", None)
+            current_status = (
+                job.get("status") if isinstance(job, dict) else getattr(job, "status", None)
+            )
 
             # Already in terminal state
             if current_status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
@@ -934,10 +932,7 @@ class QueueManager:
         """
         with self.db.connection() as conn:
             # Check if job was queued (might have retry metadata)
-            cursor = conn.execute(
-                "SELECT * FROM queue_state WHERE job_id = ?",
-                (job_id,)
-            )
+            cursor = conn.execute("SELECT * FROM queue_state WHERE job_id = ?", (job_id,))
             row = cursor.fetchone()
 
         if row:
@@ -968,7 +963,7 @@ class QueueManager:
                     runner_type=runner_type,
                     cluster_id=cluster_id,
                     user_id=user_id,
-                    resource_requirements=resource_requirements
+                    resource_requirements=resource_requirements,
                 )
 
                 # Re-add to internal queue
@@ -978,20 +973,16 @@ class QueueManager:
                 with self.db.connection() as conn:
                     conn.execute(
                         "UPDATE queue_state SET retry_count = ? WHERE job_id = ?",
-                        (retry_count, job_id)
+                        (retry_count, job_id),
                     )
                     conn.commit()
 
                 # Reset job status to QUEUED
                 await self._run_db(self.db.update_status, job_id, JobStatus.QUEUED)
 
-                logger.info(
-                    f"Retrying job {job_id} (attempt {retry_count}/{max_retries})"
-                )
+                logger.info(f"Retrying job {job_id} (attempt {retry_count}/{max_retries})")
             else:
-                logger.warning(
-                    f"Job {job_id} failed after {max_retries} retries, giving up"
-                )
+                logger.warning(f"Job {job_id} failed after {max_retries} retries, giving up")
                 # Mark as permanently failed (non-blocking via thread)
                 await self._run_db(self.db.update_status, job_id, JobStatus.FAILED)
 
@@ -1023,10 +1014,10 @@ class QueueManager:
 
         Thread-safe: All shared state access is properly synchronized.
         """
-        logger.info("Scheduler worker started", extra={
-            "component": "queue_manager",
-            "interval_seconds": self.scheduling_interval
-        })
+        logger.info(
+            "Scheduler worker started",
+            extra={"component": "queue_manager", "interval_seconds": self.scheduling_interval},
+        )
 
         loop_iteration = 0
 
@@ -1039,18 +1030,20 @@ class QueueManager:
                 schedulable = await self.schedule_jobs()
 
                 if schedulable:
-                    logger.debug("Scheduler found schedulable jobs", extra={
-                        "job_count": len(schedulable),
-                        "job_ids": schedulable[:10]  # Log first 10 to avoid spam
-                    })
+                    logger.debug(
+                        "Scheduler found schedulable jobs",
+                        extra={
+                            "job_count": len(schedulable),
+                            "job_ids": schedulable[:10],  # Log first 10 to avoid spam
+                        },
+                    )
 
                 # Update queue depth metrics (with lock)
                 total_queued = 0
                 async with self._lock:
                     for cluster_id, cluster in self._clusters.items():
                         queue_depth = sum(
-                            1 for job in self._jobs.values()
-                            if job.cluster_id == cluster_id
+                            1 for job in self._jobs.values() if job.cluster_id == cluster_id
                         )
                         self.metrics.queue_depth_by_cluster[cluster_id] = queue_depth
                         total_queued += queue_depth
@@ -1061,15 +1054,18 @@ class QueueManager:
 
                 # Log iteration completion
                 elapsed = time.time() - start_time
-                logger.debug("Scheduler iteration completed", extra={
-                    "iteration": loop_iteration,
-                    "elapsed_seconds": round(elapsed, 3),
-                    "total_queued": total_queued,
-                    "schedulable_count": len(schedulable),
-                    "total_jobs_scheduled": self.metrics.total_jobs_scheduled,
-                    "total_jobs_completed": self.metrics.total_jobs_completed,
-                    "total_jobs_failed": self.metrics.total_jobs_failed
-                })
+                logger.debug(
+                    "Scheduler iteration completed",
+                    extra={
+                        "iteration": loop_iteration,
+                        "elapsed_seconds": round(elapsed, 3),
+                        "total_queued": total_queued,
+                        "schedulable_count": len(schedulable),
+                        "total_jobs_scheduled": self.metrics.total_jobs_scheduled,
+                        "total_jobs_completed": self.metrics.total_jobs_completed,
+                        "total_jobs_failed": self.metrics.total_jobs_failed,
+                    },
+                )
 
                 # Sleep until next cycle (lock-free, don't hold during sleep)
                 await asyncio.sleep(self.scheduling_interval)
@@ -1079,11 +1075,15 @@ class QueueManager:
                 break
             except Exception as e:
                 elapsed = time.time() - start_time
-                logger.error("Scheduler worker error", extra={
-                    "iteration": loop_iteration,
-                    "elapsed_seconds": round(elapsed, 3),
-                    "error": str(e)
-                }, exc_info=True)
+                logger.error(
+                    "Scheduler worker error",
+                    extra={
+                        "iteration": loop_iteration,
+                        "elapsed_seconds": round(elapsed, 3),
+                        "error": str(e),
+                    },
+                    exc_info=True,
+                )
                 await asyncio.sleep(self.scheduling_interval)
 
     def _update_metrics(self) -> None:
@@ -1093,9 +1093,7 @@ class QueueManager:
         # Calculate failed job rate
         total_jobs = self.metrics.total_jobs_completed + self.metrics.total_jobs_failed
         if total_jobs > 0:
-            self.metrics.failed_job_rate = (
-                self.metrics.total_jobs_failed / total_jobs
-            )
+            self.metrics.failed_job_rate = self.metrics.total_jobs_failed / total_jobs
 
         # Calculate jobs per hour (simple moving average)
         # This would need more sophisticated tracking in production
@@ -1110,8 +1108,7 @@ class QueueManager:
             self.metrics.average_wait_time_seconds = wait_time_seconds
         else:
             self.metrics.average_wait_time_seconds = (
-                alpha * wait_time_seconds +
-                (1 - alpha) * self.metrics.average_wait_time_seconds
+                alpha * wait_time_seconds + (1 - alpha) * self.metrics.average_wait_time_seconds
             )
 
     def _persist_to_database(self) -> None:
@@ -1143,8 +1140,8 @@ class QueueManager:
                     self.metrics.average_wait_time_seconds,
                     self.metrics.jobs_per_hour,
                     self.metrics.failed_job_rate,
-                    self.metrics.last_updated.isoformat() if self.metrics.last_updated else None
-                )
+                    self.metrics.last_updated.isoformat() if self.metrics.last_updated else None,
+                ),
             )
             conn.commit()
 
@@ -1155,6 +1152,7 @@ class QueueManager:
             queued_job: Job to persist
             conn: Optional connection (if None, uses context manager)
         """
+
         def _execute(c):
             c.execute(
                 """
@@ -1173,8 +1171,8 @@ class QueueManager:
                     queued_job.runner_type,
                     queued_job.cluster_id,
                     queued_job.user_id,
-                    json.dumps(queued_job.resource_requirements)
-                )
+                    json.dumps(queued_job.resource_requirements),
+                ),
             )
 
         if conn:
@@ -1191,6 +1189,7 @@ class QueueManager:
             cluster: Cluster state to persist
             conn: Optional connection (if None, uses context manager)
         """
+
         def _execute(c):
             c.execute(
                 """
@@ -1202,8 +1201,8 @@ class QueueManager:
                     cluster.cluster_id,
                     cluster.max_concurrent_jobs,
                     1 if cluster.paused else 0,
-                    json.dumps(cluster.available_resources)
-                )
+                    json.dumps(cluster.available_resources),
+                ),
             )
 
         if conn:
@@ -1216,10 +1215,7 @@ class QueueManager:
     def _remove_job_from_database(self, job_id: int) -> None:
         """Remove job from queue_state table (after dequeue)."""
         with self.db.connection() as conn:
-            conn.execute(
-                "DELETE FROM queue_state WHERE job_id = ?",
-                (job_id,)
-            )
+            conn.execute("DELETE FROM queue_state WHERE job_id = ?", (job_id,))
             conn.commit()
 
     def get_queue_status(self, runner_type: Optional[str] = None) -> Dict[str, Any]:
@@ -1256,15 +1252,15 @@ class QueueManager:
                 "retried": self.metrics.total_jobs_retried,
                 "avg_wait_time_seconds": self.metrics.average_wait_time_seconds,
                 "jobs_per_hour": self.metrics.jobs_per_hour,
-                "failed_rate": self.metrics.failed_job_rate
+                "failed_rate": self.metrics.failed_job_rate,
             },
             "clusters": {
                 cid: {
                     "running": len(cluster.running_jobs),
                     "max_concurrent": cluster.max_concurrent_jobs,
                     "paused": cluster.paused,
-                    "capacity": cluster.can_accept_job
+                    "capacity": cluster.can_accept_job,
                 }
                 for cid, cluster in self._clusters.items()
-            }
+            },
         }

@@ -7,11 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 from textual.widgets import DataTable
 
-from src.tui.screens.batch_submission import (
-    BatchSubmissionScreen,
-    BatchJobConfig,
-    BatchJobsCreated
-)
+from src.tui.screens.batch_submission import BatchSubmissionScreen, BatchJobConfig, BatchJobsCreated
 from src.core.database import Database
 
 
@@ -37,10 +33,7 @@ def mock_database(tmp_path):
 def batch_screen(mock_database, temp_project_dir):
     """Create a BatchSubmissionScreen instance."""
     calculations_dir = temp_project_dir / "calculations"
-    screen = BatchSubmissionScreen(
-        database=mock_database,
-        calculations_dir=calculations_dir
-    )
+    screen = BatchSubmissionScreen(database=mock_database, calculations_dir=calculations_dir)
     return screen
 
 
@@ -61,7 +54,7 @@ def test_batch_job_config_creation():
         mpi_ranks=4,
         threads=8,
         partition="compute",
-        time_limit="12:00:00"
+        time_limit="12:00:00",
     )
 
     assert config.name == "test_job"
@@ -75,10 +68,7 @@ def test_batch_job_config_creation():
 
 def test_batch_job_config_defaults():
     """Test BatchJobConfig default values."""
-    config = BatchJobConfig(
-        name="test_job",
-        input_file=Path("/tmp/test.d12")
-    )
+    config = BatchJobConfig(name="test_job", input_file=Path("/tmp/test.d12"))
 
     assert config.cluster == "local"
     assert config.mpi_ranks == 1
@@ -100,7 +90,7 @@ def test_validate_batch_duplicate_names(batch_screen, tmp_path):
 
     batch_screen.job_configs = [
         BatchJobConfig(name="job1", input_file=input_file),
-        BatchJobConfig(name="job1", input_file=input_file)  # Duplicate
+        BatchJobConfig(name="job1", input_file=input_file),  # Duplicate
     ]
 
     errors = batch_screen._validate_batch()
@@ -113,9 +103,7 @@ def test_validate_batch_invalid_name(batch_screen, tmp_path):
     input_file = tmp_path / "test.d12"
     input_file.write_text("END\nEND\n")
 
-    batch_screen.job_configs = [
-        BatchJobConfig(name="job with spaces!", input_file=input_file)
-    ]
+    batch_screen.job_configs = [BatchJobConfig(name="job with spaces!", input_file=input_file)]
 
     errors = batch_screen._validate_batch()
     assert len(errors) > 0
@@ -129,7 +117,7 @@ def test_validate_batch_invalid_resources(batch_screen, tmp_path):
 
     batch_screen.job_configs = [
         BatchJobConfig(name="job1", input_file=input_file, mpi_ranks=0),  # Invalid
-        BatchJobConfig(name="job2", input_file=input_file, threads=-1)   # Invalid
+        BatchJobConfig(name="job2", input_file=input_file, threads=-1),  # Invalid
     ]
 
     errors = batch_screen._validate_batch()
@@ -144,18 +132,14 @@ def test_validate_batch_existing_job_name(batch_screen, tmp_path):
     work_dir = batch_screen.calculations_dir / "0001_existing_job"
     work_dir.mkdir()
     batch_screen.database.create_job(
-        name="existing_job",
-        work_dir=str(work_dir),
-        input_content="END\nEND\n"
+        name="existing_job", work_dir=str(work_dir), input_content="END\nEND\n"
     )
 
     # Try to create batch with same name
     input_file = tmp_path / "test.d12"
     input_file.write_text("END\nEND\n")
 
-    batch_screen.job_configs = [
-        BatchJobConfig(name="existing_job", input_file=input_file)
-    ]
+    batch_screen.job_configs = [BatchJobConfig(name="existing_job", input_file=input_file)]
 
     errors = batch_screen._validate_batch()
     assert len(errors) > 0
@@ -171,7 +155,7 @@ def test_validate_batch_valid_jobs(batch_screen, tmp_path):
 
     batch_screen.job_configs = [
         BatchJobConfig(name="job1", input_file=input_file1, mpi_ranks=4, threads=8),
-        BatchJobConfig(name="job2", input_file=input_file2, mpi_ranks=8, threads=4)
+        BatchJobConfig(name="job2", input_file=input_file2, mpi_ranks=8, threads=4),
     ]
 
     errors = batch_screen._validate_batch()
@@ -221,7 +205,7 @@ def test_batch_screen_compose(batch_screen):
     """Test that the batch screen composes without errors."""
     # This would require a full Textual app context
     # For now, we just verify the method exists and is callable
-    assert hasattr(batch_screen, 'compose')
+    assert hasattr(batch_screen, "compose")
     assert callable(batch_screen.compose)
 
 
@@ -237,10 +221,10 @@ def test_batch_screen_bindings(batch_screen):
 
 def test_batch_screen_actions(batch_screen):
     """Test that action methods exist."""
-    assert hasattr(batch_screen, 'action_add_job')
-    assert hasattr(batch_screen, 'action_delete_job')
-    assert hasattr(batch_screen, 'action_submit_all')
-    assert hasattr(batch_screen, 'action_cancel')
+    assert hasattr(batch_screen, "action_add_job")
+    assert hasattr(batch_screen, "action_delete_job")
+    assert hasattr(batch_screen, "action_submit_all")
+    assert hasattr(batch_screen, "action_cancel")
 
 
 @pytest.mark.asyncio
@@ -249,7 +233,7 @@ async def test_submit_jobs_worker_empty(batch_screen):
     # Should handle empty job list gracefully
     # This test would require mocking the UI components
     # For now, verify the method exists
-    assert hasattr(batch_screen, '_submit_jobs_worker')
+    assert hasattr(batch_screen, "_submit_jobs_worker")
 
 
 def test_update_job_count(batch_screen, tmp_path):
@@ -261,7 +245,7 @@ def test_update_job_count(batch_screen, tmp_path):
     batch_screen.job_configs = [
         BatchJobConfig(name="job1", input_file=input_file),
         BatchJobConfig(name="job2", input_file=input_file),
-        BatchJobConfig(name="job3", input_file=input_file)
+        BatchJobConfig(name="job3", input_file=input_file),
     ]
 
     # Verify count matches
@@ -273,25 +257,17 @@ def test_batch_submission_workflow_integration(mock_database, temp_project_dir, 
     # Create input files
     input_files = []
     for i in range(3):
-        input_file = tmp_path / f"job{i+1}.d12"
-        input_file.write_text(f"# Job {i+1}\nEND\nEND\n")
+        input_file = tmp_path / f"job{i + 1}.d12"
+        input_file.write_text(f"# Job {i + 1}\nEND\nEND\n")
         input_files.append(input_file)
 
     # Create batch screen
     calculations_dir = temp_project_dir / "calculations"
-    screen = BatchSubmissionScreen(
-        database=mock_database,
-        calculations_dir=calculations_dir
-    )
+    screen = BatchSubmissionScreen(database=mock_database, calculations_dir=calculations_dir)
 
     # Add jobs
     for i, input_file in enumerate(input_files):
-        config = BatchJobConfig(
-            name=f"job{i+1}",
-            input_file=input_file,
-            mpi_ranks=4,
-            threads=8
-        )
+        config = BatchJobConfig(name=f"job{i + 1}", input_file=input_file, mpi_ranks=4, threads=8)
         screen.job_configs.append(config)
 
     # Validate
@@ -316,7 +292,7 @@ def test_batch_submission_metadata(batch_screen, tmp_path):
         mpi_ranks=16,
         threads=2,
         partition="gpu",
-        time_limit="48:00:00"
+        time_limit="48:00:00",
     )
 
     assert config.cluster == "hpc"

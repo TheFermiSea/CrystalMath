@@ -115,13 +115,7 @@ def test_template_filtering_by_tags(template_dir):
 def test_parameter_validation():
     """Test parameter validation."""
     # Integer parameter with range
-    param_def = ParameterDefinition(
-        name="test_param",
-        type="integer",
-        min=1,
-        max=10,
-        required=True
-    )
+    param_def = ParameterDefinition(name="test_param", type="integer", min=1, max=10, required=True)
 
     # Valid value
     errors = param_def.validate(5)
@@ -141,10 +135,7 @@ def test_parameter_validation():
 def test_parameter_validation_select():
     """Test select parameter validation."""
     param_def = ParameterDefinition(
-        name="basis_set",
-        type="select",
-        options=["sto-3g", "6-31g", "6-311g"],
-        required=True
+        name="basis_set", type="select", options=["sto-3g", "6-31g", "6-311g"], required=True
     )
 
     # Valid value
@@ -170,10 +161,7 @@ def test_template_rendering(template_dir):
     assert "10" in rendered  # param2 default
 
     # Render with custom parameters
-    rendered = manager.render(template, {
-        "param1": "custom_value",
-        "param2": 50
-    })
+    rendered = manager.render(template, {"param1": "custom_value", "param2": 50})
     assert "custom_value" in rendered
     assert "50" in rendered
 
@@ -186,18 +174,12 @@ def test_template_rendering_with_conditionals(template_dir):
     assert template is not None
 
     # Render with optimization enabled
-    rendered = manager.render(template, {
-        "basis_set": "6-31g",
-        "use_optimization": True
-    })
+    rendered = manager.render(template, {"basis_set": "6-31g", "use_optimization": True})
     assert "6-31g" in rendered
     assert "OPTGEOM" in rendered
 
     # Render with optimization disabled
-    rendered = manager.render(template, {
-        "basis_set": "sto-3g",
-        "use_optimization": False
-    })
+    rendered = manager.render(template, {"basis_set": "sto-3g", "use_optimization": False})
     assert "sto-3g" in rendered
     assert "OPTGEOM" not in rendered
 
@@ -239,10 +221,13 @@ def test_template_validation_errors(template_dir):
 
     # Try to render with invalid parameters
     with pytest.raises(ValueError) as exc_info:
-        manager.render(template, {
-            "param1": "valid",
-            "param2": 200  # Out of range (max is 100)
-        })
+        manager.render(
+            template,
+            {
+                "param1": "valid",
+                "param2": 200,  # Out of range (max is 100)
+            },
+        )
 
     assert "validation failed" in str(exc_info.value).lower()
 
@@ -275,13 +260,9 @@ def test_template_save_and_load(template_dir):
         author="Test",
         tags=["test"],
         parameters={
-            "test_param": ParameterDefinition(
-                name="test_param",
-                type="string",
-                default="test"
-            )
+            "test_param": ParameterDefinition(name="test_param", type="string", default="test")
         },
-        input_template="Test {{ test_param }}"
+        input_template="Test {{ test_param }}",
     )
 
     # Save template - use relative path for security

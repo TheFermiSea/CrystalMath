@@ -22,7 +22,11 @@ from enum import Enum
 
 from .base import RemoteBaseRunner, JobResult, JobHandle, JobStatus, RunnerConfig
 from .exceptions import SLURMRunnerError
-from .slurm_templates import SLURMTemplateGenerator, SLURMTemplateParams, SLURMTemplateValidationError
+from .slurm_templates import (
+    SLURMTemplateGenerator,
+    SLURMTemplateParams,
+    SLURMTemplateValidationError,
+)
 from ..core.codes import DFTCode, get_code_config, get_parser, InvocationStyle
 from ..core.connection_manager import ConnectionManager
 
@@ -31,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 class SLURMJobState(Enum):
     """SLURM job states as reported by squeue."""
+
     PENDING = "PENDING"  # Job waiting in queue
     RUNNING = "RUNNING"  # Job is executing
     COMPLETED = "COMPLETED"  # Job finished successfully
@@ -45,6 +50,7 @@ class SLURMJobState(Enum):
 @dataclass
 class SLURMJobConfig:
     """Configuration for a SLURM job submission."""
+
     job_name: str
     nodes: int = 1
     ntasks: int = 1
@@ -70,16 +76,19 @@ class SLURMJobConfig:
 
 class SLURMSubmissionError(SLURMRunnerError):
     """Raised when SLURM job submission fails."""
+
     pass
 
 
 class SLURMStatusError(SLURMRunnerError):
     """Raised when SLURM status checking fails."""
+
     pass
 
 
 class SLURMValidationError(SLURMRunnerError):
     """Raised when SLURM input validation fails."""
+
     pass
 
 
@@ -116,7 +125,7 @@ class SLURMRunner(RemoteBaseRunner):
         dft_code: DFTCode = DFTCode.CRYSTAL,
         default_config: Optional[SLURMJobConfig] = None,
         poll_interval: int = 30,
-        remote_scratch_base: str = "/scratch/dft_jobs"
+        remote_scratch_base: str = "/scratch/dft_jobs",
     ):
         """
         Initialize the SLURM Runner.
@@ -138,8 +147,7 @@ class SLURMRunner(RemoteBaseRunner):
         )
 
         self.default_config = default_config or SLURMJobConfig(
-            job_name=f"{self.code_config.name}_job",
-            modules=[self.code_config.name]
+            job_name=f"{self.code_config.name}_job", modules=[self.code_config.name]
         )
         self.poll_interval = poll_interval
         self.remote_scratch_base = remote_scratch_base
@@ -166,12 +174,7 @@ class SLURMRunner(RemoteBaseRunner):
     # -------------------------------------------------------------------------
 
     async def submit_job(
-        self,
-        job_id: int,
-        input_file: Path,
-        work_dir: Path,
-        threads: Optional[int] = None,
-        **kwargs
+        self, job_id: int, input_file: Path, work_dir: Path, threads: Optional[int] = None, **kwargs
     ) -> JobHandle:
         """
         Submit a job to SLURM and return a job handle.
@@ -207,8 +210,7 @@ class SLURMRunner(RemoteBaseRunner):
 
             # Get or create SLURM config
             config: SLURMJobConfig = kwargs.get("config") or SLURMJobConfig(
-                job_name=f"{self.code_config.name}_job_{job_id}",
-                modules=[self.code_config.name]
+                job_name=f"{self.code_config.name}_job_{job_id}", modules=[self.code_config.name]
             )
 
             # Apply kwargs overrides
@@ -252,12 +254,13 @@ class SLURMRunner(RemoteBaseRunner):
                         # Upload any additional files (.gui, .f9, etc.)
                         for file_path in work_dir.glob("*"):
                             if file_path.is_file() and file_path.suffix in [".gui", ".f9", ".f20"]:
-                                await sftp.put(str(file_path), f"{remote_work_dir}/{file_path.name}")
+                                await sftp.put(
+                                    str(file_path), f"{remote_work_dir}/{file_path.name}"
+                                )
 
                     # Submit job
                     result = await conn.run(
-                        f"cd {shlex.quote(remote_work_dir)} && sbatch job.slurm",
-                        check=False
+                        f"cd {shlex.quote(remote_work_dir)} && sbatch job.slurm", check=False
                     )
 
                     if result.exit_status != 0:
@@ -275,14 +278,16 @@ class SLURMRunner(RemoteBaseRunner):
                     self._job_states[job_id] = SLURMJobState.PENDING
 
                     # Return handle in format: slurm:{cluster_id}:{slurm_job_id}:{remote_dir}
-                    job_handle = JobHandle(f"slurm:{self.cluster_id}:{slurm_job_id}:{remote_work_dir}")
+                    job_handle = JobHandle(
+                        f"slurm:{self.cluster_id}:{slurm_job_id}:{remote_work_dir}"
+                    )
 
                     logger.info(f"Submitted SLURM job {slurm_job_id} for job_id={job_id}")
 
                     # Spawn background task to monitor job and release slot when done
                     monitor_task = asyncio.create_task(
                         self._monitor_and_release_slot(job_handle),
-                        name=f"slot_monitor_{job_handle}"
+                        name=f"slot_monitor_{job_handle}",
                     )
                     self._slot_monitors[job_handle] = monitor_task
                     slot_acquired = False  # Monitor will release it
@@ -319,8 +324,12 @@ class SLURMRunner(RemoteBaseRunner):
                 try:
                     status = await self.get_status(job_handle)
                     consecutive_errors = 0  # Reset on success
-                    if status in (JobStatus.COMPLETED, JobStatus.FAILED,
-                                  JobStatus.CANCELLED, JobStatus.UNKNOWN):
+                    if status in (
+                        JobStatus.COMPLETED,
+                        JobStatus.FAILED,
+                        JobStatus.CANCELLED,
+                        JobStatus.UNKNOWN,
+                    ):
                         logger.debug(f"SLURM job {job_handle} reached terminal state: {status}")
                         break
                 except asyncio.CancelledError:
@@ -335,8 +344,7 @@ class SLURMRunner(RemoteBaseRunner):
                     )
                     if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                         logger.error(
-                            f"Max consecutive errors reached for {job_handle}, "
-                            f"assuming job failed"
+                            f"Max consecutive errors reached for {job_handle}, assuming job failed"
                         )
                         break
                 await asyncio.sleep(self.poll_interval)
@@ -476,7 +484,7 @@ class SLURMRunner(RemoteBaseRunner):
                     # Read new content from file
                     result = await conn.run(
                         f"tail -c +{last_size + 1} {shlex.quote(output_file)} 2>/dev/null",
-                        check=False
+                        check=False,
                     )
 
                     if result.stdout:
@@ -489,7 +497,7 @@ class SLURMRunner(RemoteBaseRunner):
                         # Read any remaining output
                         result = await conn.run(
                             f"tail -c +{last_size + 1} {shlex.quote(output_file)} 2>/dev/null",
-                            check=False
+                            check=False,
                         )
                         if result.stdout:
                             for line in result.stdout.splitlines():
@@ -503,10 +511,7 @@ class SLURMRunner(RemoteBaseRunner):
             raise SLURMRunnerError(f"Output streaming failed: {e}") from e
 
     async def retrieve_results(
-        self,
-        job_handle: JobHandle,
-        dest: Path,
-        cleanup: Optional[bool] = None
+        self, job_handle: JobHandle, dest: Path, cleanup: Optional[bool] = None
     ) -> None:
         """
         Retrieve all output files from a completed SLURM job.
@@ -578,7 +583,7 @@ class SLURMRunner(RemoteBaseRunner):
         job_id: int,
         work_dir: Path,
         threads: Optional[int] = None,
-        config: Optional[SLURMJobConfig] = None
+        config: Optional[SLURMJobConfig] = None,
     ) -> AsyncIterator[str]:
         """
         Submit a CRYSTAL job to SLURM and monitor until completion.
@@ -614,10 +619,7 @@ class SLURMRunner(RemoteBaseRunner):
 
         try:
             # Generate SLURM script
-            script_content = self._generate_slurm_script(
-                job_config,
-                remote_work_dir
-            )
+            script_content = self._generate_slurm_script(job_config, remote_work_dir)
 
             # Write script locally
             script_file = work_dir / "job.slurm"
@@ -653,14 +655,11 @@ class SLURMRunner(RemoteBaseRunner):
                 # Submit job
                 yield "Submitting job to SLURM..."
                 result = await conn.run(
-                    f"cd {shlex.quote(remote_work_dir)} && sbatch job.slurm",
-                    check=False
+                    f"cd {shlex.quote(remote_work_dir)} && sbatch job.slurm", check=False
                 )
 
                 if result.exit_status != 0:
-                    raise SLURMSubmissionError(
-                        f"sbatch failed: {result.stderr}"
-                    )
+                    raise SLURMSubmissionError(f"sbatch failed: {result.stderr}")
 
                 # Parse SLURM job ID from sbatch output
                 slurm_job_id = self._parse_job_id(result.stdout)
@@ -722,10 +721,11 @@ class SLURMRunner(RemoteBaseRunner):
             True if job was cancelled, False if not running or cancel failed
         """
         import warnings
+
         warnings.warn(
             "stop_job(job_id) is deprecated. Use cancel_job(job_handle) instead.",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
 
         slurm_job_id = self._slurm_job_ids.get(job_id)
@@ -742,9 +742,7 @@ class SLURMRunner(RemoteBaseRunner):
                     logger.info(f"Cancelled SLURM job {slurm_job_id}")
                     return True
                 else:
-                    logger.warning(
-                        f"scancel failed for {slurm_job_id}: {result.stderr}"
-                    )
+                    logger.warning(f"scancel failed for {slurm_job_id}: {result.stderr}")
                     return False
 
         except Exception as e:
@@ -796,7 +794,7 @@ class SLURMRunner(RemoteBaseRunner):
         self,
         user_only: bool = True,
         partition: Optional[str] = None,
-        states: Optional[List[str]] = None
+        states: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get SLURM queue status for the cluster.
@@ -840,11 +838,26 @@ class SLURMRunner(RemoteBaseRunner):
                 if states:
                     # Validate states against allowed SLURM job states
                     allowed_states = {
-                        "RUNNING", "PENDING", "COMPLETING", "COMPLETED",
-                        "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL",
-                        "PREEMPTED", "SUSPENDED", "CONFIGURING", "BOOT_FAIL",
-                        "DEADLINE", "OUT_OF_MEMORY", "REQUEUED", "RESIZING",
-                        "REVOKED", "SIGNALING", "SPECIAL_EXIT", "STAGE_OUT",
+                        "RUNNING",
+                        "PENDING",
+                        "COMPLETING",
+                        "COMPLETED",
+                        "FAILED",
+                        "CANCELLED",
+                        "TIMEOUT",
+                        "NODE_FAIL",
+                        "PREEMPTED",
+                        "SUSPENDED",
+                        "CONFIGURING",
+                        "BOOT_FAIL",
+                        "DEADLINE",
+                        "OUT_OF_MEMORY",
+                        "REQUEUED",
+                        "RESIZING",
+                        "REVOKED",
+                        "SIGNALING",
+                        "SPECIAL_EXIT",
+                        "STAGE_OUT",
                     }
                     valid_states = [s for s in states if s.upper() in allowed_states]
                     if valid_states:
@@ -858,6 +871,7 @@ class SLURMRunner(RemoteBaseRunner):
                 if result.exit_status == 0 and result.stdout.strip():
                     try:
                         import json
+
                         data = json.loads(result.stdout)
                         jobs = data.get("jobs", [])
                         return self._parse_squeue_json(jobs)
@@ -887,7 +901,11 @@ class SLURMRunner(RemoteBaseRunner):
             # Handle job_state which may be string or dict in different SLURM versions
             state = j.get("job_state", "UNKNOWN")
             if isinstance(state, dict):
-                state = state.get("current", ["UNKNOWN"])[0] if isinstance(state.get("current"), list) else str(state)
+                state = (
+                    state.get("current", ["UNKNOWN"])[0]
+                    if isinstance(state.get("current"), list)
+                    else str(state)
+                )
             elif isinstance(state, list):
                 state = state[0] if state else "UNKNOWN"
 
@@ -898,6 +916,7 @@ class SLURMRunner(RemoteBaseRunner):
 
             # Calculate elapsed time from start_time (Unix timestamp)
             import time as time_module
+
             start_time_obj = j.get("start_time", {})
             elapsed = 0
             if isinstance(start_time_obj, dict) and start_time_obj.get("set"):
@@ -923,22 +942,24 @@ class SLURMRunner(RemoteBaseRunner):
             else:
                 gres_str = ""
 
-            result.append({
-                "job_id": j.get("job_id"),
-                "name": str(j.get("name", ""))[:50],  # Truncate long names
-                "user": j.get("user_name", j.get("user", "")),
-                "state": str(state),
-                "state_reason": j.get("state_reason", ""),
-                "partition": j.get("partition", ""),
-                "nodes": node_count,
-                "node_list": j.get("nodes", ""),
-                "time_used": self._format_time(elapsed),
-                "time_limit": self._format_time(time_limit * 60),  # time_limit in minutes
-                "tres": tres_alloc,
-                "submit_time": j.get("submit_time", ""),
-                "start_time": j.get("start_time", ""),
-                "gpus": self._parse_gpu_count(tres_alloc) or self._parse_gpu_count(gres_str),
-            })
+            result.append(
+                {
+                    "job_id": j.get("job_id"),
+                    "name": str(j.get("name", ""))[:50],  # Truncate long names
+                    "user": j.get("user_name", j.get("user", "")),
+                    "state": str(state),
+                    "state_reason": j.get("state_reason", ""),
+                    "partition": j.get("partition", ""),
+                    "nodes": node_count,
+                    "node_list": j.get("nodes", ""),
+                    "time_used": self._format_time(elapsed),
+                    "time_limit": self._format_time(time_limit * 60),  # time_limit in minutes
+                    "tres": tres_alloc,
+                    "submit_time": j.get("submit_time", ""),
+                    "start_time": j.get("start_time", ""),
+                    "gpus": self._parse_gpu_count(tres_alloc) or self._parse_gpu_count(gres_str),
+                }
+            )
         return result
 
     def _parse_squeue_formatted(self, output: str) -> List[Dict[str, Any]]:
@@ -949,22 +970,24 @@ class SLURMRunner(RemoteBaseRunner):
                 continue
             parts = line.split("|")
             if len(parts) >= 10:
-                result.append({
-                    "job_id": int(parts[0]) if parts[0].isdigit() else parts[0],
-                    "name": parts[1][:50],
-                    "user": parts[2],
-                    "state": parts[3],
-                    "state_reason": parts[4] if parts[4] != "(null)" else "",
-                    "partition": parts[5],
-                    "nodes": int(parts[6]) if parts[6].isdigit() else 1,
-                    "node_list": parts[7],
-                    "time_used": parts[8],
-                    "time_limit": parts[9],
-                    "tres": "",  # Not available in compact format
-                    "submit_time": "",
-                    "start_time": "",
-                    "gpus": 0,
-                })
+                result.append(
+                    {
+                        "job_id": int(parts[0]) if parts[0].isdigit() else parts[0],
+                        "name": parts[1][:50],
+                        "user": parts[2],
+                        "state": parts[3],
+                        "state_reason": parts[4] if parts[4] != "(null)" else "",
+                        "partition": parts[5],
+                        "nodes": int(parts[6]) if parts[6].isdigit() else 1,
+                        "node_list": parts[7],
+                        "time_used": parts[8],
+                        "time_limit": parts[9],
+                        "tres": "",  # Not available in compact format
+                        "submit_time": "",
+                        "start_time": "",
+                        "gpus": 0,
+                    }
+                )
         return result
 
     @staticmethod
@@ -988,7 +1011,7 @@ class SLURMRunner(RemoteBaseRunner):
         if not tres_str:
             return 0
         # Match patterns like "gres/gpu=2" or "gres/gpu:v100s=1"
-        match = re.search(r'gres/gpu[^=]*=(\d+)', tres_str)
+        match = re.search(r"gres/gpu[^=]*=(\d+)", tres_str)
         return int(match.group(1)) if match else 0
 
     async def get_job_details(self, slurm_job_id: str) -> Optional[Dict[str, Any]]:
@@ -1007,13 +1030,13 @@ class SLURMRunner(RemoteBaseRunner):
             async with self.connection_manager.get_connection(self.cluster_id) as conn:
                 # Try JSON format first
                 result = await conn.run(
-                    f"scontrol show job {shlex.quote(slurm_job_id)} --json",
-                    check=False
+                    f"scontrol show job {shlex.quote(slurm_job_id)} --json", check=False
                 )
 
                 if result.exit_status == 0 and result.stdout.strip():
                     try:
                         import json
+
                         data = json.loads(result.stdout)
                         jobs = data.get("jobs", [])
                         if jobs:
@@ -1023,8 +1046,7 @@ class SLURMRunner(RemoteBaseRunner):
 
                 # Fallback to text format
                 result = await conn.run(
-                    f"scontrol show job {shlex.quote(slurm_job_id)}",
-                    check=False
+                    f"scontrol show job {shlex.quote(slurm_job_id)}", check=False
                 )
 
                 if result.exit_status == 0:
@@ -1072,10 +1094,7 @@ class SLURMRunner(RemoteBaseRunner):
         return expanded
 
     async def get_job_logs(
-        self,
-        slurm_job_id: str,
-        log_type: str = "stdout",
-        tail_lines: int = 100
+        self, slurm_job_id: str, log_type: str = "stdout", tail_lines: int = 100
     ) -> AsyncIterator[str]:
         """
         Stream job log output (stdout or stderr).
@@ -1115,7 +1134,9 @@ class SLURMRunner(RemoteBaseRunner):
                         parts = result.stdout.strip().split("|")
                         sacct_job_name = parts[2] if len(parts) >= 3 else job_name
                         if len(parts) >= 1 and parts[0] and parts[0] != "(null)":
-                            log_path = self._expand_slurm_path(parts[0], slurm_job_id, sacct_job_name)
+                            log_path = self._expand_slurm_path(
+                                parts[0], slurm_job_id, sacct_job_name
+                            )
                         elif len(parts) >= 2 and parts[1]:
                             # Use WorkDir to construct default path
                             work_dir = parts[1]
@@ -1126,7 +1147,9 @@ class SLURMRunner(RemoteBaseRunner):
                 if not log_path or log_path == "(null)" or log_path == "":
                     # Get user's home directory
                     home_result = await conn.run("echo $HOME", check=False)
-                    home_dir = home_result.stdout.strip() if home_result.exit_status == 0 else "/home"
+                    home_dir = (
+                        home_result.stdout.strip() if home_result.exit_status == 0 else "/home"
+                    )
                     ext = ".err" if log_type == "stderr" else ".out"
 
                     # Try common locations
@@ -1156,8 +1179,7 @@ class SLURMRunner(RemoteBaseRunner):
 
                 # Tail the log file
                 result = await conn.run(
-                    f"tail -n {tail_lines} {shlex.quote(log_path)}",
-                    check=False
+                    f"tail -n {tail_lines} {shlex.quote(log_path)}", check=False
                 )
 
                 if result.exit_status == 0:
@@ -1184,10 +1206,7 @@ class SLURMRunner(RemoteBaseRunner):
         """
         try:
             async with self.connection_manager.get_connection(self.cluster_id) as conn:
-                result = await conn.run(
-                    "sinfo -h -o '%P|%a|%D|%l'",
-                    check=False
-                )
+                result = await conn.run("sinfo -h -o '%P|%a|%D|%l'", check=False)
 
                 if result.exit_status != 0:
                     return []
@@ -1202,13 +1221,15 @@ class SLURMRunner(RemoteBaseRunner):
                         is_default = name.endswith("*")
                         if is_default:
                             name = name[:-1]
-                        partitions.append({
-                            "name": name,
-                            "state": parts[1],
-                            "nodes": int(parts[2]) if parts[2].isdigit() else 0,
-                            "timelimit": parts[3],
-                            "default": is_default,
-                        })
+                        partitions.append(
+                            {
+                                "name": name,
+                                "state": parts[1],
+                                "nodes": int(parts[2]) if parts[2].isdigit() else 0,
+                                "timelimit": parts[3],
+                                "default": is_default,
+                            }
+                        )
                 return partitions
 
         except Exception as e:
@@ -1230,10 +1251,7 @@ class SLURMRunner(RemoteBaseRunner):
         """
         try:
             async with self.connection_manager.get_connection(self.cluster_id) as conn:
-                result = await conn.run(
-                    f"scancel {shlex.quote(slurm_job_id)}",
-                    check=False
-                )
+                result = await conn.run(f"scancel {shlex.quote(slurm_job_id)}", check=False)
 
                 if result.exit_status == 0:
                     logger.info(f"Cancelled SLURM job {slurm_job_id}")
@@ -1412,8 +1430,7 @@ class SLURMRunner(RemoteBaseRunner):
         # SLURM time format: [DD-]HH:MM:SS or minutes
         if not re.match(r"^(\d+-)?(\d{1,2}:)?\d{1,2}:\d{2}$|^\d+$", time_limit):
             raise SLURMValidationError(
-                f"Invalid time limit '{time_limit}': "
-                "must be in format HH:MM:SS or [DD-]HH:MM:SS"
+                f"Invalid time limit '{time_limit}': must be in format HH:MM:SS or [DD-]HH:MM:SS"
             )
 
     @staticmethod
@@ -1504,11 +1521,7 @@ class SLURMRunner(RemoteBaseRunner):
         if config.cpus_per_task < 1:
             raise SLURMValidationError("CPUs per task must be at least 1")
 
-    def _generate_slurm_script(
-        self,
-        config: SLURMJobConfig,
-        work_dir: str
-    ) -> str:
+    def _generate_slurm_script(self, config: SLURMJobConfig, work_dir: str) -> str:
         """
         Generate a SLURM submission script using templates.
 
@@ -1567,11 +1580,7 @@ class SLURMRunner(RemoteBaseRunner):
             return match.group(1)
         return None
 
-    async def _monitor_job(
-        self,
-        job_id: int,
-        connection
-    ) -> AsyncIterator[str]:
+    async def _monitor_job(self, job_id: int, connection) -> AsyncIterator[str]:
         """
         Monitor SLURM job status until completion.
 
@@ -1611,7 +1620,7 @@ class SLURMRunner(RemoteBaseRunner):
                 SLURMJobState.CANCELLED,
                 SLURMJobState.TIMEOUT,
                 SLURMJobState.NODE_FAIL,
-                SLURMJobState.OUT_OF_MEMORY
+                SLURMJobState.OUT_OF_MEMORY,
             ]:
                 break
 
@@ -1623,9 +1632,7 @@ class SLURMRunner(RemoteBaseRunner):
             await asyncio.sleep(self.poll_interval)
 
     async def _check_status(
-        self,
-        connection,
-        slurm_job_id: str
+        self, connection, slurm_job_id: str
     ) -> Tuple[SLURMJobState, Optional[str]]:
         """
         Check SLURM job status using squeue.
@@ -1640,15 +1647,13 @@ class SLURMRunner(RemoteBaseRunner):
         try:
             # Query job status with state and reason
             result = await connection.run(
-                f"squeue -j {shlex.quote(slurm_job_id)} -h -o '%T|%r'",
-                check=False
+                f"squeue -j {shlex.quote(slurm_job_id)} -h -o '%T|%r'", check=False
             )
 
             if result.exit_status != 0 or not result.stdout.strip():
                 # Job not in queue - check if completed or failed
                 sacct_result = await connection.run(
-                    f"sacct -j {shlex.quote(slurm_job_id)} -n -o State -P | head -n1",
-                    check=False
+                    f"sacct -j {shlex.quote(slurm_job_id)} -n -o State -P | head -n1", check=False
                 )
 
                 if sacct_result.exit_status == 0 and sacct_result.stdout.strip():
@@ -1704,12 +1709,7 @@ class SLURMRunner(RemoteBaseRunner):
 
         return state_map.get(state_str, SLURMJobState.UNKNOWN)
 
-    async def _download_results(
-        self,
-        connection,
-        remote_dir: str,
-        local_dir: Path
-    ) -> None:
+    async def _download_results(self, connection, remote_dir: str, local_dir: Path) -> None:
         """
         Download result files from remote directory.
 
@@ -1732,15 +1732,15 @@ class SLURMRunner(RemoteBaseRunner):
                     "slurm-*.out",
                     "slurm-*.err",
                     "*.xyz",
-                    "*.cif"
+                    "*.cif",
                 ]
 
                 import fnmatch
+
                 for remote_file in remote_files:
                     # Check if file matches any pattern using proper glob matching
                     should_download = any(
-                        fnmatch.fnmatch(remote_file, pattern)
-                        for pattern in download_patterns
+                        fnmatch.fnmatch(remote_file, pattern) for pattern in download_patterns
                     )
 
                     if should_download:

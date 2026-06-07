@@ -1,5 +1,9 @@
 # ADR-005: Unified Configuration Across CLI and Python Core
 
+> **⚠️ Superseded-on-acceptance by [ADR-015](adr-015-unified-config-pydantic-settings.md).**
+> ADR-015 replaces this hand-rolled TOML/dataclass design with a single `pydantic-settings`
+> resolver in the Python core. Retained for context; do not implement it as written.
+
 **Status:** Proposed
 **Date:** 2026-01-06
 **Deciders:** Project maintainers

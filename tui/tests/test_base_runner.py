@@ -270,7 +270,7 @@ def test_connection_error_attributes():
     error = ConnectionError(
         "Failed to connect",
         host="cluster.example.com",
-        details="Connection timed out after 30 seconds"
+        details="Connection timed out after 30 seconds",
     )
 
     assert str(error) == "Failed to connect"
@@ -284,7 +284,7 @@ def test_execution_error_attributes():
         "Job execution failed",
         job_handle="slurm_12345",
         exit_code=1,
-        stderr_output="Error: Invalid input file"
+        stderr_output="Error: Invalid input file",
     )
 
     assert str(error) == "Job execution failed"
@@ -295,11 +295,7 @@ def test_execution_error_attributes():
 
 def test_timeout_error_attributes():
     """Test TimeoutError with attributes."""
-    error = TimeoutError(
-        "Operation timed out",
-        timeout_seconds=300.0,
-        operation="job_submission"
-    )
+    error = TimeoutError("Operation timed out", timeout_seconds=300.0, operation="job_submission")
 
     assert str(error) == "Operation timed out"
     assert error.timeout_seconds == 300.0
@@ -414,11 +410,7 @@ async def test_baserunner_wait_for_completion(concrete_runner, temp_dir):
     asyncio.create_task(change_status())
 
     # Wait for completion
-    final_status = await concrete_runner.wait_for_completion(
-        handle,
-        poll_interval=0.1,
-        timeout=2.0
-    )
+    final_status = await concrete_runner.wait_for_completion(handle, poll_interval=0.1, timeout=2.0)
 
     assert final_status == JobStatus.COMPLETED
 
@@ -435,11 +427,7 @@ async def test_baserunner_wait_for_completion_timeout(concrete_runner, temp_dir)
 
     # Job stays running, should timeout
     with pytest.raises(TimeoutError) as exc_info:
-        await concrete_runner.wait_for_completion(
-            handle,
-            poll_interval=0.1,
-            timeout=0.3
-        )
+        await concrete_runner.wait_for_completion(handle, poll_interval=0.1, timeout=0.3)
 
     assert "did not complete within 0.3 seconds" in str(exc_info.value)
     assert exc_info.value.timeout_seconds == 0.3

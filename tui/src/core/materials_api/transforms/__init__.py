@@ -17,6 +17,7 @@ Example:
     ...     functional="PBE",
     ... )
 """
+
 from __future__ import annotations
 
 from .crystal_d12 import (

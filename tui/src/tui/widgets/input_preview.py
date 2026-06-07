@@ -30,34 +30,86 @@ class InputPreview(Static):
     # CRYSTAL keywords for syntax highlighting
     KEYWORDS = {
         # Main structure keywords
-        "CRYSTAL", "SLAB", "POLYMER", "MOLECULE", "EXTERNAL", "HELIX",
-        "SUPERCEL", "NANOTUBE", "CLUSTER", "ENDG", "ENDBS", "END",
-
+        "CRYSTAL",
+        "SLAB",
+        "POLYMER",
+        "MOLECULE",
+        "EXTERNAL",
+        "HELIX",
+        "SUPERCEL",
+        "NANOTUBE",
+        "CLUSTER",
+        "ENDG",
+        "ENDBS",
+        "END",
         # Basis set keywords
-        "BASIS", "BASISSET", "BS", "ATOMSYMM", "GHOSTS",
-
+        "BASIS",
+        "BASISSET",
+        "BS",
+        "ATOMSYMM",
+        "GHOSTS",
         # Hamiltonian keywords
-        "HAMILTONIAN", "UHF", "ROHF", "RHF", "DFT", "B3LYP", "PBE", "PBE0",
-        "HSE06", "M06", "EXCHSIZE", "CORRELAT", "HYBRID", "MIXING",
-
+        "HAMILTONIAN",
+        "UHF",
+        "ROHF",
+        "RHF",
+        "DFT",
+        "B3LYP",
+        "PBE",
+        "PBE0",
+        "HSE06",
+        "M06",
+        "EXCHSIZE",
+        "CORRELAT",
+        "HYBRID",
+        "MIXING",
         # SCF keywords
-        "TOLINTEG", "TOLDEE", "TOLPSEUD", "SHRINK", "FMIXING", "BROYDEN",
-        "ANDERSON", "DIIS", "MAXCYCLE", "LEVSHIFT", "SPINLOCK", "SMEAR",
-        "BIPOSIZE", "EXCHPERM", "NOBIPOLA", "ATOMSPIN",
-
+        "TOLINTEG",
+        "TOLDEE",
+        "TOLPSEUD",
+        "SHRINK",
+        "FMIXING",
+        "BROYDEN",
+        "ANDERSON",
+        "DIIS",
+        "MAXCYCLE",
+        "LEVSHIFT",
+        "SPINLOCK",
+        "SMEAR",
+        "BIPOSIZE",
+        "EXCHPERM",
+        "NOBIPOLA",
+        "ATOMSPIN",
         # Geometry optimization
-        "OPTGEOM", "FULLOPTG", "CELLONLY", "ITATOCEL", "MAXCYCLE",
-        "TOLDEG", "TOLDEX", "FRAGMENT", "FREQCALC", "RESTART",
-
+        "OPTGEOM",
+        "FULLOPTG",
+        "CELLONLY",
+        "ITATOCEL",
+        "MAXCYCLE",
+        "TOLDEG",
+        "TOLDEX",
+        "FRAGMENT",
+        "FREQCALC",
+        "RESTART",
         # Elastic constants
-        "ELASTCON", "ELASFITR", "ELASFITN",
-
+        "ELASTCON",
+        "ELASFITR",
+        "ELASFITN",
         # Properties
-        "NEWK", "BAND", "DOSS", "COORPRT", "MULPOPAN", "PPAN",
-
+        "NEWK",
+        "BAND",
+        "DOSS",
+        "COORPRT",
+        "MULPOPAN",
+        "PPAN",
         # Other
-        "GUESSP", "GUESSF", "ECP", "MODISYMM", "INTGPACK",
-        "COMPRESS", "SUPERCELL"
+        "GUESSP",
+        "GUESSF",
+        "ECP",
+        "MODISYMM",
+        "INTGPACK",
+        "COMPRESS",
+        "SUPERCELL",
     }
 
     def __init__(
@@ -76,9 +128,7 @@ class InputPreview(Static):
         """Render the input file with syntax highlighting."""
         if not self._content:
             return Panel(
-                "[dim]No input file selected[/dim]",
-                title="Input Preview",
-                border_style="dim"
+                "[dim]No input file selected[/dim]", title="Input Preview", border_style="dim"
             )
 
         # Create metadata table if we have file info
@@ -94,17 +144,12 @@ class InputPreview(Static):
         if metadata:
             # Combine metadata and content
             from rich.console import Group
+
             content_panel = Panel(
-                Group(metadata, "", highlighted),
-                title="Input File Preview",
-                border_style="cyan"
+                Group(metadata, "", highlighted), title="Input File Preview", border_style="cyan"
             )
         else:
-            content_panel = Panel(
-                highlighted,
-                title="Input File Preview",
-                border_style="cyan"
-            )
+            content_panel = Panel(highlighted, title="Input File Preview", border_style="cyan")
 
         return content_panel
 
@@ -117,7 +162,7 @@ class InputPreview(Static):
     def display_input(self, job_name: str, input_file: Path) -> None:
         """Display input file for a specific job."""
         if input_file.exists():
-            with open(input_file, 'r') as f:
+            with open(input_file, "r") as f:
                 content = f.read()
             self._content = content
             self._file_path = input_file

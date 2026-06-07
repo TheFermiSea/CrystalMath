@@ -34,11 +34,7 @@ def temp_db(tmp_path):
 @pytest_asyncio.fixture
 async def queue_manager(temp_db):
     """Create a queue manager instance."""
-    qm = QueueManager(
-        database=temp_db,
-        default_max_concurrent=10,
-        scheduling_interval=0.1
-    )
+    qm = QueueManager(database=temp_db, default_max_concurrent=10, scheduling_interval=0.1)
     await qm.start()
     yield qm
     await qm.stop()
@@ -51,19 +47,13 @@ async def test_concurrent_enqueue_no_race(queue_manager, temp_db):
     job_ids = []
     for i in range(20):
         job_id = temp_db.create_job(
-            name=f"test_job_{i}",
-            input_content=f"input {i}",
-            work_dir=str(Path(f"/tmp/job_{i}"))
+            name=f"test_job_{i}", input_content=f"input {i}", work_dir=str(Path(f"/tmp/job_{i}"))
         )
         job_ids.append(job_id)
 
     # Enqueue all jobs concurrently
     tasks = [
-        queue_manager.enqueue(
-            job_id=job_id,
-            priority=Priority.NORMAL,
-            runner_type="local"
-        )
+        queue_manager.enqueue(job_id=job_id, priority=Priority.NORMAL, runner_type="local")
         for job_id in job_ids
     ]
 
@@ -84,9 +74,7 @@ async def test_concurrent_schedule_no_double_scheduling(queue_manager, temp_db):
     job_ids = []
     for i in range(10):
         job_id = temp_db.create_job(
-            name=f"test_job_{i}",
-            input_content=f"input {i}",
-            work_dir=str(Path(f"/tmp/job_{i}"))
+            name=f"test_job_{i}", input_content=f"input {i}", work_dir=str(Path(f"/tmp/job_{i}"))
         )
         job_ids.append(job_id)
         await queue_manager.enqueue(job_id=job_id, priority=Priority.NORMAL)
@@ -113,9 +101,7 @@ async def test_concurrent_dequeue_no_double_dequeue(queue_manager, temp_db):
     job_ids = []
     for i in range(5):
         job_id = temp_db.create_job(
-            name=f"test_job_{i}",
-            input_content=f"input {i}",
-            work_dir=str(Path(f"/tmp/job_{i}"))
+            name=f"test_job_{i}", input_content=f"input {i}", work_dir=str(Path(f"/tmp/job_{i}"))
         )
         job_ids.append(job_id)
         await queue_manager.enqueue(job_id=job_id, priority=Priority.NORMAL)
@@ -143,9 +129,7 @@ async def test_concurrent_status_updates_no_lost_updates(queue_manager, temp_db)
     """Test that concurrent status updates don't cause lost updates."""
     # Create a test job
     job_id = temp_db.create_job(
-        name="test_job",
-        input_content="input",
-        work_dir=str(Path("/tmp/job"))
+        name="test_job", input_content="input", work_dir=str(Path("/tmp/job"))
     )
     await queue_manager.enqueue(job_id=job_id, priority=Priority.NORMAL)
 
@@ -155,10 +139,7 @@ async def test_concurrent_status_updates_no_lost_updates(queue_manager, temp_db)
 
     # Simulate concurrent completion handlers
     # (only one should succeed, but no race condition should occur)
-    completion_tasks = [
-        queue_manager.handle_job_completion(job_id, success=True)
-        for _ in range(5)
-    ]
+    completion_tasks = [queue_manager.handle_job_completion(job_id, success=True) for _ in range(5)]
 
     # Should not raise any exceptions
     await asyncio.gather(*completion_tasks)
@@ -208,17 +189,12 @@ async def test_scheduler_worker_concurrent_with_enqueue(queue_manager, temp_db):
     job_ids = []
     for i in range(20):
         job_id = temp_db.create_job(
-            name=f"test_job_{i}",
-            input_content=f"input {i}",
-            work_dir=str(Path(f"/tmp/job_{i}"))
+            name=f"test_job_{i}", input_content=f"input {i}", work_dir=str(Path(f"/tmp/job_{i}"))
         )
         job_ids.append(job_id)
 
     # Enqueue concurrently while scheduler is running
-    tasks = [
-        queue_manager.enqueue(job_id=job_id, priority=Priority.NORMAL)
-        for job_id in job_ids
-    ]
+    tasks = [queue_manager.enqueue(job_id=job_id, priority=Priority.NORMAL) for job_id in job_ids]
     await asyncio.gather(*tasks)
 
     # Wait for a few scheduler cycles
@@ -236,9 +212,7 @@ async def test_concurrent_priority_changes_no_corruption(queue_manager, temp_db)
     job_ids = []
     for i in range(10):
         job_id = temp_db.create_job(
-            name=f"test_job_{i}",
-            input_content=f"input {i}",
-            work_dir=str(Path(f"/tmp/job_{i}"))
+            name=f"test_job_{i}", input_content=f"input {i}", work_dir=str(Path(f"/tmp/job_{i}"))
         )
         job_ids.append(job_id)
         await queue_manager.enqueue(job_id=job_id, priority=Priority.NORMAL)
@@ -266,15 +240,9 @@ async def test_concurrent_pause_resume_no_deadlock(queue_manager, temp_db):
     cluster_id = 1
     for i in range(5):
         job_id = temp_db.create_job(
-            name=f"test_job_{i}",
-            input_content=f"input {i}",
-            work_dir=str(Path(f"/tmp/job_{i}"))
+            name=f"test_job_{i}", input_content=f"input {i}", work_dir=str(Path(f"/tmp/job_{i}"))
         )
-        await queue_manager.enqueue(
-            job_id=job_id,
-            cluster_id=cluster_id,
-            priority=Priority.NORMAL
-        )
+        await queue_manager.enqueue(job_id=job_id, cluster_id=cluster_id, priority=Priority.NORMAL)
 
     # Pause and resume concurrently
     tasks = []
@@ -297,9 +265,7 @@ async def test_stress_test_concurrent_operations(queue_manager, temp_db):
     job_ids = []
     for i in range(50):
         job_id = temp_db.create_job(
-            name=f"test_job_{i}",
-            input_content=f"input {i}",
-            work_dir=str(Path(f"/tmp/job_{i}"))
+            name=f"test_job_{i}", input_content=f"input {i}", work_dir=str(Path(f"/tmp/job_{i}"))
         )
         job_ids.append(job_id)
 
@@ -335,9 +301,7 @@ async def test_stress_test_concurrent_operations(queue_manager, temp_db):
 async def test_validation_no_self_dependency_race(queue_manager, temp_db):
     """Test that dependency validation is atomic (no self-dependency accepted)."""
     job_id = temp_db.create_job(
-        name="test_job",
-        input_content="input",
-        work_dir=str(Path("/tmp/job"))
+        name="test_job", input_content="input", work_dir=str(Path("/tmp/job"))
     )
 
     # Try to create self-dependency
@@ -345,7 +309,7 @@ async def test_validation_no_self_dependency_race(queue_manager, temp_db):
         await queue_manager.enqueue(
             job_id=job_id,
             dependencies=[job_id],  # Self-dependency
-            priority=Priority.NORMAL
+            priority=Priority.NORMAL,
         )
 
     # Job should not be in queue

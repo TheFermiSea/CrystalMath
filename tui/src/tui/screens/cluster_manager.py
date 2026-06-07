@@ -194,7 +194,9 @@ class ClusterManagerScreen(Screen):
                 yield DataTable(id="cluster_table")
                 with Horizontal(id="cluster_actions"):
                     yield Button("New Cluster", id="new_cluster_btn", variant="primary")
-                    yield Button("View Queue", id="view_queue_btn", variant="default", disabled=True)
+                    yield Button(
+                        "View Queue", id="view_queue_btn", variant="default", disabled=True
+                    )
 
             # Configuration form
             yield Static("## Cluster Configuration", classes="section-header")
@@ -433,18 +435,24 @@ class ClusterManagerScreen(Screen):
             async with self.connection_manager.get_connection(temp_cluster_id) as conn:
                 # Run a simple command to verify
                 result = await conn.run("hostname && uname -a", check=True)
-                remote_hostname = result.stdout.strip().split('\n')[0]
+                remote_hostname = result.stdout.strip().split("\n")[0]
 
                 status.update(f"✅ Connection successful! Remote host: {remote_hostname}")
 
                 # Test DFT software availability
                 executable_path = self.query_one("#executable_path", Input).value
                 if executable_path:
-                    test_result = await conn.run(f"test -x {executable_path} && echo OK || echo NOT_FOUND")
+                    test_result = await conn.run(
+                        f"test -x {executable_path} && echo OK || echo NOT_FOUND"
+                    )
                     if "OK" in test_result.stdout:
-                        status.update(f"✅ Connection successful! DFT executable found at {executable_path}")
+                        status.update(
+                            f"✅ Connection successful! DFT executable found at {executable_path}"
+                        )
                     else:
-                        status.update(f"⚠️ Connection successful, but executable not found at {executable_path}")
+                        status.update(
+                            f"⚠️ Connection successful, but executable not found at {executable_path}"
+                        )
 
         except Exception as e:
             logger.exception("Connection test failed")
@@ -602,9 +610,7 @@ class ClusterManagerScreen(Screen):
             # Push queue screen
             self.app.push_screen(
                 SLURMQueueScreen(
-                    db=self.db,
-                    connection_manager=self.connection_manager,
-                    cluster_id=cluster.id
+                    db=self.db, connection_manager=self.connection_manager, cluster_id=cluster.id
                 )
             )
         except Exception as e:

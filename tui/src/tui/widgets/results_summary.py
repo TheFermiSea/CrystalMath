@@ -228,7 +228,9 @@ class ResultsSummary(Static):
                     for i, part in enumerate(parts):
                         try:
                             # Look for negative or positive number with decimal
-                            if ("." in part or "E" in part.upper() or "e" in part) and part[0] in "-+0123456789":
+                            if ("." in part or "E" in part.upper() or "e" in part) and part[
+                                0
+                            ] in "-+0123456789":
                                 energy = float(part)
                                 results["final_energy"] = energy
                                 break
@@ -348,10 +350,7 @@ class ResultsSummary(Static):
             if is_converged is not None:
                 conv_str = "CONVERGED" if is_converged else "NOT CONVERGED"
                 conv_style = "green" if is_converged else "red"
-                results_table.add_row(
-                    "Convergence",
-                    Text(conv_str, style=conv_style)
-                )
+                results_table.add_row("Convergence", Text(conv_str, style=conv_style))
         elif key_results and "convergence" in key_results:
             results_table.add_row("Convergence", key_results["convergence"])
 
@@ -561,6 +560,4 @@ class ResultsSummary(Static):
             )
 
         except Exception as e:
-            self.app.post_message_no_wait(
-                self.app.notify(f"Export failed: {e}", severity="error")
-            )
+            self.app.post_message_no_wait(self.app.notify(f"Export failed: {e}", severity="error"))

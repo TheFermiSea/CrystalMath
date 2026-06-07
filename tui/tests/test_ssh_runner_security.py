@@ -263,17 +263,13 @@ class TestExecutionScriptGeneration:
 
         # Valid positive integer
         script = runner._generate_execution_script(
-            remote_work_dir=PurePosixPath("/tmp/job"),
-            input_file="input.d12",
-            mpi_ranks=4
+            remote_work_dir=PurePosixPath("/tmp/job"), input_file="input.d12", mpi_ranks=4
         )
         assert "mpirun -np 4" in script
 
         # Valid single rank should use serial executable
         script = runner._generate_execution_script(
-            remote_work_dir=PurePosixPath("/tmp/job"),
-            input_file="input.d12",
-            mpi_ranks=1
+            remote_work_dir=PurePosixPath("/tmp/job"), input_file="input.d12", mpi_ranks=1
         )
         assert "crystalOMP" in script
         assert "mpirun" not in script
@@ -283,16 +279,13 @@ class TestExecutionScriptGeneration:
         runner = SSHRunner(mock_connection_manager, cluster_id=1)
 
         script = runner._generate_execution_script(
-            remote_work_dir=PurePosixPath("/tmp/job"),
-            input_file="input.d12",
-            threads=8
+            remote_work_dir=PurePosixPath("/tmp/job"), input_file="input.d12", threads=8
         )
         assert "OMP_NUM_THREADS=8" in script
 
         # Default to 4 if not specified
         script = runner._generate_execution_script(
-            remote_work_dir=PurePosixPath("/tmp/job"),
-            input_file="input.d12"
+            remote_work_dir=PurePosixPath("/tmp/job"), input_file="input.d12"
         )
         assert "OMP_NUM_THREADS=4" in script
 
@@ -367,11 +360,12 @@ class TestInputValidation:
 
         with pytest.raises(FileNotFoundError):
             import asyncio
+
             asyncio.run(
                 runner.submit_job(
                     job_id=1,
                     work_dir=Path("/nonexistent"),
-                    input_file=Path("/nonexistent/input.d12")
+                    input_file=Path("/nonexistent/input.d12"),
                 )
             )
 
@@ -385,7 +379,7 @@ class TestInputValidation:
             "job_id": 1,
             "pid": 5678,
             "remote_work_dir": "/tmp/safe/path",
-            "status": "running"
+            "status": "running",
         }
 
         # Verify we can retrieve it
@@ -468,7 +462,7 @@ class TestParameterValidation:
                     remote_work_dir=PurePosixPath("/tmp/test"),
                     input_file="test.d12",
                     threads=4,
-                    mpi_ranks=invalid_value
+                    mpi_ranks=invalid_value,
                 )
 
     def test_valid_mpi_ranks_accepted(self, mock_connection_manager):
@@ -482,7 +476,7 @@ class TestParameterValidation:
                 remote_work_dir=PurePosixPath("/tmp/test"),
                 input_file="test.d12",
                 threads=4,
-                mpi_ranks=valid_value
+                mpi_ranks=valid_value,
             )
             assert script is not None
             if valid_value > 1:
@@ -508,7 +502,7 @@ class TestParameterValidation:
                     remote_work_dir=PurePosixPath("/tmp/test"),
                     input_file="test.d12",
                     threads=invalid_value,
-                    mpi_ranks=None
+                    mpi_ranks=None,
                 )
 
     def test_valid_threads_accepted(self, mock_connection_manager):
@@ -522,7 +516,7 @@ class TestParameterValidation:
                 remote_work_dir=PurePosixPath("/tmp/test"),
                 input_file="test.d12",
                 threads=valid_value,
-                mpi_ranks=None
+                mpi_ranks=None,
             )
             assert f"OMP_NUM_THREADS={valid_value}" in script
 
@@ -561,6 +555,7 @@ class TestDownloadPathTraversal:
         class SftpContext:
             async def __aenter__(self):
                 return mock_sftp
+
             async def __aexit__(self, *args):
                 pass
 
@@ -573,11 +568,7 @@ class TestDownloadPathTraversal:
         local_dir = tmp_path / "downloads"
         local_dir.mkdir()
 
-        await runner._download_files(
-            conn=mock_conn,
-            remote_dir="/tmp/test",
-            local_dir=local_dir
-        )
+        await runner._download_files(conn=mock_conn, remote_dir="/tmp/test", local_dir=local_dir)
 
         # Verify that malicious filenames were NOT downloaded
         # (mock_sftp.get should not have been called for any of them)
@@ -611,6 +602,7 @@ class TestDownloadPathTraversal:
         class SftpContext:
             async def __aenter__(self):
                 return mock_sftp
+
             async def __aexit__(self, *args):
                 pass
 
@@ -623,11 +615,7 @@ class TestDownloadPathTraversal:
         local_dir = tmp_path / "downloads"
         local_dir.mkdir()
 
-        await runner._download_files(
-            conn=mock_conn,
-            remote_dir="/tmp/test",
-            local_dir=local_dir
-        )
+        await runner._download_files(conn=mock_conn, remote_dir="/tmp/test", local_dir=local_dir)
 
         # Verify that valid files were downloaded
         assert mock_sftp.get.called

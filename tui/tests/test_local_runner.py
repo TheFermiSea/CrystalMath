@@ -81,9 +81,10 @@ class TestExecutableResolution:
         """Test resolution from CRY23_EXEDIR environment variable."""
         # Mock get_crystal_config to fail so we fall through to env var resolution
         from src.core.environment import EnvironmentError as CrystalEnvError
+
         monkeypatch.setattr(
             "src.runners.local.get_crystal_config",
-            lambda: (_ for _ in ()).throw(CrystalEnvError("test"))
+            lambda: (_ for _ in ()).throw(CrystalEnvError("test")),
         )
         monkeypatch.delenv("CRY23_ROOT", raising=False)
         monkeypatch.setenv("CRY23_EXEDIR", str(temp_work_dir))
@@ -94,9 +95,10 @@ class TestExecutableResolution:
         """Test error when no executable can be found."""
         # Mock get_crystal_config to fail
         from src.core.environment import EnvironmentError as CrystalEnvError
+
         monkeypatch.setattr(
             "src.runners.local.get_crystal_config",
-            lambda: (_ for _ in ()).throw(CrystalEnvError("test"))
+            lambda: (_ for _ in ()).throw(CrystalEnvError("test")),
         )
         monkeypatch.delenv("CRY23_EXEDIR", raising=False)
         monkeypatch.delenv("CRY23_ROOT", raising=False)
@@ -252,7 +254,9 @@ exit 1
 class TestProcessManagement:
     """Tests for managing running processes."""
 
-    @pytest.mark.skip(reason="Flaky in full suite due to process cleanup timing - passes individually")
+    @pytest.mark.skip(
+        reason="Flaky in full suite due to process cleanup timing - passes individually"
+    )
     @pytest.mark.asyncio
     async def test_stop_running_job(self, temp_work_dir, sample_input):
         """Test stopping a running job."""
@@ -309,14 +313,15 @@ class TestConvenienceFunction:
         """Test the convenience function with a mock executable that produces valid output."""
         # Mock get_crystal_config to fail so we use our mock executable
         from src.core.environment import EnvironmentError as CrystalEnvError
+
         monkeypatch.setattr(
             "src.runners.local.get_crystal_config",
-            lambda: (_ for _ in ()).throw(CrystalEnvError("test"))
+            lambda: (_ for _ in ()).throw(CrystalEnvError("test")),
         )
 
         # Create a mock executable that produces valid CRYSTAL-like output
         mock_exe = temp_work_dir / "crystalOMP"
-        mock_exe.write_text('''#!/bin/bash
+        mock_exe.write_text("""#!/bin/bash
 cat << 'EOF'
 CRYSTAL23 - Job started
 
@@ -325,7 +330,7 @@ CONVERGENCE REACHED
 
 TTTTTT END
 EOF
-''')
+""")
         mock_exe.chmod(0o755)
 
         monkeypatch.setenv("CRY23_EXEDIR", str(temp_work_dir))
@@ -344,8 +349,7 @@ class TestRealIntegration:
     """Integration tests with actual CRYSTAL installation (if available)."""
 
     @pytest.mark.skipif(
-        not os.environ.get("CRY23_EXEDIR"),
-        reason="CRYSTAL installation not configured"
+        not os.environ.get("CRY23_EXEDIR"), reason="CRYSTAL installation not configured"
     )
     @pytest.mark.asyncio
     async def test_with_real_crystal(self, temp_work_dir):
@@ -432,10 +436,7 @@ class TestMultipleJobExecution:
             async for _ in runner.run_job(job_id, job_dir):
                 pass
 
-        tasks = [
-            asyncio.create_task(run_job(i, job_dirs[i]))
-            for i in range(2)
-        ]
+        tasks = [asyncio.create_task(run_job(i, job_dirs[i])) for i in range(2)]
 
         await asyncio.gather(*tasks)
 
@@ -469,7 +470,9 @@ class TestResultStorage:
         assert isinstance(result, JobResult)
 
     @pytest.mark.asyncio
-    async def test_last_result_overwritten_by_new_job(self, mock_executable, temp_work_dir, sample_input):
+    async def test_last_result_overwritten_by_new_job(
+        self, mock_executable, temp_work_dir, sample_input
+    ):
         """Test that last result is replaced by newer job."""
         # Run first job
         job1_dir = temp_work_dir / "job1"
@@ -538,13 +541,15 @@ class TestPathHandling:
 
         # Mock get_crystal_config to fail so we fall through to PATH lookup
         from src.core.environment import EnvironmentError as CrystalEnvError
+
         monkeypatch.setattr(
             "src.runners.local.get_crystal_config",
-            lambda: (_ for _ in ()).throw(CrystalEnvError("test"))
+            lambda: (_ for _ in ()).throw(CrystalEnvError("test")),
         )
 
         # Mock shutil.which to return our executable
         import shutil
+
         original_which = shutil.which
 
         def mock_which(cmd):
@@ -586,6 +591,7 @@ class TestErrorScenarios:
 
         # Make directory read-only (skip on Windows)
         import platform
+
         if platform.system() != "Windows":
             work_dir.chmod(0o555)
 

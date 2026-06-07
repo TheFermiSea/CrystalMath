@@ -56,11 +56,16 @@ class TestPotcarValidation:
     def test_get_potcar_path_not_set(self, monkeypatch):
         """Test get_potcar_path returns None when not configured."""
         monkeypatch.delenv("VASP_PP_PATH", raising=False)
-        # Also mock quacc import to fail
+        # Also neutralize any quacc-provided POTCAR path. Use raising=False because
+        # the installed quacc version may not expose a module-level SETTINGS
+        # attribute (quacc >= 1.x uses quacc.settings / get_settings()); in that
+        # case get_potcar_path()'s `from quacc import SETTINGS` raises ImportError
+        # and is handled, so there is nothing to patch. Without raising=False this
+        # AttributeErrors whenever a prior test has imported quacc (order-dependent).
         import sys
 
         if "quacc" in sys.modules:
-            monkeypatch.setattr(sys.modules["quacc"], "SETTINGS", None)
+            monkeypatch.setattr(sys.modules["quacc"], "SETTINGS", None, raising=False)
 
         path = get_potcar_path()
         # May or may not be None depending on quacc installation

@@ -58,6 +58,7 @@ def slurm_runner(mock_connection_manager):
 
         async def get_status(self, job_handle):
             from src.runners.base import JobStatus
+
             return JobStatus.RUNNING
 
         async def cancel_job(self, job_handle):
@@ -72,7 +73,7 @@ def slurm_runner(mock_connection_manager):
     runner = TestSLURMRunner(
         connection_manager=mock_connection_manager,
         cluster_id=1,
-        poll_interval=0.1  # Fast polling for tests
+        poll_interval=0.1,  # Fast polling for tests
     )
     return runner
 
@@ -247,26 +248,21 @@ class TestSLURMInputValidation:
             qos="high",
             email="user@example.com",
             time_limit="12:00:00",
-            modules=["crystal23", "intel/2023"]
+            modules=["crystal23", "intel/2023"],
         )
         # Should not raise
         slurm_runner._validate_config(config)
 
     def test_validate_config_invalid_job_name(self, slurm_runner):
         """Test config validation with invalid job name."""
-        config = SLURMJobConfig(
-            job_name="test; rm -rf /",
-            time_limit="01:00:00"
-        )
+        config = SLURMJobConfig(job_name="test; rm -rf /", time_limit="01:00:00")
         with pytest.raises(SLURMValidationError):
             slurm_runner._validate_config(config)
 
     def test_validate_config_invalid_partition(self, slurm_runner):
         """Test config validation with invalid partition."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            partition="compute; malicious",
-            time_limit="01:00:00"
+            job_name="test_job", partition="compute; malicious", time_limit="01:00:00"
         )
         with pytest.raises(SLURMValidationError):
             slurm_runner._validate_config(config)
@@ -274,29 +270,21 @@ class TestSLURMInputValidation:
     def test_validate_config_invalid_module(self, slurm_runner):
         """Test config validation with invalid module."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            modules=["crystal23; rm -rf /"],
-            time_limit="01:00:00"
+            job_name="test_job", modules=["crystal23; rm -rf /"], time_limit="01:00:00"
         )
         with pytest.raises(SLURMValidationError):
             slurm_runner._validate_config(config)
 
     def test_validate_config_negative_nodes(self, slurm_runner):
         """Test config validation with negative node count."""
-        config = SLURMJobConfig(
-            job_name="test_job",
-            nodes=-1,
-            time_limit="01:00:00"
-        )
+        config = SLURMJobConfig(job_name="test_job", nodes=-1, time_limit="01:00:00")
         with pytest.raises(SLURMValidationError, match="at least 1"):
             slurm_runner._validate_config(config)
 
     def test_validate_config_invalid_dependency(self, slurm_runner):
         """Test config validation with invalid dependency."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            dependencies=["12345; malicious"],
-            time_limit="01:00:00"
+            job_name="test_job", dependencies=["12345; malicious"], time_limit="01:00:00"
         )
         with pytest.raises(SLURMValidationError):
             slurm_runner._validate_config(config)
@@ -308,11 +296,7 @@ class TestSLURMScriptGeneration:
     def test_basic_script_generation(self, slurm_runner):
         """Test generation of basic SLURM script."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            nodes=1,
-            ntasks=1,
-            cpus_per_task=4,
-            time_limit="01:00:00"
+            job_name="test_job", nodes=1, ntasks=1, cpus_per_task=4, time_limit="01:00:00"
         )
 
         script = slurm_runner._generate_slurm_script(config, "/scratch/test")
@@ -350,7 +334,7 @@ class TestSLURMScriptGeneration:
             qos="high",
             email="user@example.com",
             email_type="BEGIN,END,FAIL",
-            constraint="haswell"
+            constraint="haswell",
         )
 
         script = slurm_runner._generate_slurm_script(config, "/scratch/test")
@@ -370,7 +354,7 @@ class TestSLURMScriptGeneration:
             job_name="mpi_job",
             nodes=2,
             ntasks=28,  # More than 1 ntask triggers MPI
-            cpus_per_task=2
+            cpus_per_task=2,
         )
 
         script = slurm_runner._generate_slurm_script(config, "/scratch/test")
@@ -380,10 +364,7 @@ class TestSLURMScriptGeneration:
 
     def test_script_with_job_array(self, slurm_runner):
         """Test script generation with job array."""
-        config = SLURMJobConfig(
-            job_name="array_job",
-            array="1-10"
-        )
+        config = SLURMJobConfig(job_name="array_job", array="1-10")
 
         script = slurm_runner._generate_slurm_script(config, "/scratch/test")
 
@@ -391,10 +372,7 @@ class TestSLURMScriptGeneration:
 
     def test_script_with_dependencies(self, slurm_runner):
         """Test script generation with job dependencies."""
-        config = SLURMJobConfig(
-            job_name="dependent_job",
-            dependencies=["12345", "12346"]
-        )
+        config = SLURMJobConfig(job_name="dependent_job", dependencies=["12345", "12346"])
 
         script = slurm_runner._generate_slurm_script(config, "/scratch/test")
 
@@ -403,8 +381,7 @@ class TestSLURMScriptGeneration:
     def test_script_with_custom_modules(self, slurm_runner):
         """Test script generation with custom modules."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            modules=["intel/2023", "crystal23", "openmpi/4.1"]
+            job_name="test_job", modules=["intel/2023", "crystal23", "openmpi/4.1"]
         )
 
         script = slurm_runner._generate_slurm_script(config, "/scratch/test")
@@ -416,8 +393,7 @@ class TestSLURMScriptGeneration:
     def test_script_with_environment_setup(self, slurm_runner):
         """Test script generation with custom environment setup."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            environment_setup="source /opt/crystal/env.sh\nexport MY_VAR=value"
+            job_name="test_job", environment_setup="source /opt/crystal/env.sh\nexport MY_VAR=value"
         )
 
         script = slurm_runner._generate_slurm_script(config, "/scratch/test")
@@ -427,10 +403,7 @@ class TestSLURMScriptGeneration:
 
     def test_script_injection_via_job_name(self, slurm_runner):
         """Test that injection via job name is blocked."""
-        config = SLURMJobConfig(
-            job_name="test; rm -rf /",
-            time_limit="01:00:00"
-        )
+        config = SLURMJobConfig(job_name="test; rm -rf /", time_limit="01:00:00")
 
         with pytest.raises(SLURMValidationError):
             slurm_runner._generate_slurm_script(config, "/scratch/test")
@@ -438,9 +411,7 @@ class TestSLURMScriptGeneration:
     def test_script_injection_via_partition(self, slurm_runner):
         """Test that injection via partition is blocked."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            partition="compute; malicious",
-            time_limit="01:00:00"
+            job_name="test_job", partition="compute; malicious", time_limit="01:00:00"
         )
 
         with pytest.raises(SLURMValidationError):
@@ -449,9 +420,7 @@ class TestSLURMScriptGeneration:
     def test_script_injection_via_module(self, slurm_runner):
         """Test that injection via module is blocked."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            modules=["crystal23 && rm -rf /"],
-            time_limit="01:00:00"
+            job_name="test_job", modules=["crystal23 && rm -rf /"], time_limit="01:00:00"
         )
 
         with pytest.raises(SLURMValidationError):
@@ -459,10 +428,7 @@ class TestSLURMScriptGeneration:
 
     def test_script_injection_via_work_dir(self, slurm_runner):
         """Test that injection via work directory is blocked."""
-        config = SLURMJobConfig(
-            job_name="test_job",
-            time_limit="01:00:00"
-        )
+        config = SLURMJobConfig(job_name="test_job", time_limit="01:00:00")
 
         with pytest.raises(SLURMValidationError):
             slurm_runner._generate_slurm_script(config, "/scratch/test; rm -rf /")
@@ -470,9 +436,7 @@ class TestSLURMScriptGeneration:
     def test_script_injection_via_email(self, slurm_runner):
         """Test that injection via email is blocked."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            email="user@example.com; rm -rf /",
-            time_limit="01:00:00"
+            job_name="test_job", email="user@example.com; rm -rf /", time_limit="01:00:00"
         )
 
         with pytest.raises(SLURMValidationError):
@@ -481,9 +445,7 @@ class TestSLURMScriptGeneration:
     def test_script_injection_via_dependency(self, slurm_runner):
         """Test that injection via job dependency is blocked."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            dependencies=["12345 && rm -rf /"],
-            time_limit="01:00:00"
+            job_name="test_job", dependencies=["12345 && rm -rf /"], time_limit="01:00:00"
         )
 
         with pytest.raises(SLURMValidationError):
@@ -492,9 +454,7 @@ class TestSLURMScriptGeneration:
     def test_script_injection_via_array_spec(self, slurm_runner):
         """Test that injection via array spec is blocked."""
         config = SLURMJobConfig(
-            job_name="test_job",
-            array="1-10; echo hacked",
-            time_limit="01:00:00"
+            job_name="test_job", array="1-10; echo hacked", time_limit="01:00:00"
         )
 
         with pytest.raises(SLURMValidationError):
@@ -505,7 +465,7 @@ class TestSLURMScriptGeneration:
         config = SLURMJobConfig(
             job_name="test_job",
             environment_setup="export VAR=value; rm -rf /",
-            time_limit="01:00:00"
+            time_limit="01:00:00",
         )
 
         with pytest.raises(SLURMValidationError):
@@ -517,7 +477,7 @@ class TestSLURMScriptGeneration:
             job_name="test_job",
             email="user@example.com",
             email_type="BEGIN,INVALID_TYPE",
-            time_limit="01:00:00"
+            time_limit="01:00:00",
         )
 
         with pytest.raises(SLURMValidationError):
@@ -594,11 +554,7 @@ class TestJobSubmission:
 
     @pytest.mark.asyncio
     async def test_successful_job_submission(
-        self,
-        slurm_runner,
-        temp_work_dir,
-        mock_connection_manager,
-        mock_connection
+        self, slurm_runner, temp_work_dir, mock_connection_manager, mock_connection
     ):
         """Test successful job submission flow."""
         # Setup mocks - get_connection uses @asynccontextmanager
@@ -612,9 +568,7 @@ class TestJobSubmission:
 
         # Mock sbatch output
         mock_connection.run.return_value = Mock(
-            exit_status=0,
-            stdout="Submitted batch job 12345\n",
-            stderr=""
+            exit_status=0, stdout="Submitted batch job 12345\n", stderr=""
         )
 
         # Mock SFTP for file transfer - start_sftp_client is a coroutine returning async ctx mgr
@@ -673,11 +627,7 @@ class TestJobSubmission:
 
     @pytest.mark.asyncio
     async def test_submission_failure(
-        self,
-        slurm_runner,
-        temp_work_dir,
-        mock_connection_manager,
-        mock_connection
+        self, slurm_runner, temp_work_dir, mock_connection_manager, mock_connection
     ):
         """Test handling of sbatch submission failure."""
         # Setup mocks - get_connection uses @asynccontextmanager
@@ -691,9 +641,7 @@ class TestJobSubmission:
 
         # Mock sbatch failure
         mock_connection.run.return_value = Mock(
-            exit_status=1,
-            stdout="",
-            stderr="sbatch: error: Invalid partition name specified\n"
+            exit_status=1, stdout="", stderr="sbatch: error: Invalid partition name specified\n"
         )
 
         # Mock SFTP - start_sftp_client is a coroutine returning async ctx mgr
@@ -718,12 +666,7 @@ class TestJobCancellation:
     """Test job cancellation functionality."""
 
     @pytest.mark.asyncio
-    async def test_cancel_running_job(
-        self,
-        slurm_runner,
-        mock_connection_manager,
-        mock_connection
-    ):
+    async def test_cancel_running_job(self, slurm_runner, mock_connection_manager, mock_connection):
         """Test cancelling a running job."""
         # Setup mocks - get_connection uses @asynccontextmanager
         from contextlib import asynccontextmanager
@@ -794,12 +737,7 @@ class TestResultDownload:
     """Test result file downloading."""
 
     @pytest.mark.asyncio
-    async def test_download_results(
-        self,
-        slurm_runner,
-        temp_work_dir,
-        mock_connection
-    ):
+    async def test_download_results(self, slurm_runner, temp_work_dir, mock_connection):
         """Test downloading result files."""
         # Mock SFTP - start_sftp_client is a coroutine returning async ctx mgr
         from contextlib import asynccontextmanager
@@ -812,7 +750,7 @@ class TestResultDownload:
             "fort.98",
             "slurm-12345.out",
             "slurm-12345.err",
-            "structure.xyz"
+            "structure.xyz",
         ]
         mock_sftp.get = AsyncMock()
 
@@ -826,11 +764,7 @@ class TestResultDownload:
         mock_connection.start_sftp_client = mock_start_sftp
 
         # Download results
-        await slurm_runner._download_results(
-            mock_connection,
-            "/scratch/job_001",
-            temp_work_dir
-        )
+        await slurm_runner._download_results(mock_connection, "/scratch/job_001", temp_work_dir)
 
         # Verify important files were downloaded
         downloaded_files = [call[0][1] for call in mock_sftp.get.call_args_list]
@@ -860,7 +794,7 @@ class TestSLURMJobConfig:
             cpus_per_task=2,
             time_limit="48:00:00",
             partition="gpu",
-            memory="128GB"
+            memory="128GB",
         )
         assert config.job_name == "custom"
         assert config.nodes == 4

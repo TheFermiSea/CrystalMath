@@ -127,10 +127,7 @@ class MpContribsClient:
             ) from exc
 
         # Network errors
-        if any(
-            term in exc_str
-            for term in ["connection", "timeout", "network", "unreachable"]
-        ):
+        if any(term in exc_str for term in ["connection", "timeout", "network", "unreachable"]):
             raise NetworkError(source=self.SOURCE, original_error=exc) from exc
 
         # Generic API error
@@ -349,9 +346,7 @@ class MpContribsClient:
         ):
             raise
         except Exception as exc:
-            self._handle_exception(
-                exc, context=f"getting contributions from '{project}'"
-            )
+            self._handle_exception(exc, context=f"getting contributions from '{project}'")
             return []  # Unreachable
 
     async def get_contribution_by_id(
@@ -398,9 +393,7 @@ class MpContribsClient:
         ):
             raise
         except Exception as exc:
-            self._handle_exception(
-                exc, context=f"getting contribution '{contribution_id}'"
-            )
+            self._handle_exception(exc, context=f"getting contribution '{contribution_id}'")
             # Unreachable, but type checker wants a return
             raise MaterialsAPIError("Unexpected error", source=self.SOURCE) from exc
 
@@ -445,9 +438,7 @@ class MpContribsClient:
             except Exception:
                 # If the query fails, return empty rather than error
                 # since the material might just not have any contributions
-                logger.debug(
-                    "No contributions found for material ID: %s", material_id
-                )
+                logger.debug("No contributions found for material ID: %s", material_id)
                 return []
 
         try:
@@ -467,7 +458,5 @@ class MpContribsClient:
         ):
             raise
         except Exception as exc:
-            self._handle_exception(
-                exc, context=f"searching contributions for '{material_id}'"
-            )
+            self._handle_exception(exc, context=f"searching contributions for '{material_id}'")
             return []  # Unreachable

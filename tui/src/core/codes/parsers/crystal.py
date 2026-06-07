@@ -47,21 +47,15 @@ class CrystalOutputParser(OutputParser):
 
         return ParsingResult(
             success=True,
-            final_energy=output.get_final_energy()
-            if hasattr(output, "get_final_energy")
-            else None,
+            final_energy=output.get_final_energy() if hasattr(output, "get_final_energy") else None,
             energy_unit="Hartree",
-            convergence_status="CONVERGED"
-            if output.is_converged()
-            else "NOT_CONVERGED",
+            convergence_status="CONVERGED" if output.is_converged() else "NOT_CONVERGED",
             scf_cycles=output.get_scf_convergence()[-1]
             if hasattr(output, "get_scf_convergence")
             else None,
             geometry_converged=None,
             errors=output.get_errors() if hasattr(output, "get_errors") else [],
-            warnings=output.get_warnings()
-            if hasattr(output, "get_warnings")
-            else [],
+            warnings=output.get_warnings() if hasattr(output, "get_warnings") else [],
             metadata={"parser": "CRYSTALpytools"},
         )
 
@@ -80,9 +74,7 @@ class CrystalOutputParser(OutputParser):
                 energy = None
 
         # Check convergence
-        converged = any(
-            marker in content for marker in ["CONVERGENCE", "SCF ENDED", "TTTTTT END"]
-        )
+        converged = any(marker in content for marker in ["CONVERGENCE", "SCF ENDED", "TTTTTT END"])
 
         # Check for errors
         errors: list[str] = []

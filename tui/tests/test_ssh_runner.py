@@ -159,7 +159,7 @@ async def ssh_runner(mock_connection_manager, mock_ssh_connection):
         cluster_id=1,
         remote_dft_root=Path("/home/user/CRYSTAL23"),
         remote_scratch_dir=Path("/home/user/crystal_jobs"),
-        cleanup_on_success=False
+        cleanup_on_success=False,
     )
 
     return runner
@@ -170,10 +170,7 @@ class TestSSHRunnerInitialization:
 
     def test_init_with_valid_cluster(self, mock_connection_manager):
         """Test initialization with valid cluster configuration."""
-        runner = SSHRunner(
-            connection_manager=mock_connection_manager,
-            cluster_id=1
-        )
+        runner = SSHRunner(connection_manager=mock_connection_manager, cluster_id=1)
 
         assert runner.cluster_id == 1
         assert runner.connection_manager is mock_connection_manager
@@ -185,10 +182,7 @@ class TestSSHRunnerInitialization:
         mock_connection_manager._configs = {}  # No clusters registered
 
         with pytest.raises(ValueError, match="not registered"):
-            SSHRunner(
-                connection_manager=mock_connection_manager,
-                cluster_id=999
-            )
+            SSHRunner(connection_manager=mock_connection_manager, cluster_id=999)
 
     def test_init_with_custom_paths(self, mock_connection_manager):
         """Test initialization with custom paths."""
@@ -199,7 +193,7 @@ class TestSSHRunnerInitialization:
             connection_manager=mock_connection_manager,
             cluster_id=1,
             remote_dft_root=custom_root,
-            remote_scratch_dir=custom_scratch
+            remote_scratch_dir=custom_scratch,
         )
 
         assert runner.remote_dft_root == custom_root
@@ -215,10 +209,7 @@ class TestJobSubmission:
         input_file = temp_work_dir / "input.d12"
 
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file,
-            threads=4
+            job_id=1, work_dir=temp_work_dir, input_file=input_file, threads=4
         )
 
         # Verify job handle format: "cluster_id:PID:remote_work_dir"
@@ -236,11 +227,7 @@ class TestJobSubmission:
         nonexistent = temp_work_dir / "nonexistent.d12"
 
         with pytest.raises(FileNotFoundError):
-            await ssh_runner.submit_job(
-                job_id=1,
-                work_dir=temp_work_dir,
-                input_file=nonexistent
-            )
+            await ssh_runner.submit_job(job_id=1, work_dir=temp_work_dir, input_file=nonexistent)
 
     @pytest.mark.asyncio
     async def test_submit_job_with_mpi(self, ssh_runner, temp_work_dir):
@@ -248,11 +235,7 @@ class TestJobSubmission:
         input_file = temp_work_dir / "input.d12"
 
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file,
-            threads=2,
-            mpi_ranks=4
+            job_id=1, work_dir=temp_work_dir, input_file=input_file, threads=2, mpi_ranks=4
         )
 
         assert job_handle is not None
@@ -269,9 +252,7 @@ class TestJobSubmission:
         (temp_work_dir / "test.f9").write_text("wave function")
 
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         # Verify job was submitted successfully (implies SFTP was used)
@@ -289,9 +270,7 @@ class TestJobStatus:
         """Test status check for running job."""
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         status = await ssh_runner.get_status(job_handle)
@@ -301,6 +280,7 @@ class TestJobStatus:
     @pytest.mark.asyncio
     async def test_get_status_completed(self, ssh_runner, temp_work_dir, mock_ssh_connection):
         """Test status check for completed job."""
+
         # Modify mock to indicate process is not running and exit code is 0
         async def mock_run_completed(cmd, check=False, timeout=None):
             result = Mock()
@@ -324,9 +304,7 @@ class TestJobStatus:
 
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         status = await ssh_runner.get_status(job_handle)
@@ -335,6 +313,7 @@ class TestJobStatus:
     @pytest.mark.asyncio
     async def test_get_status_failed(self, ssh_runner, temp_work_dir, mock_ssh_connection):
         """Test status check for failed job."""
+
         async def mock_run_failed(cmd, check=False, timeout=None):
             result = Mock()
             result.stdout = ""
@@ -357,9 +336,7 @@ class TestJobStatus:
 
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         status = await ssh_runner.get_status(job_handle)
@@ -380,9 +357,7 @@ class TestJobCancellation:
         """Test cancelling a running job."""
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         success = await ssh_runner.cancel_job(job_handle)
@@ -401,6 +376,7 @@ class TestJobCancellation:
     @pytest.mark.asyncio
     async def test_cancel_already_stopped(self, ssh_runner, temp_work_dir, mock_ssh_connection):
         """Test cancelling already stopped job."""
+
         async def mock_run_stopped(cmd, check=False):
             result = Mock()
             result.exit_status = 0
@@ -416,9 +392,7 @@ class TestJobCancellation:
 
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         success = await ssh_runner.cancel_job(job_handle)
@@ -440,7 +414,7 @@ class TestOutputStreaming:
                 "CRYSTAL23 starting...",
                 "SCF iteration 1",
                 "SCF iteration 2",
-                "Convergence reached"
+                "Convergence reached",
             ]
             for line in lines:
                 yield line
@@ -453,6 +427,7 @@ class TestOutputStreaming:
 
         # Modify get_status to return completed after some lines
         call_count = 0
+
         async def mock_get_status(handle):
             nonlocal call_count
             call_count += 1
@@ -462,9 +437,7 @@ class TestOutputStreaming:
 
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         # Stream output
@@ -479,6 +452,7 @@ class TestOutputStreaming:
     @pytest.mark.asyncio
     async def test_stream_output_no_file(self, ssh_runner, temp_work_dir, mock_ssh_connection):
         """Test streaming when output file doesn't exist."""
+
         # Mock file check to always fail
         async def mock_run_no_file(cmd, check=False):
             result = Mock()
@@ -496,9 +470,7 @@ class TestOutputStreaming:
 
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         # Try to stream output
@@ -517,6 +489,7 @@ class TestResultRetrieval:
     @pytest.mark.asyncio
     async def test_retrieve_results_success(self, ssh_runner, temp_work_dir, mock_ssh_connection):
         """Test successful result retrieval."""
+
         # Setup: job is completed
         async def mock_run_completed(cmd, check=False):
             result = Mock()
@@ -545,9 +518,7 @@ CONVERGENCE REACHED
 
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         result = await ssh_runner.retrieve_results(job_handle, temp_work_dir)
@@ -560,9 +531,7 @@ CONVERGENCE REACHED
         """Test retrieving results while job is still running."""
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         # Job is still running
@@ -591,19 +560,14 @@ class TestUtilityMethods:
     def test_is_job_running(self, ssh_runner):
         """Test is_job_running check."""
         # Add a fake job with JobStatus enum value
-        ssh_runner._active_jobs["1:12345:/tmp"] = {
-            "status": JobStatus.RUNNING,
-            "pid": 12345
-        }
+        ssh_runner._active_jobs["1:12345:/tmp"] = {"status": JobStatus.RUNNING, "pid": 12345}
 
         assert ssh_runner.is_job_running("1:12345:/tmp") is True
         assert ssh_runner.is_job_running("1:99999:/tmp") is False
 
     def test_get_job_pid(self, ssh_runner):
         """Test PID retrieval."""
-        ssh_runner._active_jobs["1:12345:/tmp"] = {
-            "pid": 12345
-        }
+        ssh_runner._active_jobs["1:12345:/tmp"] = {"pid": 12345}
 
         assert ssh_runner.get_job_pid("1:12345:/tmp") == 12345
         assert ssh_runner.get_job_pid("invalid") is None
@@ -611,9 +575,7 @@ class TestUtilityMethods:
     def test_generate_execution_script_serial(self, ssh_runner):
         """Test execution script generation for serial job."""
         script = ssh_runner._generate_execution_script(
-            remote_work_dir=Path("/home/user/job"),
-            input_file="input.d12",
-            threads=8
+            remote_work_dir=Path("/home/user/job"), input_file="input.d12", threads=8
         )
 
         assert "crystalOMP" in script
@@ -623,10 +585,7 @@ class TestUtilityMethods:
     def test_generate_execution_script_mpi(self, ssh_runner):
         """Test execution script generation for MPI job."""
         script = ssh_runner._generate_execution_script(
-            remote_work_dir=Path("/home/user/job"),
-            input_file="input.d12",
-            threads=4,
-            mpi_ranks=8
+            remote_work_dir=Path("/home/user/job"), input_file="input.d12", threads=4, mpi_ranks=8
         )
 
         assert "Pcrystal" in script
@@ -642,9 +601,7 @@ class TestCleanup:
         """Test cleanup without removing remote files."""
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         await ssh_runner.cleanup(job_handle, remove_files=False)
@@ -653,13 +610,13 @@ class TestCleanup:
         assert job_handle not in ssh_runner._active_jobs
 
     @pytest.mark.asyncio
-    async def test_cleanup_with_removing_files(self, ssh_runner, temp_work_dir, mock_ssh_connection):
+    async def test_cleanup_with_removing_files(
+        self, ssh_runner, temp_work_dir, mock_ssh_connection
+    ):
         """Test cleanup with remote file removal."""
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         await ssh_runner.cleanup(job_handle, remove_files=True)
@@ -683,29 +640,24 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_connection_failure_on_submit(self, mock_connection_manager, temp_work_dir):
         """Test handling connection failure during submission."""
+
         # Make connection fail
         async def failing_connection(*args, **kwargs):
             raise Exception("Connection failed")
 
         mock_connection_manager.get_connection = AsyncMock(side_effect=failing_connection)
 
-        runner = SSHRunner(
-            connection_manager=mock_connection_manager,
-            cluster_id=1
-        )
+        runner = SSHRunner(connection_manager=mock_connection_manager, cluster_id=1)
 
         input_file = temp_work_dir / "input.d12"
 
         with pytest.raises(JobSubmissionError):
-            await runner.submit_job(
-                job_id=1,
-                work_dir=temp_work_dir,
-                input_file=input_file
-            )
+            await runner.submit_job(job_id=1, work_dir=temp_work_dir, input_file=input_file)
 
     @pytest.mark.asyncio
     async def test_parse_results_missing_file(self, ssh_runner, temp_work_dir, mock_ssh_connection):
         """Test result parsing with missing output file."""
+
         # Submit and complete job
         async def mock_run_completed(cmd, check=False):
             result = Mock()
@@ -717,9 +669,7 @@ class TestErrorHandling:
 
         input_file = temp_work_dir / "input.d12"
         job_handle = await ssh_runner.submit_job(
-            job_id=1,
-            work_dir=temp_work_dir,
-            input_file=input_file
+            job_id=1, work_dir=temp_work_dir, input_file=input_file
         )
 
         # Don't create output file

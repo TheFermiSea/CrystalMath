@@ -23,7 +23,7 @@ async def main():
     wf = Workflow(
         workflow_id="eos_calculation",
         name="Equation of State",
-        description="Calculate E(V) curve by running calculations at multiple volumes"
+        description="Calculate E(V) curve by running calculations at multiple volumes",
     )
 
     # Reference equilibrium volume
@@ -37,7 +37,7 @@ async def main():
         (1.00, v0 * 1.00),
         (1.02, v0 * 1.02),
         (1.04, v0 * 1.04),
-        (1.06, v0 * 1.06)
+        (1.06, v0 * 1.06),
     ]
 
     # Create calculation node for each volume
@@ -52,17 +52,15 @@ async def main():
                 "functional": "PBE",
                 "volume": volume,
                 "scale_factor": scale,
-                "conv_tol": 1e-8
+                "conv_tol": 1e-8,
             },
-            node_id=node_id
+            node_id=node_id,
         )
         calc_nodes.append(node_id)
 
     # Add aggregation node to collect E(V) data
     collect = wf.add_aggregation_node(
-        node_id="collect_ev_data",
-        aggregation_func="collect",
-        dependencies=calc_nodes
+        node_id="collect_ev_data", aggregation_func="collect", dependencies=calc_nodes
     )
 
     # Add edges from each calculation to the aggregation node
@@ -75,9 +73,9 @@ async def main():
         params={
             "energies": "{{ collect_ev_data.aggregated_value }}",
             "equation": "birch_murnaghan",  # Birch-Murnaghan EOS
-            "order": 3
+            "order": 3,
         },
-        node_id="eos_fit"
+        node_id="eos_fit",
     )
     wf.add_dependency("collect_ev_data", "eos_fit")
 
@@ -86,9 +84,9 @@ async def main():
         template="eos_analysis",
         params={
             "fit_results": "{{ eos_fit.parameters }}",
-            "extract": ["v0", "e0", "b0", "bp"]  # V₀, E₀, B₀, B'
+            "extract": ["v0", "e0", "b0", "bp"],  # V₀, E₀, B₀, B'
         },
-        node_id="extract_properties"
+        node_id="extract_properties",
     )
     wf.add_dependency("eos_fit", "extract_properties")
 
@@ -144,7 +142,7 @@ async def main():
     collect_node = wf.nodes["collect_ev_data"]
     if collect_node.result_data:
         print(f"  Number of points: {collect_node.result_data['count']}")
-        energies = collect_node.result_data['aggregated_value']
+        energies = collect_node.result_data["aggregated_value"]
         for i, (scale, _) in enumerate(volumes):
             if i < len(energies):
                 print(f"    V = {scale:.2f}V₀: E = {energies[i]:.6f} Hartree")
@@ -162,7 +160,7 @@ async def main():
 
     # Generate visualization
     dot_path = Path("equation_of_state.dot")
-    with open(dot_path, 'w') as f:
+    with open(dot_path, "w") as f:
         f.write(wf.to_graphviz())
     print(f"✓ GraphViz diagram saved to {dot_path}")
     print("  Render with: dot -Tpng equation_of_state.dot -o equation_of_state.png")

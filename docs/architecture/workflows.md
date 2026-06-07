@@ -1,5 +1,7 @@
 # Workflow DAG System Documentation
 
+> **⚠️ Historical / superseded.** This document predates the ADR-007–027 redesign and describes the bespoke workflows/*.py classes that the redesign replaces. Authoritative direction: [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) and [REDESIGN.md](REDESIGN.md). Kept for background only.
+
 ## Overview
 
 The Workflow DAG (Directed Acyclic Graph) system provides a powerful framework for defining, validating, and executing multi-step CRYSTAL calculation workflows with complex dependencies.

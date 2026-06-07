@@ -17,8 +17,14 @@ from pathlib import Path
 import pytest
 
 from src.core.database import (
-    Database, Job, Cluster, RemoteJob, JobDependency,
-    RunnerType, ClusterType, DependencyType
+    Database,
+    Job,
+    Cluster,
+    RemoteJob,
+    JobDependency,
+    RunnerType,
+    ClusterType,
+    DependencyType,
 )
 
 
@@ -59,15 +65,21 @@ class TestSchemaMigration:
     def test_new_database_creates_v2_schema(self, temp_db):
         """Test that new databases are created with current schema."""
         from src.core.database import Database
+
         assert temp_db.get_schema_version() == Database.SCHEMA_VERSION
 
         # Verify all tables exist
-        cursor = temp_db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
+        cursor = temp_db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in cursor.fetchall()}
 
-        expected_tables = {"jobs", "clusters", "remote_jobs", "job_dependencies", "job_results", "schema_version"}
+        expected_tables = {
+            "jobs",
+            "clusters",
+            "remote_jobs",
+            "job_dependencies",
+            "job_results",
+            "schema_version",
+        }
         assert expected_tables.issubset(tables)
 
     def test_v1_database_migrates_to_v2(self, temp_db_v1):
@@ -82,8 +94,12 @@ class TestSchemaMigration:
         columns = {row[1] for row in cursor.fetchall()}
 
         phase2_columns = {
-            'cluster_id', 'runner_type', 'parallelism_config',
-            'queue_time', 'start_time', 'end_time'
+            "cluster_id",
+            "runner_type",
+            "parallelism_config",
+            "queue_time",
+            "start_time",
+            "end_time",
         }
         assert phase2_columns.issubset(columns)
 
@@ -95,7 +111,7 @@ class TestSchemaMigration:
         conn = sqlite3.connect(str(temp_db_v1))
         cursor = conn.execute(
             "INSERT INTO jobs (name, work_dir, status, input_file) VALUES (?, ?, ?, ?)",
-            ("test_job", "/tmp/test", "PENDING", "input data")
+            ("test_job", "/tmp/test", "PENDING", "input data"),
         )
         job_id = cursor.lastrowid
         conn.commit()
@@ -130,7 +146,7 @@ class TestClusterOperations:
             hostname="cluster.example.com",
             username="testuser",
             port=22,
-            connection_config={"key_file": "/path/to/key"}
+            connection_config={"key_file": "/path/to/key"},
         )
 
         assert isinstance(cluster_id, int)
@@ -144,11 +160,7 @@ class TestClusterOperations:
             hostname="hpc.example.com",
             username="hpcuser",
             port=22,
-            connection_config={
-                "key_file": "/path/to/key",
-                "partition": "gpu",
-                "qos": "high"
-            }
+            connection_config={"key_file": "/path/to/key", "partition": "gpu", "qos": "high"},
         )
 
         cluster = temp_db.get_cluster(cluster_id)
@@ -168,9 +180,7 @@ class TestClusterOperations:
 
     def test_get_cluster_by_name(self, temp_db):
         """Test retrieving cluster by name."""
-        temp_db.create_cluster(
-            name="named_cluster", type="ssh", hostname="host", username="user"
-        )
+        temp_db.create_cluster(name="named_cluster", type="ssh", hostname="host", username="user")
 
         cluster = temp_db.get_cluster_by_name("named_cluster")
         assert cluster is not None
@@ -185,9 +195,7 @@ class TestClusterOperations:
         """Test retrieving all clusters."""
         names = ["cluster_a", "cluster_b", "cluster_c"]
         for name in names:
-            temp_db.create_cluster(
-                name=name, type="ssh", hostname="host", username="user"
-            )
+            temp_db.create_cluster(name=name, type="ssh", hostname="host", username="user")
 
         clusters = temp_db.get_all_clusters()
         assert len(clusters) == 3
@@ -198,9 +206,7 @@ class TestClusterOperations:
         cluster1_id = temp_db.create_cluster(
             name="active1", type="ssh", hostname="host", username="user"
         )
-        temp_db.create_cluster(
-            name="active2", type="ssh", hostname="host", username="user"
-        )
+        temp_db.create_cluster(name="active2", type="ssh", hostname="host", username="user")
         cluster3_id = temp_db.create_cluster(
             name="inactive", type="ssh", hostname="host", username="user"
         )
@@ -226,8 +232,11 @@ class TestClusterOperations:
     def test_update_cluster_config(self, temp_db):
         """Test updating cluster connection configuration."""
         cluster_id = temp_db.create_cluster(
-            name="test", type="ssh", hostname="host", username="user",
-            connection_config={"key_file": "/old/key"}
+            name="test",
+            type="ssh",
+            hostname="host",
+            username="user",
+            connection_config={"key_file": "/old/key"},
         )
 
         new_config = {"key_file": "/new/key", "timeout": 30}
@@ -259,14 +268,10 @@ class TestClusterOperations:
 
     def test_duplicate_cluster_name_fails(self, temp_db):
         """Test that duplicate cluster names are rejected."""
-        temp_db.create_cluster(
-            name="duplicate", type="ssh", hostname="host", username="user"
-        )
+        temp_db.create_cluster(name="duplicate", type="ssh", hostname="host", username="user")
 
         with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
-            temp_db.create_cluster(
-                name="duplicate", type="ssh", hostname="host2", username="user2"
-            )
+            temp_db.create_cluster(name="duplicate", type="ssh", hostname="host2", username="user2")
 
 
 class TestRemoteJobOperations:
@@ -283,7 +288,7 @@ class TestRemoteJobOperations:
             work_dir="/tmp/remote",
             input_content="CRYSTAL\nEND\n",
             cluster_id=cluster_id,
-            runner_type="ssh"
+            runner_type="ssh",
         )
 
         job = temp_db.get_job(job_id)
@@ -292,17 +297,13 @@ class TestRemoteJobOperations:
 
     def test_create_job_with_parallelism_config(self, temp_db):
         """Test creating a job with parallelism configuration."""
-        parallelism = {
-            "mpi_ranks": 16,
-            "threads_per_rank": 4,
-            "nodes": 2
-        }
+        parallelism = {"mpi_ranks": 16, "threads_per_rank": 4, "nodes": 2}
 
         job_id = temp_db.create_job(
             name="parallel_job",
             work_dir="/tmp/parallel",
             input_content="input",
-            parallelism_config=parallelism
+            parallelism_config=parallelism,
         )
 
         job = temp_db.get_job(job_id)
@@ -320,13 +321,14 @@ class TestRemoteJobOperations:
         # Create jobs on different clusters
         for i in range(3):
             temp_db.create_job(
-                name=f"job_c1_{i}", work_dir=f"/tmp/c1/{i}", input_content="input",
-                cluster_id=cluster1_id
+                name=f"job_c1_{i}",
+                work_dir=f"/tmp/c1/{i}",
+                input_content="input",
+                cluster_id=cluster1_id,
             )
 
         temp_db.create_job(
-            name="job_c2", work_dir="/tmp/c2/0", input_content="input",
-            cluster_id=cluster2_id
+            name="job_c2", work_dir="/tmp/c2/0", input_content="input", cluster_id=cluster2_id
         )
 
         cluster1_jobs = temp_db.get_jobs_by_cluster(cluster1_id)
@@ -340,9 +342,7 @@ class TestRemoteJobOperations:
         cluster_id = temp_db.create_cluster(
             name="cluster", type="slurm", hostname="host", username="user"
         )
-        job_id = temp_db.create_job(
-            name="test", work_dir="/tmp/test", input_content="input"
-        )
+        job_id = temp_db.create_job(name="test", work_dir="/tmp/test", input_content="input")
 
         remote_job_id = temp_db.create_remote_job(
             job_id=job_id,
@@ -350,7 +350,7 @@ class TestRemoteJobOperations:
             remote_handle="12345",
             working_directory="/scratch/user/job",
             queue_name="gpu",
-            metadata={"partition": "gpu", "time_limit": "24:00:00"}
+            metadata={"partition": "gpu", "time_limit": "24:00:00"},
         )
 
         assert isinstance(remote_job_id, int)
@@ -361,15 +361,13 @@ class TestRemoteJobOperations:
         cluster_id = temp_db.create_cluster(
             name="cluster", type="ssh", hostname="host", username="user"
         )
-        job_id = temp_db.create_job(
-            name="test", work_dir="/tmp/test", input_content="input"
-        )
+        job_id = temp_db.create_job(name="test", work_dir="/tmp/test", input_content="input")
 
         remote_job_id = temp_db.create_remote_job(
             job_id=job_id,
             cluster_id=cluster_id,
             remote_handle="54321",
-            working_directory="/remote/work"
+            working_directory="/remote/work",
         )
 
         remote_job = temp_db.get_remote_job(remote_job_id)
@@ -381,15 +379,13 @@ class TestRemoteJobOperations:
         cluster_id = temp_db.create_cluster(
             name="cluster", type="ssh", hostname="host", username="user"
         )
-        job_id = temp_db.create_job(
-            name="test", work_dir="/tmp/test", input_content="input"
-        )
+        job_id = temp_db.create_job(name="test", work_dir="/tmp/test", input_content="input")
 
         temp_db.create_remote_job(
             job_id=job_id,
             cluster_id=cluster_id,
             remote_handle="99999",
-            working_directory="/remote/work"
+            working_directory="/remote/work",
         )
 
         remote_job = temp_db.get_remote_job_by_job_id(job_id)
@@ -401,21 +397,16 @@ class TestRemoteJobOperations:
         cluster_id = temp_db.create_cluster(
             name="cluster", type="slurm", hostname="host", username="user"
         )
-        job_id = temp_db.create_job(
-            name="test", work_dir="/tmp/test", input_content="input"
-        )
+        job_id = temp_db.create_job(name="test", work_dir="/tmp/test", input_content="input")
         remote_job_id = temp_db.create_remote_job(
-            job_id=job_id,
-            cluster_id=cluster_id,
-            remote_handle="12345",
-            working_directory="/work"
+            job_id=job_id, cluster_id=cluster_id, remote_handle="12345", working_directory="/work"
         )
 
         temp_db.update_remote_job(
             remote_job_id,
             node_list="node[01-04]",
             stdout_path="/logs/job.out",
-            stderr_path="/logs/job.err"
+            stderr_path="/logs/job.err",
         )
 
         remote_job = temp_db.get_remote_job(remote_job_id)
@@ -427,15 +418,13 @@ class TestRemoteJobOperations:
         cluster_id = temp_db.create_cluster(
             name="cluster", type="slurm", hostname="host", username="user"
         )
-        job_id = temp_db.create_job(
-            name="test", work_dir="/tmp/test", input_content="input"
-        )
+        job_id = temp_db.create_job(name="test", work_dir="/tmp/test", input_content="input")
 
         metadata = {
             "partition": "gpu",
             "qos": "high",
             "modules": ["gcc/11.2.0", "cuda/11.4"],
-            "environment": {"OMP_NUM_THREADS": "4"}
+            "environment": {"OMP_NUM_THREADS": "4"},
         }
 
         remote_job_id = temp_db.create_remote_job(
@@ -443,7 +432,7 @@ class TestRemoteJobOperations:
             cluster_id=cluster_id,
             remote_handle="12345",
             working_directory="/work",
-            metadata=metadata
+            metadata=metadata,
         )
 
         remote_job = temp_db.get_remote_job(remote_job_id)
@@ -454,14 +443,9 @@ class TestRemoteJobOperations:
         cluster_id = temp_db.create_cluster(
             name="cluster", type="ssh", hostname="host", username="user"
         )
-        job_id = temp_db.create_job(
-            name="test", work_dir="/tmp/test", input_content="input"
-        )
+        job_id = temp_db.create_job(name="test", work_dir="/tmp/test", input_content="input")
         remote_job_id = temp_db.create_remote_job(
-            job_id=job_id,
-            cluster_id=cluster_id,
-            remote_handle="12345",
-            working_directory="/work"
+            job_id=job_id, cluster_id=cluster_id, remote_handle="12345", working_directory="/work"
         )
 
         # Delete cluster should cascade to remote_jobs
@@ -646,7 +630,7 @@ class TestWorkflowScenarios:
 
         # Create linear dependencies
         for i in range(1, 3):
-            temp_db.add_job_dependency(job_ids[i], job_ids[i-1], "after_ok")
+            temp_db.add_job_dependency(job_ids[i], job_ids[i - 1], "after_ok")
 
         # Initially only job1 can run
         assert temp_db.can_job_run(job_ids[0])[0] is True
@@ -716,19 +700,28 @@ class TestWorkflowScenarios:
 
         # Create workflow: local prep -> HPC compute -> local analysis
         prep_job = temp_db.create_job(
-            name="prep", work_dir="/tmp/prep", input_content="prep",
-            cluster_id=local_cluster, runner_type="ssh"
+            name="prep",
+            work_dir="/tmp/prep",
+            input_content="prep",
+            cluster_id=local_cluster,
+            runner_type="ssh",
         )
 
         compute_job = temp_db.create_job(
-            name="compute", work_dir="/tmp/compute", input_content="compute",
-            cluster_id=hpc_cluster, runner_type="slurm",
-            parallelism_config={"mpi_ranks": 64, "nodes": 4}
+            name="compute",
+            work_dir="/tmp/compute",
+            input_content="compute",
+            cluster_id=hpc_cluster,
+            runner_type="slurm",
+            parallelism_config={"mpi_ranks": 64, "nodes": 4},
         )
 
         analysis_job = temp_db.create_job(
-            name="analysis", work_dir="/tmp/analysis", input_content="analysis",
-            cluster_id=local_cluster, runner_type="ssh"
+            name="analysis",
+            work_dir="/tmp/analysis",
+            input_content="analysis",
+            cluster_id=local_cluster,
+            runner_type="ssh",
         )
 
         # Set up dependencies
@@ -757,7 +750,7 @@ class TestBackwardCompatibility:
         conn = sqlite3.connect(str(temp_db_v1))
         cursor = conn.execute(
             "INSERT INTO jobs (name, work_dir, status, input_file) VALUES (?, ?, ?, ?)",
-            ("old_job", "/tmp/old", "PENDING", "old input")
+            ("old_job", "/tmp/old", "PENDING", "old input"),
         )
         job_id = cursor.lastrowid
         conn.commit()
@@ -784,9 +777,7 @@ class TestBackwardCompatibility:
         """Test database with both local and remote jobs."""
         # Create local job (Phase 1 style)
         local_job_id = temp_db.create_job(
-            name="local_job",
-            work_dir="/tmp/local",
-            input_content="input"
+            name="local_job", work_dir="/tmp/local", input_content="input"
         )
 
         # Create remote job (Phase 2 style)
@@ -798,7 +789,7 @@ class TestBackwardCompatibility:
             work_dir="/tmp/remote",
             input_content="input",
             cluster_id=cluster_id,
-            runner_type="ssh"
+            runner_type="ssh",
         )
 
         # Verify both jobs exist and are retrievable

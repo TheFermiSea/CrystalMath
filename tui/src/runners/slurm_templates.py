@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 class SLURMTemplateValidationError(Exception):
     """Raised when SLURM template parameter validation fails."""
+
     pass
 
 
@@ -35,6 +36,7 @@ class SLURMTemplateParams:
     This dataclass provides validated parameters that are safe
     to pass to Jinja2 templates.
     """
+
     job_name: str
     work_dir: str
     nodes: int = 1
@@ -117,11 +119,7 @@ class SLURMTemplateGenerator:
     _SAFE_ENV_COMMANDS = ("export ", "source ", ". ")
     _DANGEROUS_PATTERNS = (";", "|", "&", ">", "<", "$(", "`")
 
-    def __init__(
-        self,
-        template_dir: Optional[Path] = None,
-        dft_code: DFTCode = DFTCode.CRYSTAL
-    ):
+    def __init__(self, template_dir: Optional[Path] = None, dft_code: DFTCode = DFTCode.CRYSTAL):
         """
         Initialize the SLURM template generator.
 
@@ -233,8 +231,7 @@ class SLURMTemplateGenerator:
             for et in email_types:
                 if et.strip().upper() not in valid_types:
                     errors.append(
-                        f"Invalid email type '{et}': "
-                        "must be one of BEGIN, END, FAIL, REQUEUE, ALL"
+                        f"Invalid email type '{et}': must be one of BEGIN, END, FAIL, REQUEUE, ALL"
                     )
 
         # Time limit (required)
@@ -310,8 +307,7 @@ class SLURMTemplateGenerator:
 
             # Only allow safe commands
             is_safe_command = any(
-                line_stripped.startswith(prefix)
-                for prefix in self._SAFE_ENV_COMMANDS
+                line_stripped.startswith(prefix) for prefix in self._SAFE_ENV_COMMANDS
             )
 
             if not is_safe_command:
@@ -322,24 +318,17 @@ class SLURMTemplateGenerator:
                 continue
 
             # Check for dangerous patterns
-            has_dangerous = any(
-                pattern in line
-                for pattern in self._DANGEROUS_PATTERNS
-            )
+            has_dangerous = any(pattern in line for pattern in self._DANGEROUS_PATTERNS)
 
             if has_dangerous:
                 if line_stripped.startswith("export "):
                     # For export, check the value part for dangerous chars
                     after_export = line_stripped[7:]
                     if any(p in after_export for p in ["|", "&", ">", "<", "$(", "`", ";"]):
-                        errors.append(
-                            f"Dangerous command in environment setup: {line}"
-                        )
+                        errors.append(f"Dangerous command in environment setup: {line}")
                 else:
                     # For source/., reject if they have dangerous patterns
-                    errors.append(
-                        f"Dangerous pattern in environment setup: {line}"
-                    )
+                    errors.append(f"Dangerous pattern in environment setup: {line}")
 
         return errors
 
@@ -454,10 +443,7 @@ class SLURMTemplateGenerator:
 
 
 def generate_slurm_script(
-    job_name: str,
-    work_dir: str,
-    dft_code: DFTCode = DFTCode.CRYSTAL,
-    **kwargs
+    job_name: str, work_dir: str, dft_code: DFTCode = DFTCode.CRYSTAL, **kwargs
 ) -> str:
     """
     Convenience function to generate a SLURM script.

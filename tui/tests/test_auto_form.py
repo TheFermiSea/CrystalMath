@@ -24,6 +24,7 @@ from src.tui.widgets.auto_form import (
 
 # Test Fixtures
 
+
 @pytest.fixture
 def simple_schema() -> Dict[str, Any]:
     """Simple form schema for testing."""
@@ -34,16 +35,9 @@ def simple_schema() -> Dict[str, Any]:
                 "type": "string",
                 "label": "Username",
                 "required": True,
-                "help": "Enter your username"
+                "help": "Enter your username",
             },
-            {
-                "name": "age",
-                "type": "integer",
-                "label": "Age",
-                "min": 0,
-                "max": 120,
-                "default": 25
-            }
+            {"name": "age", "type": "integer", "label": "Age", "min": 0, "max": 120, "default": 25},
         ]
     }
 
@@ -61,7 +55,7 @@ def complex_schema() -> Dict[str, Any]:
                 "default": "sto-3g",
                 "required": True,
                 "help": "Choose basis set for calculation",
-                "group": "Calculation Settings"
+                "group": "Calculation Settings",
             },
             {
                 "name": "shrink",
@@ -72,7 +66,7 @@ def complex_schema() -> Dict[str, Any]:
                 "max": 16,
                 "required": True,
                 "help": "K-point mesh density",
-                "group": "Calculation Settings"
+                "group": "Calculation Settings",
             },
             {
                 "name": "tolerance",
@@ -81,14 +75,14 @@ def complex_schema() -> Dict[str, Any]:
                 "default": 1e-7,
                 "min": 1e-12,
                 "max": 1e-3,
-                "group": "Convergence"
+                "group": "Convergence",
             },
             {
                 "name": "spin_polarized",
                 "type": "boolean",
                 "label": "Spin Polarized",
                 "default": False,
-                "group": "Advanced"
+                "group": "Advanced",
             },
             {
                 "name": "functionals",
@@ -96,15 +90,15 @@ def complex_schema() -> Dict[str, Any]:
                 "label": "XC Functionals",
                 "options": ["LDA", "PBE", "B3LYP", "HSE06"],
                 "default": ["PBE"],
-                "group": "Advanced"
+                "group": "Advanced",
             },
             {
                 "name": "input_file",
                 "type": "file",
                 "label": "Input Geometry",
                 "help": "Select .cif or .xyz file",
-                "group": "Files"
-            }
+                "group": "Files",
+            },
         ]
     }
 
@@ -118,7 +112,7 @@ def conditional_schema() -> Dict[str, Any]:
                 "name": "enable_optimization",
                 "type": "boolean",
                 "label": "Enable Optimization",
-                "default": False
+                "default": False,
             },
             {
                 "name": "max_cycles",
@@ -127,20 +121,21 @@ def conditional_schema() -> Dict[str, Any]:
                 "default": 50,
                 "min": 1,
                 "max": 1000,
-                "visible_when": {"enable_optimization": True}
+                "visible_when": {"enable_optimization": True},
             },
             {
                 "name": "convergence_threshold",
                 "type": "float",
                 "label": "Convergence Threshold",
                 "default": 1e-5,
-                "depends_on": "enable_optimization"
-            }
+                "depends_on": "enable_optimization",
+            },
         ]
     }
 
 
 # Test FieldSchema
+
 
 def test_field_schema_defaults():
     """Test FieldSchema default values."""
@@ -156,11 +151,7 @@ def test_field_schema_defaults():
 
 def test_field_schema_custom_label():
     """Test FieldSchema with custom label."""
-    schema = FieldSchema(
-        name="test_field",
-        type="string",
-        label="Custom Label"
-    )
+    schema = FieldSchema(name="test_field", type="string", label="Custom Label")
 
     assert schema.label == "Custom Label"
 
@@ -168,12 +159,7 @@ def test_field_schema_custom_label():
 def test_field_schema_validation_rules():
     """Test FieldSchema validation rules."""
     schema = FieldSchema(
-        name="age",
-        type="integer",
-        min=0,
-        max=120,
-        required=True,
-        pattern=r"^\d+$"
+        name="age", type="integer", min=0, max=120, required=True, pattern=r"^\d+$"
     )
 
     assert schema.min == 0
@@ -183,6 +169,7 @@ def test_field_schema_validation_rules():
 
 
 # Test AutoForm Creation
+
 
 def test_autoform_from_schema(simple_schema):
     """Test creating AutoForm from schema."""
@@ -226,14 +213,10 @@ def test_autoform_field_groups(complex_schema):
 
 # Test Field Types
 
+
 def test_string_field():
     """Test StringField creation and value handling."""
-    schema = FieldSchema(
-        name="username",
-        type="string",
-        label="Username",
-        default="john_doe"
-    )
+    schema = FieldSchema(name="username", type="string", label="Username", default="john_doe")
 
     field = StringField(schema)
     assert field.schema.name == "username"
@@ -242,13 +225,7 @@ def test_string_field():
 
 def test_integer_field():
     """Test IntegerField with range validation."""
-    schema = FieldSchema(
-        name="age",
-        type="integer",
-        min=0,
-        max=120,
-        default=25
-    )
+    schema = FieldSchema(name="age", type="integer", min=0, max=120, default=25)
 
     field = IntegerField(schema)
     assert field.schema.min == 0
@@ -257,13 +234,7 @@ def test_integer_field():
 
 def test_float_field():
     """Test FloatField with range validation."""
-    schema = FieldSchema(
-        name="tolerance",
-        type="float",
-        min=1e-12,
-        max=1e-3,
-        default=1e-7
-    )
+    schema = FieldSchema(name="tolerance", type="float", min=1e-12, max=1e-3, default=1e-7)
 
     field = FloatField(schema)
     assert field.schema.min == 1e-12
@@ -272,11 +243,7 @@ def test_float_field():
 
 def test_boolean_field():
     """Test BooleanField."""
-    schema = FieldSchema(
-        name="enabled",
-        type="boolean",
-        default=True
-    )
+    schema = FieldSchema(name="enabled", type="boolean", default=True)
 
     field = BooleanField(schema)
     assert field.schema.default is True
@@ -285,10 +252,7 @@ def test_boolean_field():
 def test_select_field():
     """Test SelectField with options."""
     schema = FieldSchema(
-        name="basis",
-        type="select",
-        options=["sto-3g", "6-21g", "pob-tzvp"],
-        default="sto-3g"
+        name="basis", type="select", options=["sto-3g", "6-21g", "pob-tzvp"], default="sto-3g"
     )
 
     field = SelectField(schema)
@@ -299,10 +263,7 @@ def test_select_field():
 def test_multiselect_field():
     """Test MultiSelectField."""
     schema = FieldSchema(
-        name="functionals",
-        type="multiselect",
-        options=["LDA", "PBE", "B3LYP"],
-        default=["PBE"]
+        name="functionals", type="multiselect", options=["LDA", "PBE", "B3LYP"], default=["PBE"]
     )
 
     field = MultiSelectField(schema)
@@ -312,11 +273,7 @@ def test_multiselect_field():
 
 def test_file_field():
     """Test FileField."""
-    schema = FieldSchema(
-        name="input_file",
-        type="file",
-        help="Select geometry file"
-    )
+    schema = FieldSchema(name="input_file", type="file", help="Select geometry file")
 
     field = FileField(schema)
     assert field.schema.help == "Select geometry file"
@@ -324,17 +281,10 @@ def test_file_field():
 
 # Test Validation
 
+
 def test_validation_required_field():
     """Test validation of required fields - verifies schema has required flag."""
-    schema = {
-        "fields": [
-            {
-                "name": "username",
-                "type": "string",
-                "required": True
-            }
-        ]
-    }
+    schema = {"fields": [{"name": "username", "type": "string", "required": True}]}
 
     form = AutoForm.from_schema(schema)
 
@@ -351,12 +301,7 @@ def test_validation_required_field():
 
 def test_validation_integer_range():
     """Test integer range validation."""
-    schema = FieldSchema(
-        name="age",
-        type="integer",
-        min=0,
-        max=120
-    )
+    schema = FieldSchema(name="age", type="integer", min=0, max=120)
 
     field = IntegerField(schema)
 
@@ -368,11 +313,7 @@ def test_validation_integer_range():
 
 def test_validation_pattern():
     """Test pattern validation."""
-    schema = FieldSchema(
-        name="code",
-        type="string",
-        pattern=r"^[A-Z]{3}\d{3}$"
-    )
+    schema = FieldSchema(name="code", type="string", pattern=r"^[A-Z]{3}\d{3}$")
 
     field = StringField(schema)
     assert field.schema.pattern == r"^[A-Z]{3}\d{3}$"
@@ -380,6 +321,7 @@ def test_validation_pattern():
 
 def test_validation_custom_validator():
     """Test custom validator function."""
+
     def validate_even(value: str) -> bool:
         try:
             return int(value) % 2 == 0
@@ -390,7 +332,7 @@ def test_validation_custom_validator():
         name="even_number",
         type="integer",
         validator=validate_even,
-        validator_message="Must be an even number"
+        validator_message="Must be an even number",
     )
 
     field = IntegerField(schema)
@@ -409,12 +351,13 @@ def test_cross_field_validation(conditional_schema):
 
 # Test Form Data Handling
 
+
 def test_get_values():
     """Test collecting form values."""
     schema = {
         "fields": [
             {"name": "field1", "type": "string", "default": "value1"},
-            {"name": "field2", "type": "integer", "default": 42}
+            {"name": "field2", "type": "integer", "default": 42},
         ]
     }
 
@@ -428,10 +371,7 @@ def test_get_values():
 def test_set_values():
     """Test setting form values."""
     schema = {
-        "fields": [
-            {"name": "field1", "type": "string"},
-            {"name": "field2", "type": "integer"}
-        ]
+        "fields": [{"name": "field1", "type": "string"}, {"name": "field2", "type": "integer"}]
     }
 
     form = AutoForm.from_schema(schema)
@@ -445,7 +385,7 @@ def test_reset_to_defaults():
     schema = {
         "fields": [
             {"name": "field1", "type": "string", "default": "default_value"},
-            {"name": "field2", "type": "integer", "default": 100}
+            {"name": "field2", "type": "integer", "default": 100},
         ]
     }
 
@@ -456,6 +396,7 @@ def test_reset_to_defaults():
 
 
 # Test Conditional Fields
+
 
 def test_conditional_visibility(conditional_schema):
     """Test conditional field visibility."""
@@ -476,6 +417,7 @@ def test_field_dependencies(conditional_schema):
 
 # Test JSON Serialization
 
+
 def test_to_json(simple_schema):
     """Test exporting form state to JSON."""
     form = AutoForm.from_schema(simple_schema)
@@ -490,12 +432,8 @@ def test_to_json(simple_schema):
 def test_from_json():
     """Test creating form from JSON state."""
     json_data = {
-        "schema": {
-            "fields": [
-                {"name": "test", "type": "string", "default": "value"}
-            ]
-        },
-        "values": {"test": "loaded_value"}
+        "schema": {"fields": [{"name": "test", "type": "string", "default": "value"}]},
+        "values": {"test": "loaded_value"},
     }
 
     form = AutoForm.from_json(json_data)
@@ -506,13 +444,10 @@ def test_from_json():
 
 # Test Form Actions
 
+
 def test_submit_callback():
     """Test submit callback registration."""
-    schema = {
-        "fields": [
-            {"name": "field1", "type": "string"}
-        ]
-    }
+    schema = {"fields": [{"name": "field1", "type": "string"}]}
 
     form = AutoForm.from_schema(schema)
 
@@ -540,12 +475,10 @@ def test_form_messages():
 
 # Test ValidationError
 
+
 def test_validation_error_creation():
     """Test ValidationError dataclass."""
-    error = ValidationError(
-        field_name="username",
-        message="Username is required"
-    )
+    error = ValidationError(field_name="username", message="Username is required")
 
     assert error.field_name == "username"
     assert error.message == "Username is required"
@@ -554,16 +487,13 @@ def test_validation_error_creation():
 
 def test_validation_error_severity():
     """Test ValidationError severity levels."""
-    error = ValidationError(
-        field_name="age",
-        message="Age should be positive",
-        severity="warning"
-    )
+    error = ValidationError(field_name="age", message="Age should be positive", severity="warning")
 
     assert error.severity == "warning"
 
 
 # Integration Tests
+
 
 def test_full_form_workflow(complex_schema):
     """Test complete form workflow."""
@@ -596,17 +526,8 @@ def test_validation_workflow():
     """Test validation workflow."""
     schema = {
         "fields": [
-            {
-                "name": "required_field",
-                "type": "string",
-                "required": True
-            },
-            {
-                "name": "ranged_int",
-                "type": "integer",
-                "min": 1,
-                "max": 10
-            }
+            {"name": "required_field", "type": "string", "required": True},
+            {"name": "ranged_int", "type": "integer", "min": 1, "max": 10},
         ]
     }
 
@@ -636,16 +557,14 @@ def test_conditional_workflow(conditional_schema):
 
 # Performance Tests
 
+
 def test_large_form_creation():
     """Test creating form with many fields."""
     fields = []
     for i in range(50):
-        fields.append({
-            "name": f"field_{i}",
-            "type": "string",
-            "label": f"Field {i}",
-            "default": f"value_{i}"
-        })
+        fields.append(
+            {"name": f"field_{i}", "type": "string", "label": f"Field {i}", "default": f"value_{i}"}
+        )
 
     schema = {"fields": fields}
     form = AutoForm.from_schema(schema)
@@ -660,11 +579,7 @@ def test_nested_groups():
 
     for i, group in enumerate(groups):
         for j in range(5):
-            fields.append({
-                "name": f"field_{i}_{j}",
-                "type": "string",
-                "group": group
-            })
+            fields.append({"name": f"field_{i}_{j}", "type": "string", "group": group})
 
     schema = {"fields": fields}
     form = AutoForm.from_schema(schema)

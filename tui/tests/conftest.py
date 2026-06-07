@@ -114,22 +114,28 @@ aiida_mock.orm.load_code = MagicMock()
 aiida_mock.engine.submit = MagicMock()
 aiida_mock.engine.run = MagicMock()
 
+
 # Make calcfunction decorator pass through the function (for testing logic)
 def _passthrough_decorator(func):
     """Mock calcfunction that returns the original function."""
     return func
+
 
 aiida_mock.engine.calcfunction = _passthrough_decorator
 
 # Mock ToContext for workflow steps
 aiida_mock.engine.ToContext = MagicMock()
 
+
 # Mock if_ conditional for workflow outlines
 def _mock_if(condition):
     """Mock if_ that returns a callable for outline definition."""
+
     def wrapper(*steps):
         return steps
+
     return wrapper
+
 
 aiida_mock.engine.if_ = _mock_if
 

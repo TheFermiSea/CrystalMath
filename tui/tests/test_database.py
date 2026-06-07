@@ -52,28 +52,34 @@ class TestDatabaseInitialization:
         columns = {row[1] for row in cursor.fetchall()}
 
         expected_columns = {
-            'id', 'name', 'work_dir', 'status', 'created_at',
-            'started_at', 'completed_at', 'pid', 'input_file',
-            'final_energy', 'key_results'
+            "id",
+            "name",
+            "work_dir",
+            "status",
+            "created_at",
+            "started_at",
+            "completed_at",
+            "pid",
+            "input_file",
+            "final_energy",
+            "key_results",
         }
         assert expected_columns.issubset(columns)
 
     def test_indexes_created(self, temp_db):
         """Test that proper indexes are created."""
-        cursor = temp_db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
-        )
+        cursor = temp_db.conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
         indexes = {row[0] for row in cursor.fetchall()}
 
-        assert 'idx_jobs_status' in indexes
-        assert 'idx_jobs_created' in indexes
+        assert "idx_jobs_status" in indexes
+        assert "idx_jobs_created" in indexes
 
     def test_status_constraint(self, temp_db):
         """Test that invalid status values are rejected."""
         with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
             temp_db.conn.execute(
                 "INSERT INTO jobs (name, work_dir, status) VALUES (?, ?, ?)",
-                ("test", "/tmp/test", "INVALID_STATUS")
+                ("test", "/tmp/test", "INVALID_STATUS"),
             )
 
 
@@ -83,9 +89,7 @@ class TestJobCreation:
     def test_create_basic_job(self, temp_db):
         """Test creating a basic job with minimal fields."""
         job_id = temp_db.create_job(
-            name="test_job",
-            work_dir="/tmp/test_job",
-            input_content="CRYSTAL\nEND\n"
+            name="test_job", work_dir="/tmp/test_job", input_content="CRYSTAL\nEND\n"
         )
 
         assert isinstance(job_id, int)
@@ -94,9 +98,7 @@ class TestJobCreation:
     def test_created_job_has_correct_defaults(self, temp_db):
         """Test that created job has proper default values."""
         job_id = temp_db.create_job(
-            name="test_job",
-            work_dir="/tmp/test_job",
-            input_content="CRYSTAL\nEND\n"
+            name="test_job", work_dir="/tmp/test_job", input_content="CRYSTAL\nEND\n"
         )
 
         job = temp_db.get_job(job_id)
@@ -124,9 +126,7 @@ class TestJobCreation:
         job_ids = []
         for i in range(5):
             job_id = temp_db.create_job(
-                name=f"job_{i}",
-                work_dir=f"/tmp/job_{i}",
-                input_content=f"CRYSTAL {i}\nEND\n"
+                name=f"job_{i}", work_dir=f"/tmp/job_{i}", input_content=f"CRYSTAL {i}\nEND\n"
             )
             job_ids.append(job_id)
 
@@ -173,7 +173,7 @@ class TestJobRetrieval:
         # If timestamps identical, ordering by id DESC is acceptable
         for i in range(len(jobs) - 1):
             # Either newer timestamp or same timestamp with higher ID
-            assert jobs[i].created_at >= jobs[i+1].created_at
+            assert jobs[i].created_at >= jobs[i + 1].created_at
 
     def test_job_dataclass_conversion(self, temp_db):
         """Test that database rows are properly converted to Job objects."""
@@ -277,11 +277,7 @@ class TestResultsUpdates:
     def test_update_results_dict_only(self, temp_db):
         """Test updating only key_results dictionary."""
         job_id = temp_db.create_job("test", "/tmp/test", "input")
-        results = {
-            "convergence": "CONVERGED",
-            "iterations": 42,
-            "timing": {"total": 123.45}
-        }
+        results = {"convergence": "CONVERGED", "iterations": 42, "timing": {"total": 123.45}}
         temp_db.update_results(job_id, key_results=results)
 
         job = temp_db.get_job(job_id)
@@ -305,10 +301,7 @@ class TestResultsUpdates:
             "convergence": "CONVERGED",
             "errors": [],
             "warnings": ["Warning 1", "Warning 2"],
-            "metadata": {
-                "version": "23.0",
-                "nested": {"a": 1, "b": [2, 3, 4]}
-            }
+            "metadata": {"version": "23.0", "nested": {"a": 1, "b": [2, 3, 4]}},
         }
         temp_db.update_results(job_id, key_results=results)
 
@@ -411,11 +404,8 @@ class TestEdgeCases:
 
         # Create large nested dictionary
         large_results = {
-            "iterations": [
-                {"energy": -100.0 + i * 0.001, "step": i}
-                for i in range(1000)
-            ],
-            "metadata": {"description": "x" * 10000}
+            "iterations": [{"energy": -100.0 + i * 0.001, "step": i} for i in range(1000)],
+            "metadata": {"description": "x" * 10000},
         }
 
         temp_db.update_results(job_id, key_results=large_results)
@@ -457,7 +447,7 @@ class TestJobLifecycle:
         job_id = temp_db.create_job(
             name="mgo_bulk",
             work_dir="/calculations/0001_mgo_bulk",
-            input_content="CRYSTAL\n0 0 0\n225\n4.21\nEND\n"
+            input_content="CRYSTAL\n0 0 0\n225\n4.21\nEND\n",
         )
 
         job = temp_db.get_job(job_id)
@@ -484,8 +474,8 @@ class TestJobLifecycle:
                 "convergence": "CONVERGED",
                 "iterations": 25,
                 "errors": [],
-                "warnings": ["Tight convergence used"]
-            }
+                "warnings": ["Tight convergence used"],
+            },
         )
 
         job = temp_db.get_job(job_id)
@@ -505,8 +495,8 @@ class TestJobLifecycle:
             job_id,
             key_results={
                 "convergence": "NOT_CONVERGED",
-                "errors": ["SCF did not converge in 100 cycles"]
-            }
+                "errors": ["SCF did not converge in 100 cycles"],
+            },
         )
 
         job = temp_db.get_job(job_id)

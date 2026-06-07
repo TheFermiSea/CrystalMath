@@ -32,7 +32,7 @@ from src.core.queue_manager import (
     ClusterState,
     CircularDependencyError,
     InvalidJobError,
-    QueueManagerError
+    QueueManagerError,
 )
 
 
@@ -455,10 +455,7 @@ class TestRetryLogic:
         for i in range(3):
             # Manually set retry count in database
             with queue_manager.db.connection() as conn:
-                conn.execute(
-                    "UPDATE queue_state SET retry_count = ? WHERE job_id = ?",
-                    (i, job_id)
-                )
+                conn.execute("UPDATE queue_state SET retry_count = ? WHERE job_id = ?", (i, job_id))
                 conn.commit()
 
             temp_db.update_status(job_id, "FAILED")
@@ -573,9 +570,7 @@ class TestResourceAwareScheduling:
         """Test that jobs requiring unavailable resources are not scheduled."""
         job_id = temp_db.create_job("test_job", "/tmp/test", "CRYSTAL\n")
         await queue_manager.enqueue(
-            job_id,
-            cluster_id=1,
-            resource_requirements={"cores": 16, "memory_gb": 32}
+            job_id, cluster_id=1, resource_requirements={"cores": 16, "memory_gb": 32}
         )
 
         # Set cluster resources insufficient
@@ -607,10 +602,7 @@ class TestPersistence:
 
         # Check database
         with temp_db.connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM queue_state WHERE job_id = ?",
-                (job_id,)
-            )
+            cursor = conn.execute("SELECT * FROM queue_state WHERE job_id = ?", (job_id,))
             row = cursor.fetchone()
 
             assert row is not None
@@ -646,10 +638,7 @@ class TestPersistence:
 
         # Check database
         with temp_db.connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM cluster_state WHERE cluster_id = ?",
-                (5,)
-            )
+            cursor = conn.execute("SELECT * FROM cluster_state WHERE cluster_id = ?", (5,))
             row = cursor.fetchone()
 
             assert row is not None
@@ -671,9 +660,7 @@ class TestPersistence:
 
         # Check database
         with temp_db.connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM scheduler_metrics WHERE id = 1"
-            )
+            cursor = conn.execute("SELECT * FROM scheduler_metrics WHERE id = 1")
             row = cursor.fetchone()
 
             assert row is not None
@@ -761,10 +748,7 @@ class TestBackgroundScheduler:
 
         # State should be in database
         with temp_db.connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM queue_state WHERE job_id = ?",
-                (job_id,)
-            )
+            cursor = conn.execute("SELECT * FROM queue_state WHERE job_id = ?", (job_id,))
             assert cursor.fetchone() is not None
 
         await qm.stop()
@@ -934,10 +918,7 @@ class TestJobCancellation:
 
         # Verify job is in queue_state table
         with temp_db.connection() as conn:
-            cursor = conn.execute(
-                "SELECT job_id FROM queue_state WHERE job_id = ?",
-                (job_id,)
-            )
+            cursor = conn.execute("SELECT job_id FROM queue_state WHERE job_id = ?", (job_id,))
             assert cursor.fetchone() is not None
 
         # Cancel the job
@@ -945,8 +926,5 @@ class TestJobCancellation:
 
         # Verify job is removed from queue_state table
         with temp_db.connection() as conn:
-            cursor = conn.execute(
-                "SELECT job_id FROM queue_state WHERE job_id = ?",
-                (job_id,)
-            )
+            cursor = conn.execute("SELECT job_id FROM queue_state WHERE job_id = ?", (job_id,))
             assert cursor.fetchone() is None

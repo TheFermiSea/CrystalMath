@@ -113,9 +113,7 @@ class VASPProgressParser:
 
     # Regex patterns for OUTCAR parsing
     IONIC_STEP_PATTERN = re.compile(r"^\s*(\d+)\s+F=\s*(-?\d+\.\d+E[+-]\d+)")
-    SCF_ITERATION_PATTERN = re.compile(
-        r"^\s*(?:RMM:|DAV:|CG:|DIA:)\s+(\d+)\s+(-?\d+\.\d+E[+-]\d+)"
-    )
+    SCF_ITERATION_PATTERN = re.compile(r"^\s*(?:RMM:|DAV:|CG:|DIA:)\s+(\d+)\s+(-?\d+\.\d+E[+-]\d+)")
     ENERGY_PATTERN = re.compile(r"free\s+energy\s+TOTEN\s*=\s*(-?\d+\.\d+)")
     CONVERGENCE_PATTERN = re.compile(r"reached required accuracy")
     NSW_PATTERN = re.compile(r"NSW\s*=\s*(\d+)")
@@ -148,7 +146,7 @@ class VASPProgressParser:
         Returns:
             VASPProgress object with current status
         """
-        lines = outcar_content.split('\n')
+        lines = outcar_content.split("\n")
 
         # Check for errors first
         for pattern, error_msg in self.ERROR_PATTERNS:
@@ -217,7 +215,7 @@ class VASPProgressParser:
         self.progress.current_energy = latest_energy
 
         # Calculate energy change if we have previous energy
-        if latest_energy is not None and hasattr(self, '_previous_energy'):
+        if latest_energy is not None and hasattr(self, "_previous_energy"):
             self.progress.energy_change = latest_energy - self._previous_energy
         if latest_energy is not None:
             self._previous_energy = latest_energy
@@ -248,8 +246,8 @@ class VASPProgressParser:
     def reset(self) -> None:
         """Reset parser state for new calculation."""
         self.progress = VASPProgress()
-        if hasattr(self, '_previous_energy'):
-            delattr(self, '_previous_energy')
+        if hasattr(self, "_previous_energy"):
+            delattr(self, "_previous_energy")
 
 
 def parse_vasp_progress(outcar_tail: str) -> VASPProgress:

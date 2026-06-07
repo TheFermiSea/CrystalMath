@@ -658,6 +658,15 @@ impl LspService for LspClient {
 mod tests {
     use super::*;
 
+    /// Serializes access to the `CRYSTAL_NODE_PATH` environment variable across
+    /// tests. The Rust test harness runs tests in parallel within a process, and
+    /// `std::env::set_var` / `remove_var` mutate global process state. Without this
+    /// guard, one test's `set_var("bash")` / `remove_var` can clobber another
+    /// test's expected value between its own `set_var` and the `LspClient::start`
+    /// call that reads it, causing intermittent failures. Each test that touches
+    /// `CRYSTAL_NODE_PATH` holds this mutex for the duration of its env access.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_dft_code_type_from_filename() {
         assert_eq!(
@@ -1480,6 +1489,10 @@ done
         script_path: &std::path::Path,
         event_tx: Sender<LspEvent>,
     ) -> Result<LspClient> {
+        // Serialize env access so parallel tests don't race on CRYSTAL_NODE_PATH.
+        // The guard is held until after LspClient::start() reads the variable.
+        let _env_guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
         // Temporarily set CRYSTAL_NODE_PATH to bash
         std::env::set_var("CRYSTAL_NODE_PATH", "bash");
 
@@ -1730,6 +1743,9 @@ done
         // The HangForever server never responds, but the message is sent.
         // The test verifies that if we get a client, dropping it cleans up.
 
+        // Serialize env access so parallel tests don't race on CRYSTAL_NODE_PATH.
+        let _env_guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
         std::env::set_var("CRYSTAL_NODE_PATH", "bash");
 
         // Spawn the child process manually to simulate partial initialization
@@ -1811,6 +1827,10 @@ done
         // and only fails after loading - that's handled by the reader thread.
 
         let (tx, _rx) = std::sync::mpsc::channel::<LspEvent>();
+
+        // Serialize env access so parallel tests don't race on CRYSTAL_NODE_PATH.
+        // The guard is held until after LspClient::start() reads the variable.
+        let _env_guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
         // Set CRYSTAL_NODE_PATH to a nonexistent binary
         std::env::set_var(

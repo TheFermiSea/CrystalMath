@@ -141,7 +141,9 @@ class TestLoadTemplateSecurity:
         with pytest.raises(ValueError, match="Absolute paths not allowed"):
             template_manager.load_template(Path("/etc/passwd.yml"))
 
-    def test_load_template_accepts_valid(self, template_manager, temp_template_dir, valid_template_content):
+    def test_load_template_accepts_valid(
+        self, template_manager, temp_template_dir, valid_template_content
+    ):
         """Test that load_template accepts valid paths."""
         # Create valid template file with unique name
         template_file = temp_template_dir / "security_test_valid.yml"
@@ -165,7 +167,7 @@ class TestSaveTemplateSecurity:
             author="Test",
             tags=[],
             parameters={},
-            input_template="test"
+            input_template="test",
         )
 
         with pytest.raises(ValueError, match="Path traversal attempt detected"):
@@ -180,7 +182,7 @@ class TestSaveTemplateSecurity:
             author="Test",
             tags=[],
             parameters={},
-            input_template="test"
+            input_template="test",
         )
 
         with pytest.raises(ValueError, match="Absolute paths not allowed"):
@@ -195,7 +197,7 @@ class TestSaveTemplateSecurity:
             author="Test",
             tags=[],
             parameters={},
-            input_template="test"
+            input_template="test",
         )
 
         with pytest.raises(ValueError, match="Invalid file extension"):
@@ -210,7 +212,7 @@ class TestSaveTemplateSecurity:
             author="Test",
             tags=[],
             parameters={},
-            input_template="test save"
+            input_template="test save",
         )
 
         # Should succeed (pass relative path with unique name)
@@ -223,7 +225,9 @@ class TestSaveTemplateSecurity:
 class TestListTemplatesSecurity:
     """Test list_templates() only finds valid template files."""
 
-    def test_list_templates_excludes_txt_files(self, template_manager, temp_template_dir, valid_template_content):
+    def test_list_templates_excludes_txt_files(
+        self, template_manager, temp_template_dir, valid_template_content
+    ):
         """Test that list_templates ignores .txt files."""
         # Create valid .yml template with unique name
         valid_file = temp_template_dir / "security_list_test1.yml"
@@ -241,7 +245,9 @@ class TestListTemplatesSecurity:
         template_names = {t.name for t in templates}
         assert "test_template" in template_names
 
-    def test_list_templates_finds_yml_and_yaml(self, template_manager, temp_template_dir, valid_template_content):
+    def test_list_templates_finds_yml_and_yaml(
+        self, template_manager, temp_template_dir, valid_template_content
+    ):
         """Test that list_templates finds both .yml and .yaml files."""
         # Create .yml template with unique name
         yml_file = temp_template_dir / "security_yml_test.yml"

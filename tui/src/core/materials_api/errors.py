@@ -29,10 +29,7 @@ class RateLimitError(MaterialsAPIError):
     """Raised when API rate limit is exceeded."""
 
     def __init__(
-        self,
-        source: str,
-        retry_after: int | None = None,
-        message: str | None = None
+        self, source: str, retry_after: int | None = None, message: str | None = None
     ) -> None:
         """Initialize rate limit error.
 
@@ -52,10 +49,7 @@ class StructureNotFoundError(MaterialsAPIError):
     """Raised when a requested structure is not found."""
 
     def __init__(
-        self,
-        identifier: str,
-        source: str | None = None,
-        message: str | None = None
+        self, identifier: str, source: str | None = None, message: str | None = None
     ) -> None:
         """Initialize not found error.
 

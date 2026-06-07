@@ -160,11 +160,13 @@ async fn test_vasp_generate_from_mp_returns_response() {
             .as_str()
             .unwrap_or_default();
         assert!(
-            error_msg.contains("pymatgen") || error_msg.contains("structure"),
-            "Error should mention pymatgen: {}",
+            error_msg.contains("pymatgen")
+                || error_msg.contains("structure")
+                || error_msg.contains("mp-api"),
+            "Error should mention a missing dependency (pymatgen/mp-api) or structure: {}",
             error_msg
         );
-        println!("VASP generation returned expected error (pymatgen not available)");
+        println!("VASP generation returned expected error (dependency not available)");
     }
 }
 
