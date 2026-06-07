@@ -835,6 +835,24 @@ impl<'a> App<'a> {
                 );
             }
 
+            // Give the cluster-manager Handler first refusal over its six response variants.
+            // Uses a scoped block so that the disjoint field borrows are released before
+            // `response` is moved into the big `match` below.
+            {
+                let mut ctx = crate::handlers::HandlerCtx {
+                    next_request_id: &mut self.next_request_id,
+                    last_error: &mut self.last_error,
+                    needs_redraw: &mut self.needs_redraw,
+                };
+                use crate::handlers::Handler as _;
+                if self
+                    .cluster_manager
+                    .handle_response(&response, self.bridge.as_ref(), &mut ctx)
+                {
+                    continue;
+                }
+            }
+
             match response {
                 BridgeResponse::Jobs { result, .. } => {
                     match result {
@@ -1210,110 +1228,17 @@ impl<'a> App<'a> {
                         }
                     }
                 }
-                // Cluster management responses
-                BridgeResponse::Clusters { request_id, result } => {
-                    if request_id == self.cluster_manager.request_id {
-                        self.cluster_manager.loading = false;
-                        match result {
-                            Ok(clusters) => {
-                                let count = clusters.len();
-                                self.cluster_manager.clusters = clusters;
-                                if count > 0 && self.cluster_manager.selected_index.is_none() {
-                                    self.cluster_manager.selected_index = Some(0);
-                                }
-                                self.cluster_manager
-                                    .set_status(&format!("Loaded {} clusters", count), false);
-                            }
-                            Err(e) => {
-                                self.cluster_manager
-                                    .set_status(&format!("Failed to load clusters: {}", e), true);
-                            }
-                        }
-                    }
-                }
-                BridgeResponse::Cluster { request_id, result } => {
-                    debug!(
-                        "Cluster response (request_id={}): {:?}",
-                        request_id,
-                        result.is_ok()
-                    );
-                }
-                BridgeResponse::ClusterCreated { request_id, result } => {
-                    if request_id == self.cluster_manager.request_id {
-                        self.cluster_manager.loading = false;
-                        match result {
-                            Ok(cluster) => {
-                                self.cluster_manager.set_status(
-                                    &format!("Created cluster '{}'", cluster.name),
-                                    false,
-                                );
-                                self.cluster_manager.cancel(); // Return to list view
-                                self.request_fetch_clusters(); // Refresh the list
-                            }
-                            Err(e) => {
-                                self.cluster_manager
-                                    .set_status(&format!("Failed to create cluster: {}", e), true);
-                            }
-                        }
-                    }
-                }
-                BridgeResponse::ClusterUpdated { request_id, result } => {
-                    if request_id == self.cluster_manager.request_id {
-                        self.cluster_manager.loading = false;
-                        match result {
-                            Ok(()) => {
-                                self.cluster_manager.set_status("Cluster updated", false);
-                                self.cluster_manager.cancel(); // Return to list view
-                                self.request_fetch_clusters(); // Refresh the list
-                            }
-                            Err(e) => {
-                                self.cluster_manager
-                                    .set_status(&format!("Failed to update cluster: {}", e), true);
-                            }
-                        }
-                    }
-                }
-                BridgeResponse::ClusterDeleted { request_id, result } => {
-                    if request_id == self.cluster_manager.request_id {
-                        self.cluster_manager.loading = false;
-                        match result {
-                            Ok(success) => {
-                                if success {
-                                    self.cluster_manager.set_status("Cluster deleted", false);
-                                    self.cluster_manager.cancel(); // Return to list view
-                                    self.cluster_manager.selected_index = None;
-                                    self.request_fetch_clusters(); // Refresh the list
-                                } else {
-                                    self.cluster_manager
-                                        .set_status("Failed to delete cluster", true);
-                                }
-                            }
-                            Err(e) => {
-                                self.cluster_manager
-                                    .set_status(&format!("Failed to delete cluster: {}", e), true);
-                            }
-                        }
-                    }
-                }
-                BridgeResponse::ClusterConnectionTested { request_id, result } => {
-                    if request_id == self.cluster_manager.request_id {
-                        self.cluster_manager.loading = false;
-                        match result {
-                            Ok(conn_result) => {
-                                use crate::ui::ConnectionTestResult;
-                                self.cluster_manager.connection_result =
-                                    Some(ConnectionTestResult {
-                                        success: conn_result.success,
-                                        system_info: conn_result.system_info,
-                                        error: conn_result.error,
-                                    });
-                            }
-                            Err(e) => {
-                                self.cluster_manager
-                                    .set_status(&format!("Connection test failed: {}", e), true);
-                            }
-                        }
-                    }
+                // Cluster management responses are now handled by the cluster Handler
+                // (ClusterManagerState::handle_response) via the intercept above.
+                // These arms are unreachable but must remain to satisfy the exhaustive
+                // match on BridgeResponse until the full Handler registry is in place.
+                BridgeResponse::Clusters { .. }
+                | BridgeResponse::Cluster { .. }
+                | BridgeResponse::ClusterCreated { .. }
+                | BridgeResponse::ClusterUpdated { .. }
+                | BridgeResponse::ClusterDeleted { .. }
+                | BridgeResponse::ClusterConnectionTested { .. } => {
+                    // Claimed by ClusterManagerState::handle_response above.
                 }
                 BridgeResponse::Templates { request_id, result } => {
                     if request_id == self.template_browser.request_id
@@ -3975,141 +3900,90 @@ impl<'a> App<'a> {
     }
 
     /// Close the cluster manager modal.
+    // Called from handle_key (via dispatch_cluster_key); retained as a shim so
+    // callers that open/close the modal without going through the Handler still work.
+    #[allow(dead_code)]
     pub fn close_cluster_manager_modal(&mut self) {
         self.cluster_manager.close();
         self.mark_dirty();
     }
 
     /// Request the list of clusters from the backend.
+    ///
+    /// Thin shim — delegates to the Handler method so existing tests remain green.
     pub fn request_fetch_clusters(&mut self) {
-        let request_id = self.next_request_id();
-        self.cluster_manager.request_id = request_id;
-        self.cluster_manager.loading = true;
-        if let Err(e) = self.bridge.request_fetch_clusters(request_id) {
-            self.cluster_manager
-                .set_status(&format!("Failed to fetch clusters: {}", e), true);
-            self.cluster_manager.loading = false;
-        }
-        self.mark_dirty();
+        let mut ctx = crate::handlers::HandlerCtx {
+            next_request_id: &mut self.next_request_id,
+            last_error: &mut self.last_error,
+            needs_redraw: &mut self.needs_redraw,
+        };
+        self.cluster_manager.fetch_clusters(self.bridge.as_ref(), &mut ctx);
     }
 
     /// Request to create a new cluster from form data.
+    ///
+    /// Thin shim — delegates to the Handler method so existing tests remain green.
+    #[allow(dead_code)]
     pub fn create_cluster_from_form(&mut self) {
-        match self.cluster_manager.build_config() {
-            Ok(config) => {
-                let request_id = self.next_request_id();
-                self.cluster_manager.request_id = request_id;
-                self.cluster_manager.loading = true;
-                if let Err(e) = self.bridge.request_create_cluster(&config, request_id) {
-                    self.cluster_manager
-                        .set_status(&format!("Failed to create cluster: {}", e), true);
-                    self.cluster_manager.loading = false;
-                }
-                self.mark_dirty();
-            }
-            Err(e) => {
-                self.cluster_manager.set_status(&e, true);
-                self.mark_dirty();
-            }
-        }
+        let mut ctx = crate::handlers::HandlerCtx {
+            next_request_id: &mut self.next_request_id,
+            last_error: &mut self.last_error,
+            needs_redraw: &mut self.needs_redraw,
+        };
+        self.cluster_manager.create_from_form(self.bridge.as_ref(), &mut ctx);
     }
 
     /// Request to update an existing cluster from form data.
+    ///
+    /// Thin shim — delegates to the Handler method so existing tests remain green.
+    #[allow(dead_code)]
     pub fn update_cluster_from_form(&mut self) {
-        let cluster_id = match self.cluster_manager.editing_cluster_id {
-            Some(id) => id,
-            None => {
-                self.cluster_manager
-                    .set_status("No cluster selected for editing", true);
-                self.mark_dirty();
-                return;
-            }
+        let mut ctx = crate::handlers::HandlerCtx {
+            next_request_id: &mut self.next_request_id,
+            last_error: &mut self.last_error,
+            needs_redraw: &mut self.needs_redraw,
         };
-
-        match self.cluster_manager.build_config() {
-            Ok(config) => {
-                let request_id = self.next_request_id();
-                self.cluster_manager.request_id = request_id;
-                self.cluster_manager.loading = true;
-                if let Err(e) = self
-                    .bridge
-                    .request_update_cluster(cluster_id, &config, request_id)
-                {
-                    self.cluster_manager
-                        .set_status(&format!("Failed to update cluster: {}", e), true);
-                    self.cluster_manager.loading = false;
-                }
-                self.mark_dirty();
-            }
-            Err(e) => {
-                self.cluster_manager.set_status(&e, true);
-                self.mark_dirty();
-            }
-        }
+        self.cluster_manager.update_from_form(self.bridge.as_ref(), &mut ctx);
     }
 
     /// Request to delete the selected cluster.
+    ///
+    /// Thin shim — delegates to the Handler method so existing tests remain green.
+    #[allow(dead_code)]
     pub fn delete_selected_cluster(&mut self) {
-        let cluster_id = match self.cluster_manager.selected_cluster() {
-            Some(c) => match c.id {
-                Some(id) => id,
-                None => {
-                    self.cluster_manager.set_status("Cluster has no ID", true);
-                    self.mark_dirty();
-                    return;
-                }
-            },
-            None => {
-                self.cluster_manager.set_status("No cluster selected", true);
-                self.mark_dirty();
-                return;
-            }
+        let mut ctx = crate::handlers::HandlerCtx {
+            next_request_id: &mut self.next_request_id,
+            last_error: &mut self.last_error,
+            needs_redraw: &mut self.needs_redraw,
         };
-
-        let request_id = self.next_request_id();
-        self.cluster_manager.request_id = request_id;
-        self.cluster_manager.loading = true;
-        if let Err(e) = self.bridge.request_delete_cluster(cluster_id, request_id) {
-            self.cluster_manager
-                .set_status(&format!("Failed to delete cluster: {}", e), true);
-            self.cluster_manager.loading = false;
-        }
-        self.mark_dirty();
+        self.cluster_manager.delete_selected(self.bridge.as_ref(), &mut ctx);
     }
 
     /// Request to test SSH connection to the selected cluster.
+    ///
+    /// Thin shim — delegates to the Handler method so existing tests remain green.
+    #[allow(dead_code)]
     pub fn test_selected_cluster_connection(&mut self) {
-        let cluster_id = match self.cluster_manager.selected_cluster() {
-            Some(c) => match c.id {
-                Some(id) => id,
-                None => {
-                    self.cluster_manager.set_status("Cluster has no ID", true);
-                    self.mark_dirty();
-                    return;
-                }
-            },
-            None => {
-                self.cluster_manager.set_status("No cluster selected", true);
-                self.mark_dirty();
-                return;
-            }
+        let mut ctx = crate::handlers::HandlerCtx {
+            next_request_id: &mut self.next_request_id,
+            last_error: &mut self.last_error,
+            needs_redraw: &mut self.needs_redraw,
         };
+        self.cluster_manager.test_connection(self.bridge.as_ref(), &mut ctx);
+    }
 
-        let request_id = self.next_request_id();
-        self.cluster_manager.request_id = request_id;
-        self.cluster_manager.loading = true;
-        self.cluster_manager.connection_result = None;
-        self.cluster_manager
-            .set_status("Testing connection...", false);
-        if let Err(e) = self
-            .bridge
-            .request_test_cluster_connection(cluster_id, request_id)
-        {
-            self.cluster_manager
-                .set_status(&format!("Failed to test connection: {}", e), true);
-            self.cluster_manager.loading = false;
-        }
-        self.mark_dirty();
+    /// Dispatch a key event to the cluster-manager Handler.
+    ///
+    /// Called from the input ladder in main.rs.  Builds a `HandlerCtx` from the
+    /// disjoint App fields and delegates to `ClusterManagerState::handle_key`.
+    pub(crate) fn dispatch_cluster_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crate::handlers::Handler as _;
+        let mut ctx = crate::handlers::HandlerCtx {
+            next_request_id: &mut self.next_request_id,
+            last_error: &mut self.last_error,
+            needs_redraw: &mut self.needs_redraw,
+        };
+        self.cluster_manager.handle_key(key, self.bridge.as_ref(), &mut ctx);
     }
 
     // ===== SLURM Queue Modal =====
