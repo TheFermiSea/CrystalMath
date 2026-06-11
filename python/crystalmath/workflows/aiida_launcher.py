@@ -556,7 +556,6 @@ def extract_restart_geometry(job_pk: int) -> dict[str, Any] | None:
 
         # Try to parse from retrieved files
         if hasattr(node, "outputs") and hasattr(node.outputs, "retrieved"):
-            retrieved = node.outputs.retrieved
             # Look for .gui or geometry output files
             try:
                 # This would require parsing CRYSTAL output for last geometry

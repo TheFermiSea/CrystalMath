@@ -363,7 +363,7 @@ class SLURMRunner(RemoteBaseRunner):
         Call this when shutting down the runner to ensure proper cleanup.
         """
         # Cancel all slot monitor tasks
-        for job_handle, task in list(self._slot_monitors.items()):
+        for _job_handle, task in list(self._slot_monitors.items()):
             if not task.done():
                 task.cancel()
 
@@ -937,10 +937,7 @@ class SLURMRunner(RemoteBaseRunner):
             tres_alloc = j.get("tres_alloc_str", "") or j.get("tres_req_str", "")
             # Also check gres field for GPU info
             gres = j.get("gres_detail", [])
-            if isinstance(gres, list) and gres:
-                gres_str = ",".join(gres)
-            else:
-                gres_str = ""
+            gres_str = ",".join(gres) if isinstance(gres, list) and gres else ""
 
             result.append(
                 {

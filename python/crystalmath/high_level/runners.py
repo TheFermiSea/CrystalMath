@@ -1023,7 +1023,7 @@ class BaseAnalysisRunner(ABC):
             start_time = datetime.now()
 
             for idx, step in enumerate(self._steps):
-                step_start = datetime.now()
+                datetime.now()
 
                 # Yield progress for step start
                 yield ProgressUpdate(
@@ -1523,7 +1523,6 @@ class StandardAnalysis(BaseAnalysisRunner):
         """
         steps: list[WorkflowStep] = []
         previous_step: str | None = None
-        previous_code: DFTCode | None = None
 
         # Select DFT code
         code = self._dft_code or self._select_code(WorkflowType.SCF)
@@ -1539,7 +1538,6 @@ class StandardAnalysis(BaseAnalysisRunner):
             )
             steps.append(relax_step)
             previous_step = "relax"
-            previous_code = code
 
         # SCF step
         scf_step = WorkflowStep(
@@ -1929,7 +1927,7 @@ class PhononAnalysis(BaseAnalysisRunner):
 
         # Estimate number of displacements
         n_atoms_primitive = 10  # Estimate
-        n_displacements = n_atoms_primitive * 2 * 3  # 2 displacements per direction
+        n_atoms_primitive * 2 * 3  # 2 displacements per direction
 
         return ResourceRequirements(
             num_nodes=2,

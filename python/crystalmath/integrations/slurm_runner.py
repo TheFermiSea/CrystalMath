@@ -1391,7 +1391,10 @@ class SLURMWorkflowRunner:
                             results[f"chi2_{component}_abs"] = abs_parts
 
                         # Find peak value (C-exciton resonance)
-                        abs_chi = [math.sqrt(r**2 + i**2) for r, i in zip(real_parts, imag_parts)]
+                        abs_chi = [
+                            math.sqrt(r**2 + i**2)
+                            for r, i in zip(real_parts, imag_parts, strict=False)
+                        ]
                         peak_idx = abs_chi.index(max(abs_chi))
                         results[f"chi2_{component}_peak_energy"] = energies[peak_idx]
                         results[f"chi2_{component}_peak_value"] = abs_chi[peak_idx]

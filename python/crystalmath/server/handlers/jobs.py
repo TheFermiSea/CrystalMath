@@ -153,7 +153,7 @@ async def handle_jobs_submit(
         }
 
     # Validate POTCARs
-    elements = set(str(s) for s in atoms.get_chemical_symbols())
+    elements = {str(s) for s in atoms.get_chemical_symbols()}
     valid, potcar_error = validate_potcars(elements)
     if not valid:
         return {

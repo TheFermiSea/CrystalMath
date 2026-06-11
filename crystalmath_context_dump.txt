@@ -1,0 +1,75 @@
+=== CrystalMath Deep Structural Context Miner ===
+Generated on: Thu Jun 11 13:39:51 CDT 2026
+==================================================
+
+--- [SECTION 1: src/main.rs RENDERING & EVENT PUMP] ---
+
+--- [SECTION 2: src/ui/editor.rs HANDLING & STATE] ---
+pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Split area: editor (main) + diagnostics panel (bottom, if any diagnostics)
+    let has_diagnostics = !app.lsp_diagnostics.is_empty();
+    let chunks = if has_diagnostics {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(5), Constraint::Length(6)])
+            .split(area)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(100)])
+            .split(area)
+    };
+
+    // Render editor
+    render_editor(frame, app, chunks[0]);
+
+    // Render diagnostics panel if needed
+    if has_diagnostics && chunks.len() > 1 {
+        render_diagnostics(frame, app, chunks[1]);
+
+--- [SECTION 3: PYTHON CODE MODES & BASE TASKDOCS] ---
+Files in python/crystalmath/codes/:
+
+--- [SECTION 4: src/app.rs CORE FIELD SCHEMAS] ---
+pub struct App<'a> {
+    /// Flag to exit the application.
+    pub should_quit: bool,
+
+    /// Currently active tab.
+    pub current_tab: AppTab,
+
+    /// Last non-fatal error message (displayed in status bar, auto-clears).
+    pub last_error: Option<String>,
+
+    /// Timestamp when last_error was set (for auto-clear after 5 seconds).
+    last_error_time: Option<std::time::Instant>,
+
+    /// Dirty flag - set when UI needs to be redrawn.
+    /// Resets to false after each draw.
+    needs_redraw: bool,
+
+    // ===== Jobs Tab State =====
+    /// Jobs state (extracted domain state).
+    pub jobs_state: JobsState,
+
+    // ===== SLURM Queue State =====
+    /// SLURM queue entries from remote cluster.
+    pub slurm_queue: Vec<SlurmQueueEntry>,
+
+    /// Request ID for the current SLURM queue fetch (to ignore stale responses).
+    pub slurm_request_id: usize,
+
+    // ===== Editor Tab State =====
+    /// Text editor widget.
+    pub editor: TextArea<'a>,
+
+    /// Path of file being edited.
+    pub editor_file_path: Option<String>,
+
+    /// URI of file being edited (for LSP matching).
+    pub editor_file_uri: Option<String>,
+
+    /// DFT code type for the current file.
+    pub editor_dft_code: Option<DftCodeType>,
+
+==================================================

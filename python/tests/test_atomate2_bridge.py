@@ -12,11 +12,11 @@ Many methods are stubs for Phase 3 implementation.
 
 from __future__ import annotations
 
-import pytest
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
 from dataclasses import dataclass
+from typing import Any
+from unittest.mock import Mock
+
+import pytest
 
 # Check if optional dependencies are available
 try:
@@ -54,7 +54,7 @@ class MockFlow:
     """Mock jobflow Flow for testing."""
 
     name: str
-    jobs: List[MockJob]
+    jobs: list[MockJob]
     uuid: str = "flow-uuid-1234"
     state: str = "READY"
 
@@ -669,8 +669,8 @@ class TestFactoryFunctions:
     def test_get_atomate2_bridge_with_execution_mode(self) -> None:
         """Test get_atomate2_bridge with execution mode."""
         from crystalmath.integrations.atomate2_bridge import (
-            get_atomate2_bridge,
             ExecutionMode,
+            get_atomate2_bridge,
         )
 
         bridge = get_atomate2_bridge(execution_mode=ExecutionMode.REMOTE)

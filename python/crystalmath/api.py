@@ -11,6 +11,7 @@ current Rust bridge, but they should be treated as adapters, not core APIs.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from pathlib import Path
@@ -827,7 +828,7 @@ class CrystalController:
 
         try:
             symmetry = get_symmetry_info(standardized).to_dict()
-        except Exception as e:
+        except Exception:
             symmetry = None
 
         return {
@@ -954,7 +955,7 @@ class CrystalController:
                     "crystal_system": sga.get_crystal_system(),
                     "point_group": sga.get_point_group_symbol(),
                 }
-            except Exception as e:
+            except Exception:
                 preview["symmetry"] = None
 
             return _ok_response(preview)
@@ -1223,10 +1224,10 @@ class CrystalController:
             # Join jobs with remote_jobs to get the handle
             cursor = self._db.conn.execute(
                 """
-                SELECT j.id, j.cluster_id, r.remote_handle 
+                SELECT j.id, j.cluster_id, r.remote_handle
                 FROM jobs j
                 JOIN remote_jobs r ON j.id = r.job_id
-                WHERE j.status IN ('SUBMITTED', 'QUEUED', 'RUNNING') 
+                WHERE j.status IN ('SUBMITTED', 'QUEUED', 'RUNNING')
                 AND j.runner_type = 'slurm'
                 """
             )
@@ -1964,12 +1965,12 @@ class CrystalController:
                 try:
                     stdout = node.outputs.retrieved.get_object_content("_scheduler-stdout.txt")
                     stdout_lines = stdout.splitlines()[-50:]
-                except Exception as e:
+                except Exception:
                     pass
                 try:
                     stderr = node.outputs.retrieved.get_object_content("_scheduler-stderr.txt")
                     stderr_lines = stderr.splitlines()[-50:]
-                except Exception as e:
+                except Exception:
                     pass
 
             # Combine error output
@@ -1984,10 +1985,8 @@ class CrystalController:
             # Get input content if available
             input_content = None
             if "input_file" in node.inputs:
-                try:
+                with contextlib.suppress(Exception):
                     input_content = node.inputs.input_file.get_content()
-                except Exception as e:
-                    pass
 
             return {
                 "job_name": node.label or f"Job {pk}",
@@ -2028,7 +2027,7 @@ class CrystalController:
                             output_parts.append(
                                 f"=== {out_file} (last 100 lines) ===\n" + "\n".join(lines)
                             )
-                        except Exception as e:
+                        except Exception:
                             pass
                         break
 
@@ -2039,7 +2038,7 @@ class CrystalController:
                         stderr = stderr_path.read_text()
                         if stderr.strip():
                             output_parts.append("=== STDERR ===\n" + stderr[-5000:])
-                    except Exception as e:
+                    except Exception:
                         pass
 
                 error_output = (
@@ -2311,7 +2310,7 @@ class CrystalController:
                     if quacc_available
                     else []
                 )
-            except Exception as e:
+            except Exception:
                 quacc_available = False
                 quacc_workflows = []
 
@@ -2996,14 +2995,16 @@ def create_controller(
         backend_preference=backend_preference,
     )
 
-
     def get_job_visualization_data_json(self, job_id: int) -> str:
         import json
+
         from crystalmath.server.handlers.visualization import handle_get_visualization_data
+
         return json.dumps(handle_get_visualization_data(job_id, self._db))
 
     def generate_job_plot_image_json(self, job_id: int, plot_type: str, cache_dir: str) -> str:
         import json
-        from crystalmath.server.handlers.visualization import handle_generate_plot_image
-        return json.dumps(handle_generate_plot_image(job_id, plot_type, cache_dir, self._db))
 
+        from crystalmath.server.handlers.visualization import handle_generate_plot_image
+
+        return json.dumps(handle_generate_plot_image(job_id, plot_type, cache_dir, self._db))

@@ -917,7 +917,8 @@ def get_dimensionality(
     except ImportError:
         # Fallback: simple heuristic based on cell geometry
         warnings.warn(
-            "Full dimensionality analysis requires pymatgen >= 2022. Using simplified heuristic."
+            "Full dimensionality analysis requires pymatgen >= 2022. Using simplified heuristic.",
+            stacklevel=2,
         )
 
         # Check for vacuum regions along each axis

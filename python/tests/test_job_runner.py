@@ -67,7 +67,7 @@ class TestPotcarValidation:
         if "quacc" in sys.modules:
             monkeypatch.setattr(sys.modules["quacc"], "SETTINGS", None, raising=False)
 
-        path = get_potcar_path()
+        get_potcar_path()
         # May or may not be None depending on quacc installation
         # Just verify it doesn't crash
 

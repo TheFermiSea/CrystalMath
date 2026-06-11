@@ -388,7 +388,7 @@ class TestClusterConfigStore:
     def test_cluster_config_store_creates_parent_dir(self, tmp_path: Path) -> None:
         """Creates parent directory if it doesn't exist."""
         config_path = tmp_path / "subdir" / "clusters.json"
-        store = ClusterConfigStore(config_path=config_path)
+        ClusterConfigStore(config_path=config_path)
 
         # Parent should be created
         assert config_path.parent.exists()
@@ -572,6 +572,6 @@ class TestJobStore:
     def test_job_store_creates_parent_dir(self, tmp_path: Path) -> None:
         """Creates parent directory if needed."""
         store_path = tmp_path / "subdir" / "jobs.json"
-        store = JobStore(store_path=store_path)
+        JobStore(store_path=store_path)
 
         assert store_path.parent.exists()

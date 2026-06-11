@@ -11,7 +11,7 @@ Includes support for:
 import json
 import sqlite3
 import warnings
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -22,7 +22,7 @@ from typing import Any
 def _safe_get_column(row: sqlite3.Row, col_name: str, default: Any = None) -> Any:
     """Safely get a column value from a sqlite3.Row, returning default if column doesn't exist."""
     try:
-        return row[col_name] if col_name in row.keys() else default
+        return row.get(col_name, default)
     except IndexError:
         return default
 
@@ -602,10 +602,8 @@ class Database:
             # Migration may have been partially applied - check and skip if needed
             if "table jobs_new already exists" in str(e).lower():
                 # Clean up partial migration attempt
-                try:
+                with suppress(Exception):
                     conn.execute("DROP TABLE IF EXISTS jobs_new")
-                except Exception:
-                    pass
                 raise
 
     def _migrate_v4_to_v5(self, conn: sqlite3.Connection) -> None:
@@ -962,7 +960,7 @@ class Database:
             key_results = json.loads(row["key_results"])
 
         parallelism_config = None
-        if "parallelism_config" in row.keys() and row["parallelism_config"]:
+        if "parallelism_config" in row and row["parallelism_config"]:
             parallelism_config = json.loads(row["parallelism_config"])
 
         return Job(
@@ -1128,7 +1126,7 @@ class Database:
         connection_config = json.loads(row["connection_config"])
 
         setup_commands = None
-        if "setup_commands" in row.keys() and row["setup_commands"]:
+        if "setup_commands" in row and row["setup_commands"]:
             try:
                 setup_commands = json.loads(row["setup_commands"])
             except json.JSONDecodeError:

@@ -538,7 +538,7 @@ class CrystalD12Generator:
         else:
             # Custom basis sets - must provide for each element
             # Get unique elements in structure
-            elements = set(site.specie.symbol for site in structure.sites)
+            elements = {site.specie.symbol for site in structure.sites}
 
             for element in sorted(elements):
                 z = CrystalD12Generator._get_atomic_number(element)
@@ -715,7 +715,7 @@ class CrystalD12Generator:
         sections.append(basis_block)
 
         # 4. Hamiltonian block
-        ham_config = HamiltonianConfig(
+        HamiltonianConfig(
             method=hamiltonian,
             functional=functional,
             grid=grid,

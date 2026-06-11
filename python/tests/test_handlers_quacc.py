@@ -3,15 +3,12 @@
 Tests the recipes.list, clusters.list, and jobs.list JSON-RPC handlers.
 """
 
-import asyncio
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 from crystalmath.quacc.store import JobMetadata, JobStatus
-
 
 # =============================================================================
 # Handler Registration Tests

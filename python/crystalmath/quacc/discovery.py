@@ -57,7 +57,7 @@ def discover_vasp_recipes() -> list[dict[str, Any]]:
         return recipes
 
     # Walk subpackages
-    for importer, modname, ispkg in pkgutil.walk_packages(
+    for _importer, modname, _ispkg in pkgutil.walk_packages(
         path=package_path,
         prefix="quacc.recipes.vasp.",
     ):

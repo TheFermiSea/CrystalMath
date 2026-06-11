@@ -632,7 +632,7 @@ class RemoteBaseRunner(BaseRunner):
             for ext in self.code_config.input_extensions:
                 patterns.append(f"*{ext}")
             # Auxiliary input files
-            for ext in self.code_config.auxiliary_inputs.keys():
+            for ext in self.code_config.auxiliary_inputs:
                 patterns.append(f"*{ext}")
 
         files_to_upload = []

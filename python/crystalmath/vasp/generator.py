@@ -180,7 +180,7 @@ class VaspInputGenerator:
         Returns:
             Estimated ENCUT in eV.
         """
-        elements = set(str(s) for s in self.structure.species)
+        elements = {str(s) for s in self.structure.species}
         max_enmax = max(ENMAX_TABLE.get(e, ENMAX_TABLE["DEFAULT"]) for e in elements)
         return max_enmax * 1.3  # 30% buffer for accuracy
 

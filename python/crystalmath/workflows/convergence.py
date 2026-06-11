@@ -146,7 +146,7 @@ class ConvergenceStudy:
         """
         inputs = []
 
-        for i, value in enumerate(self.config.values):
+        for _i, value in enumerate(self.config.values):
             job_name = f"{self.config.name_prefix}_{self.config.parameter.value}_{value}"
             input_content = self._modify_input(value)
             inputs.append((job_name, input_content))

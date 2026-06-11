@@ -220,9 +220,8 @@ class SLURMTemplateGenerator:
                 )
 
         # Email (optional)
-        if params.email:
-            if not self._EMAIL_PATTERN.match(params.email):
-                errors.append(f"Invalid email address: {params.email}")
+        if params.email and not self._EMAIL_PATTERN.match(params.email):
+            errors.append(f"Invalid email address: {params.email}")
 
         # Email type (optional)
         if params.email_type:
@@ -261,12 +260,11 @@ class SLURMTemplateGenerator:
                 errors.append(f"Invalid job ID '{dep}': must be numeric")
 
         # Array specification
-        if params.array:
-            if not self._ARRAY_PATTERN.match(params.array):
-                errors.append(
-                    f"Invalid array specification '{params.array}': "
-                    "must contain only digits, commas, hyphens, and colons"
-                )
+        if params.array and not self._ARRAY_PATTERN.match(params.array):
+            errors.append(
+                f"Invalid array specification '{params.array}': "
+                "must contain only digits, commas, hyphens, and colons"
+            )
 
         # Numeric fields
         if params.nodes < 1:

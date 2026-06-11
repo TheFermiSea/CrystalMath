@@ -13,7 +13,7 @@ import asyncio
 import logging
 import time
 import warnings
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -122,10 +122,8 @@ class ConnectionManager:
         # Cancel health check task
         if self._health_check_task:
             self._health_check_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._health_check_task
-            except asyncio.CancelledError:
-                pass
 
         # Close all connections
         async with self._lock:

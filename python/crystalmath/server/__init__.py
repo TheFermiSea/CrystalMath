@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -368,10 +369,8 @@ class JsonRpcServer:
         finally:
             self._active_connections -= 1
             writer.close()
-            try:
+            with contextlib.suppress(Exception):
                 await writer.wait_closed()
-            except Exception:
-                pass
             logger.debug(f"Client disconnected: {peer}")
 
     async def _write_response(
@@ -459,10 +458,8 @@ class JsonRpcServer:
         finally:
             logger.info("Server shutting down...")
             inactivity_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await inactivity_task
-            except asyncio.CancelledError:
-                pass
 
             # Clean up socket file
             if self.socket_path.exists():
