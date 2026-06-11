@@ -2995,3 +2995,15 @@ def create_controller(
         db_path=db_path,
         backend_preference=backend_preference,
     )
+
+
+    def get_job_visualization_data_json(self, job_id: int) -> str:
+        import json
+        from crystalmath.server.handlers.visualization import handle_get_visualization_data
+        return json.dumps(handle_get_visualization_data(job_id, self._db))
+
+    def generate_job_plot_image_json(self, job_id: int, plot_type: str, cache_dir: str) -> str:
+        import json
+        from crystalmath.server.handlers.visualization import handle_generate_plot_image
+        return json.dumps(handle_generate_plot_image(job_id, plot_type, cache_dir, self._db))
+
