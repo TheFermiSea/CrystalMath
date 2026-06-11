@@ -13,9 +13,9 @@ Example:
     >>> print(inputs.incar)
 """
 
+from .generator import VaspInputGenerator, VaspInputs
 from .incar import IncarBuilder, IncarPreset
 from .kpoints import KpointsBuilder, KpointsMesh
-from .generator import VaspInputGenerator, VaspInputs
 
 __all__ = [
     "IncarBuilder",

@@ -587,9 +587,11 @@ class PWDConverter:
             node_id = f"func_{step.name}"
             step_ext = CrystalMathExtensions(
                 code=step.code,
-                workflow_type=step.workflow_type.value
-                if hasattr(step.workflow_type, "value")
-                else str(step.workflow_type),
+                workflow_type=(
+                    step.workflow_type.value
+                    if hasattr(step.workflow_type, "value")
+                    else str(step.workflow_type)
+                ),
             )
 
             # Add resource requirements if present

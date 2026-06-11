@@ -19,6 +19,4 @@ from crystalmath.server._handlers import (
 __all__ = ["HANDLER_REGISTRY", "Handler", "register_handler"]
 
 # Import handler modules to trigger registration
-from . import clusters
-from . import jobs
-from . import recipes
+from . import clusters, jobs, recipes

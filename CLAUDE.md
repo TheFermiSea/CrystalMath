@@ -70,3 +70,7 @@ bd close <id>         # Complete work
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
+
+## Static Analysis & Quality Gates
+- Check architectural rules: `sg scan`
+- Auto-fix code format style regressions: `sg run --pattern 'serde_json::from_str($BUFF)' --rewrite 'serde_json::from_slice($BUFF)' -i`

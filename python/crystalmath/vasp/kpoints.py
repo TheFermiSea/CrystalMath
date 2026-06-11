@@ -1,10 +1,9 @@
 """KPOINTS file generation utilities."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import numpy as np
     from pymatgen.core import Structure
 
 
@@ -17,8 +16,8 @@ class KpointsMesh:
         shift: Grid shift in fractional coordinates (default: Gamma-centered).
     """
 
-    mesh: Tuple[int, int, int]
-    shift: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    mesh: tuple[int, int, int]
+    shift: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def to_string(self) -> str:
         """Generate KPOINTS file content.
@@ -160,7 +159,7 @@ def generate_band_path_kpoints(
     from pymatgen.symmetry.bandstructure import HighSymmKpath
 
     kpath = HighSymmKpath(structure)
-    kpoints: List[str] = ["Band structure k-path"]
+    kpoints: list[str] = ["Band structure k-path"]
     kpoints.append(str(line_density))
     kpoints.append("Line-mode")
     kpoints.append("Reciprocal")

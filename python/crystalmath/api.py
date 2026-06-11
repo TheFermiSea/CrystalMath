@@ -827,7 +827,7 @@ class CrystalController:
 
         try:
             symmetry = get_symmetry_info(standardized).to_dict()
-        except Exception:
+        except Exception as e:
             symmetry = None
 
         return {
@@ -954,7 +954,7 @@ class CrystalController:
                     "crystal_system": sga.get_crystal_system(),
                     "point_group": sga.get_point_group_symbol(),
                 }
-            except Exception:
+            except Exception as e:
                 preview["symmetry"] = None
 
             return _ok_response(preview)
@@ -1964,12 +1964,12 @@ class CrystalController:
                 try:
                     stdout = node.outputs.retrieved.get_object_content("_scheduler-stdout.txt")
                     stdout_lines = stdout.splitlines()[-50:]
-                except Exception:
+                except Exception as e:
                     pass
                 try:
                     stderr = node.outputs.retrieved.get_object_content("_scheduler-stderr.txt")
                     stderr_lines = stderr.splitlines()[-50:]
-                except Exception:
+                except Exception as e:
                     pass
 
             # Combine error output
@@ -1986,7 +1986,7 @@ class CrystalController:
             if "input_file" in node.inputs:
                 try:
                     input_content = node.inputs.input_file.get_content()
-                except Exception:
+                except Exception as e:
                     pass
 
             return {
@@ -2028,7 +2028,7 @@ class CrystalController:
                             output_parts.append(
                                 f"=== {out_file} (last 100 lines) ===\n" + "\n".join(lines)
                             )
-                        except Exception:
+                        except Exception as e:
                             pass
                         break
 
@@ -2039,7 +2039,7 @@ class CrystalController:
                         stderr = stderr_path.read_text()
                         if stderr.strip():
                             output_parts.append("=== STDERR ===\n" + stderr[-5000:])
-                    except Exception:
+                    except Exception as e:
                         pass
 
                 error_output = (
@@ -2311,7 +2311,7 @@ class CrystalController:
                     if quacc_available
                     else []
                 )
-            except Exception:
+            except Exception as e:
                 quacc_available = False
                 quacc_workflows = []
 

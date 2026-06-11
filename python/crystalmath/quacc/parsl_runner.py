@@ -4,8 +4,8 @@ This module implements job submission and tracking using Parsl's
 futures-based execution model.
 """
 
-from typing import Any, Dict, Optional
 import logging
+from typing import Any
 
 from crystalmath.quacc.runner import JobRunner, JobState
 
@@ -29,8 +29,8 @@ class ParslRunner(JobRunner):
         """Initialize the Parsl runner."""
         # In-memory storage for futures
         # Note: Not persistent - jobs become "orphaned" on restart
-        self._futures: Dict[str, Any] = {}
-        self._job_metadata: Dict[str, Dict] = {}
+        self._futures: dict[str, Any] = {}
+        self._job_metadata: dict[str, dict] = {}
 
     def submit(
         self,
@@ -100,7 +100,7 @@ class ParslRunner(JobRunner):
         except Exception:
             return JobState.FAILED
 
-    def get_result(self, job_id: str) -> Optional[Dict]:
+    def get_result(self, job_id: str) -> dict | None:
         """Get job result from Parsl future.
 
         Returns None if job is still running.

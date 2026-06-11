@@ -637,7 +637,8 @@ class Database:
             conn.execute("BEGIN TRANSACTION")
             try:
                 # Create the job_results table
-                conn.execute("""
+                conn.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS job_results (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         job_id INTEGER NOT NULL UNIQUE,
@@ -649,19 +650,22 @@ class Database:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
                     )
-                """)
+                """
+                )
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_job_results_job_id ON job_results (job_id)"
                 )
 
                 # Only migrate existing data if key_results column exists
                 if has_key_results:
-                    conn.execute("""
+                    conn.execute(
+                        """
                         INSERT OR IGNORE INTO job_results (job_id, key_results, created_at)
                         SELECT id, key_results, CURRENT_TIMESTAMP
                         FROM jobs
                         WHERE key_results IS NOT NULL
-                    """)
+                    """
+                    )
 
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (5,))
                 conn.execute("COMMIT")

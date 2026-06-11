@@ -1,0 +1,11 @@
+id: legacy-pyo3-bridge-tracker
+language: rust
+rule:
+  any:
+    - pattern: Python::with_gil($$$)
+    - pattern: pyo3::$$$
+message: >-
+  [Migration Context] Legacy PyO3 direct Python interpreter dependency boundary detected.
+  Ensure this code path is targeted for full extraction to the native IPC client-server
+  framework (python/crystalmath/server/) mapped out in ADR-006.
+severity: warning

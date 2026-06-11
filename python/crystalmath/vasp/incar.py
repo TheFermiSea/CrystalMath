@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class IncarPreset(Enum):
@@ -36,7 +36,7 @@ class IncarBuilder:
     """
 
     # Electronic convergence
-    encut: Optional[float] = None
+    encut: float | None = None
     ediff: float = 1e-6
     nelm: int = 100
 
@@ -58,7 +58,7 @@ class IncarBuilder:
     ncore: int = 4
 
     # Additional parameters
-    extra: Dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_preset(cls, preset: IncarPreset, **overrides) -> "IncarBuilder":

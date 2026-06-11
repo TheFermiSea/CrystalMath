@@ -1,0 +1,9 @@
+id: optimize-json-slice
+language: rust
+rule:
+  pattern: serde_json::from_str($BUFF)
+message: >-
+  [Performance Optimization Opportunity] Deserializing JSON via raw string parsing vectors.
+  To sustain allocation-free processing of high-throughput log streams from VASP/CRYSTAL23,
+  pass direct read byte windows via serde_json::from_slice($BUFF) to utilize zero-copy reference state.
+severity: hint

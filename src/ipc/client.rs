@@ -603,7 +603,7 @@ impl IpcClient {
             .map_err(|e| IpcError::Protocol(format!("Failed to serialize request: {}", e)))?;
 
         // Send with framing
-        write_message(&mut self.writer, &request_json)
+        write_message(&mut self.writer, request_json.as_bytes(), 1)
             .await
             .map_err(|e| IpcError::Protocol(format!("Failed to send request: {}", e)))?;
 
@@ -613,7 +613,7 @@ impl IpcClient {
             .map_err(|e| IpcError::Protocol(format!("Failed to read response: {}", e)))?;
 
         // Deserialize response
-        let response: JsonRpcResponse = serde_json::from_str(&response_json)
+        let response: JsonRpcResponse = serde_json::from_slice(&response_json)
             .map_err(|e| IpcError::Protocol(format!("Failed to parse response: {}", e)))?;
 
         Ok(response)

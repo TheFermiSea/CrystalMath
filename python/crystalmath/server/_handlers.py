@@ -9,8 +9,9 @@ Other namespaces (jobs.*, clusters.*, etc.) delegate to CrystalController.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from crystalmath.api import CrystalController

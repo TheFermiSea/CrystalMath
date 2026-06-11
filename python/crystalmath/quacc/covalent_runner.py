@@ -4,8 +4,8 @@ This module implements job submission and tracking using Covalent's
 dispatch/result API.
 """
 
-from typing import Any, Dict, Optional
 import logging
+from typing import Any
 
 from crystalmath.quacc.runner import JobRunner, JobState
 
@@ -27,8 +27,8 @@ class CovalentRunner(JobRunner):
     def __init__(self):
         """Initialize the Covalent runner."""
         # Map job_id -> covalent dispatch_id
-        self._dispatch_ids: Dict[str, str] = {}
-        self._job_metadata: Dict[str, Dict] = {}
+        self._dispatch_ids: dict[str, str] = {}
+        self._job_metadata: dict[str, dict] = {}
 
         # Status mapping from Covalent to JobState
         self._status_map = {
@@ -129,7 +129,7 @@ class CovalentRunner(JobRunner):
             logger.warning(f"Error getting status for job {job_id}: {e}")
             return JobState.PENDING
 
-    def get_result(self, job_id: str) -> Optional[Dict]:
+    def get_result(self, job_id: str) -> dict | None:
         """Get job result from Covalent.
 
         Returns None if job is still running.
@@ -188,7 +188,7 @@ class CovalentRunner(JobRunner):
             logger.error(f"Error cancelling job {job_id}: {e}")
             return False
 
-    def get_dispatch_id(self, job_id: str) -> Optional[str]:
+    def get_dispatch_id(self, job_id: str) -> str | None:
         """Get the Covalent dispatch ID for a job.
 
         Useful for debugging or external tools.

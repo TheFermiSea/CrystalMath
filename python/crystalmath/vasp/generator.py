@@ -1,7 +1,7 @@
 """High-level VASP input file generator."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from .incar import IncarBuilder, IncarPreset
 from .kpoints import KpointsBuilder, KpointsMesh
@@ -105,9 +105,9 @@ class VaspInputs:
     poscar: str
     incar: str
     kpoints: str
-    potcar_symbols: List[str]
+    potcar_symbols: list[str]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
             "poscar": self.poscar,
@@ -117,7 +117,7 @@ class VaspInputs:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "VaspInputs":
+    def from_dict(cls, data: dict[str, Any]) -> "VaspInputs":
         """Create from dict (e.g., from JSON)."""
         return cls(
             poscar=data["poscar"],
@@ -148,9 +148,9 @@ class VaspInputGenerator:
         self,
         structure: "Structure",
         preset: IncarPreset = IncarPreset.STATIC,
-        encut: Optional[float] = None,
+        encut: float | None = None,
         kppra: int = 1000,
-        kpoints_mesh: Optional[KpointsMesh] = None,
+        kpoints_mesh: KpointsMesh | None = None,
         **incar_overrides,
     ):
         """Initialize generator.
@@ -240,7 +240,7 @@ class VaspInputGenerator:
 def generate_vasp_inputs_from_mp(
     mp_id: str,
     preset: IncarPreset = IncarPreset.STATIC,
-    encut: Optional[float] = None,
+    encut: float | None = None,
     kppra: int = 1000,
     **incar_overrides,
 ) -> VaspInputs:

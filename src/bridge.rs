@@ -1163,8 +1163,8 @@ fn dispatch_rpc(
             .context("Failed to extract response JSON")?;
 
         // Deserialize the response
-        let response: JsonRpcResponse =
-            serde_json::from_str(&response_json).context("Failed to parse JSON-RPC response")?;
+        let response: JsonRpcResponse = serde_json::from_slice(response_json.as_bytes())
+            .context("Failed to parse JSON-RPC response")?;
 
         Ok(response)
     })

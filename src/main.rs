@@ -224,7 +224,7 @@ print(json.dumps({
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).ok()?;
+    let parsed: serde_json::Value = serde_json::from_slice(stdout.trim().as_bytes()).ok()?;
 
     Some(PythonEnvInfo {
         prefix: parsed["prefix"].as_str()?.to_string(),
@@ -385,10 +385,12 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Create application state (propagates error if the bridge fails to spawn)
+    let (_backend_tx, backend_rx) =
+        std::sync::mpsc::channel::<crate::state::actions::AppBackendEvent>();
     let mut app = App::new(bridge)?;
 
     // Run main loop - guard handles cleanup on success, error, or panic
-    let result = run_app(&mut terminal, &mut app);
+    let result = run_app(&mut terminal, &mut app, backend_rx);
 
     // Show cursor before guard drops (guard handles the rest)
     terminal.show_cursor()?;
@@ -411,7 +413,11 @@ fn main() -> Result<()> {
 }
 
 /// Main application loop.
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
+fn run_app<B: Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    backend_rx: std::sync::mpsc::Receiver<crate::state::actions::AppBackendEvent>,
+) -> Result<()> {
     // Initial data fetch (non-fatal - errors shown in UI)
     app.try_refresh_jobs();
     app.try_refresh_clusters(); // Needed for SLURM queue access
@@ -438,6 +444,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
         // Only redraw if state has changed (dirty-flag optimization)
         if app.needs_redraw() {
             app.take_needs_redraw();
+            app.process_backend_queues(&backend_rx);
             terminal.draw(|f| ui::render(f, app))?;
         }
 
@@ -806,6 +813,18 @@ fn handle_tab_input(app: &mut App, key: event::KeyEvent) {
             }
         }
         app::AppTab::Editor => {
+            // Handle Ctrl+S for saving file safely
+            if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                app.request_save_editor_file();
+                return;
+            }
+
+            // Handle Ctrl+O for opening/reloading file layout
+            if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                app.request_open_editor_file();
+                return;
+            }
+
             // Handle Ctrl+Enter for job submission (before passing to editor)
             if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL) {
                 app.request_submit_from_editor();

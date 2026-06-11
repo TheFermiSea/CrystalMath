@@ -149,3 +149,21 @@ impl AppTab {
         ]
     }
 }
+
+// --- High-Performance Background Routing Events (Epic crystalmath-as6l) ---
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+pub enum AppBackendEvent {
+    LogChunkReceived { job_id: u64, content: String },
+    SlurmQueueUpdated { raw_payload: String },
+    LspDiagnosticsReceived { uri: String, diagnostics: String },
+    ConnectionStatusChanged { connected: bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum SystemInputEvent {
+    Tick,
+    KeyPress(crossterm::event::KeyEvent),
+    Resize(u16, u16),
+}

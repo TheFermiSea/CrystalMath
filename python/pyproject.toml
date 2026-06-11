@@ -8,67 +8,46 @@ version = "0.2.0"
 description = "Python scientific backend for CrystalMath Rust TUI"
 license = "MIT"
 requires-python = ">=3.10"
-authors = [
-    { name = "Brian Squires" }
-]
+authors = [{ name = "Brian Squires" }]
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Environment :: Console",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering :: Chemistry",
-    "Topic :: Scientific/Engineering :: Physics",
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics",
 ]
 keywords = ["dft", "crystal23", "quantum-chemistry", "aiida"]
 
-dependencies = [
-    "pydantic>=2.0.0",
-    "typer>=0.9.0",
-    "rich>=13.0.0",
-]
+dependencies = ["pydantic>=2.0.0", "typer>=0.9.0", "rich>=13.0.0"]
 
 [project.optional-dependencies]
-vasp = [
-    "pymatgen>=2024.1.1",
-    "numpy>=1.20.0",
-    "ase>=3.11.0",
-    "seekpath>=1.0.0",
-]
-aiida = [
-    "aiida-core>=2.0.0",
-    "pymatgen>=2024.1.1",
-]
-quacc = [
-    "quacc>=0.6.0",
-    "ase>=3.11.0",
-]
+vasp = ["pymatgen>=2024.1.1", "numpy>=1.20.0", "ase>=3.11.0", "seekpath>=1.0.0"]
+aiida = ["aiida-core>=2.0.0", "pymatgen>=2024.1.1"]
+quacc = ["quacc>=0.6.0", "ase>=3.11.0"]
 atomate2 = [
-    "atomate2>=0.0.14",
-    "jobflow>=0.1.17",
-    "maggma>=0.57.0",
-    "pymatgen>=2024.1.1",
+  "atomate2>=0.0.14",
+  "jobflow>=0.1.17",
+  "maggma>=0.57.0",
+  "pymatgen>=2024.1.1",
 ]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.0.0",
-    "black>=24.0.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0.0",
+  "pytest>=7.0.0",
+  "pytest-asyncio>=0.21.0",
+  "pytest-cov>=4.0.0",
+  "black>=24.0.0",
+  "ruff>=0.1.0",
+  "mypy>=1.0.0",
 ]
 # AI features use the Anthropic SDK directly (crystalmath/ai/service.py); the
 # langchain/langchain-anthropic stack (~200MB transitive) was unused and removed.
-llm = [
-    "anthropic>=0.39.0",
-]
-all = [
-    "crystalmath[vasp,aiida,quacc,atomate2,dev,llm]",
-]
+llm = ["anthropic>=0.39.0"]
+all = ["crystalmath[vasp,aiida,quacc,atomate2,dev,llm]"]
 
 [project.scripts]
 crystalmath-server = "crystalmath.server:main"

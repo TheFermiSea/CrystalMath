@@ -334,3 +334,21 @@ class StructureData(BaseModel):
 
 # Type aliases for Rust compatibility
 JobStatusList = list[JobStatus]
+
+# --- Slurm Cluster Workload Telemetry Models (ADR-028) ---
+
+
+class SlurmJobModel(BaseModel):
+    job_id: int
+    partition: str
+    name: str
+    user: str
+    state: str
+    time_used: str
+    stdout_path: str
+
+
+class SlurmQueueResponse(BaseModel):
+    success: bool
+    jobs: list[SlurmJobModel]
+    error_message: str | None = None

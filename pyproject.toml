@@ -21,7 +21,10 @@ readme = "README.md"
 license = {text = "MIT"}
 
 # No direct dependencies - this is a workspace root
-dependencies = []
+dependencies = [
+    "pymatgen>=2025.10.7",
+    "quacc>=1.0.6",
+]
 
 [project.optional-dependencies]
 # Install all workspace packages for development

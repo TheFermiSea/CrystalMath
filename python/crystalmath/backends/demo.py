@@ -7,7 +7,6 @@ Provides in-memory mock data without any external dependencies.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional
 
 from crystalmath.backends import Backend
 from crystalmath.models import (
@@ -28,7 +27,7 @@ class DemoBackend(Backend):
     """
 
     def __init__(self) -> None:
-        self._jobs: List[JobStatus] = []
+        self._jobs: list[JobStatus] = []
         self._initialized = False
 
     def _ensure_demo_data(self) -> None:
@@ -71,12 +70,12 @@ class DemoBackend(Backend):
     def is_available(self) -> bool:
         return True  # Always available
 
-    def get_jobs(self, limit: int = 100) -> List[JobStatus]:
+    def get_jobs(self, limit: int = 100) -> list[JobStatus]:
         """Return demo jobs."""
         self._ensure_demo_data()
         return self._jobs[:limit]
 
-    def get_job_details(self, pk: int) -> Optional[JobDetails]:
+    def get_job_details(self, pk: int) -> JobDetails | None:
         """Return demo job details."""
         self._ensure_demo_data()
 
@@ -92,9 +91,9 @@ class DemoBackend(Backend):
                     final_energy=-275.123456 if completed else None,
                     convergence_met=completed,
                     scf_cycles=15 if completed else None,
-                    stdout_tail=["TOTAL ENERGY -275.123456 AU", "SCF CONVERGED"]
-                    if completed
-                    else [],
+                    stdout_tail=(
+                        ["TOTAL ENERGY -275.123456 AU", "SCF CONVERGED"] if completed else []
+                    ),
                 )
         return None
 
@@ -141,6 +140,6 @@ class DemoBackend(Backend):
                 return True
         return False
 
-    def get_job_log(self, pk: int, tail_lines: int = 100) -> Dict[str, List[str]]:
+    def get_job_log(self, pk: int, tail_lines: int = 100) -> dict[str, list[str]]:
         """Return empty logs for demo."""
         return {"stdout": [], "stderr": []}

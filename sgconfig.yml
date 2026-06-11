@@ -1,0 +1,3 @@
+# CrystalMath ast-grep Global Project Settings
+ruleDirs:
+  - .ast-grep/rules

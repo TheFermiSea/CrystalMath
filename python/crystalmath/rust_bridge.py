@@ -8,7 +8,6 @@ returns native Pydantic objects for Python consumers.
 from __future__ import annotations
 
 import json
-from typing import List
 
 from crystalmath.api import _error_response, _ok_response
 from crystalmath.models import JobDetails, JobStatus, JobSubmission
@@ -16,7 +15,7 @@ from crystalmath.models import JobDetails, JobStatus, JobSubmission
 
 def get_jobs_json(controller, limit: int = 100) -> str:
     """Return job list JSON for Rust."""
-    jobs: List[JobStatus] = controller.get_jobs(limit)
+    jobs: list[JobStatus] = controller.get_jobs(limit)
     return json.dumps([job.model_dump(mode="json") for job in jobs])
 
 

@@ -1,0 +1,16 @@
+id: no-blocking-io-in-async
+language: rust
+rule:
+  inside:
+    pattern: async fn $$$() { $$$ }
+  any:
+    - pattern: std::fs::read_to_string($$$)
+    - pattern: std::fs::read($$$)
+    - pattern: std::fs::write($$$)
+    - pattern: File::open($$$)
+    - pattern: std::thread::sleep($$$)
+message: >-
+  [Architectural Boundary Violation] Found blocking synchronous operation inside an async function.
+  This will hijack the Tokio worker threads and drop frame rendering below the strict 60 FPS target.
+  Fix: Offload this task to tokio::task::spawn_blocking or utilize tokio::fs equivalents.
+severity: error

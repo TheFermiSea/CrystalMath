@@ -1515,7 +1515,7 @@ mod tests {
     #[test]
     fn test_job_state_deserialize() {
         let json = r#""RUNNING""#;
-        let state: JobState = serde_json::from_str(json).unwrap();
+        let state: JobState = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(state, JobState::Running);
     }
 
@@ -1528,7 +1528,7 @@ mod tests {
             "state": "COMPLETED",
             "progress_percent": 100.0
         }"#;
-        let status: JobStatus = serde_json::from_str(json).unwrap();
+        let status: JobStatus = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(status.pk, 1);
         assert_eq!(status.state, JobState::Completed);
         assert_eq!(status.progress_percent, 100.0);
@@ -1554,7 +1554,7 @@ mod tests {
             "convergence_met": true,
             "stdout_tail": ["line1", "line2"]
         }"#;
-        let details: JobDetails = serde_json::from_str(json).unwrap();
+        let details: JobDetails = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(details.pk, 42);
         assert!(details.convergence_met);
         assert_eq!(details.stdout_tail.len(), 2);
@@ -1612,7 +1612,7 @@ mod tests {
         ];
 
         for (json, expected) in states {
-            let state: JobState = serde_json::from_str(json).unwrap();
+            let state: JobState = serde_json::from_slice(json.as_bytes()).unwrap();
             assert_eq!(state, expected);
         }
     }
@@ -1620,7 +1620,7 @@ mod tests {
     #[test]
     fn test_job_state_unknown_fallback() {
         // Unknown states should deserialize to Unknown variant
-        let state: JobState = serde_json::from_str("\"SOME_NEW_STATE\"").unwrap();
+        let state: JobState = serde_json::from_slice("\"SOME_NEW_STATE\"".as_bytes()).unwrap();
         assert_eq!(state, JobState::Unknown);
     }
 
@@ -1741,7 +1741,7 @@ mod tests {
         assert!(json.contains("\"status\":\"active\""));
 
         // Deserialize back
-        let deserialized: ClusterConfig = serde_json::from_str(&json).unwrap();
+        let deserialized: ClusterConfig = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(deserialized.cluster_type, ClusterType::Slurm);
         assert_eq!(deserialized.status, ClusterStatus::Active);
         assert_eq!(deserialized.name, "test-cluster");
@@ -1755,7 +1755,7 @@ mod tests {
             "state": "RUNNING",
             "stdout_tail": []
         }"#;
-        let details: JobDetails = serde_json::from_str(json).unwrap();
+        let details: JobDetails = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(details.final_energy, None);
         assert_eq!(details.bandgap_ev, None);
         assert!(!details.convergence_met);
@@ -1822,7 +1822,7 @@ mod tests {
                 "space_group": {"symbol": "P6_3/mmc"}
             }
         }"#;
-        let result: MaterialResult = serde_json::from_str(json).unwrap();
+        let result: MaterialResult = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(result.material_id, "mp-2815");
         assert_eq!(result.display_formula(), "MoS₂");
         assert_eq!(result.band_gap_display(), "1.23");
@@ -1841,7 +1841,7 @@ mod tests {
             },
             "metadata": {}
         }"#;
-        let result: MaterialResult = serde_json::from_str(json).unwrap();
+        let result: MaterialResult = serde_json::from_slice(json.as_bytes()).unwrap();
         assert!(!result.is_stable());
         assert_eq!(result.stability_display(), "+0.150 eV");
     }
@@ -1853,7 +1853,7 @@ mod tests {
             "properties": {},
             "metadata": {}
         }"#;
-        let result: MaterialResult = serde_json::from_str(json).unwrap();
+        let result: MaterialResult = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(result.material_id, "mp-999");
         assert_eq!(result.display_formula(), "-");
         assert_eq!(result.band_gap_display(), "-");
@@ -1873,7 +1873,7 @@ mod tests {
     #[test]
     fn test_api_response_success() {
         let json = r#"{"ok": true, "data": ["item1", "item2"]}"#;
-        let response: ApiResponse<Vec<String>> = serde_json::from_str(json).unwrap();
+        let response: ApiResponse<Vec<String>> = serde_json::from_slice(json.as_bytes()).unwrap();
         assert!(response.ok);
         let data = response.into_result().unwrap();
         assert_eq!(data, vec!["item1", "item2"]);
@@ -1883,7 +1883,7 @@ mod tests {
     fn test_api_response_error() {
         let json =
             r#"{"ok": false, "error": {"code": "NOT_FOUND", "message": "Material not found"}}"#;
-        let response: ApiResponse<String> = serde_json::from_str(json).unwrap();
+        let response: ApiResponse<String> = serde_json::from_slice(json.as_bytes()).unwrap();
         assert!(!response.ok);
         let err = response.into_result().unwrap_err();
         assert!(err.contains("NOT_FOUND"));
@@ -1914,7 +1914,7 @@ mod tests {
             "kpoints": "Automatic\n0\n",
             "potcar_config": "Elements: Si"
         }"#;
-        let files: VaspInputFiles = serde_json::from_str(json).unwrap();
+        let files: VaspInputFiles = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(files.poscar, "Si\n1.0\n");
         assert_eq!(files.incar, "ENCUT = 520\n");
         assert_eq!(files.kpoints, "Automatic\n0\n");
@@ -1989,10 +1989,11 @@ mod tests {
     #[test]
     fn test_cluster_status_unknown_fallback() {
         // Unknown status values should deserialize to Unknown variant
-        let status: ClusterStatus = serde_json::from_str("\"maintenance\"").unwrap();
+        let status: ClusterStatus = serde_json::from_slice("\"maintenance\"".as_bytes()).unwrap();
         assert_eq!(status, ClusterStatus::Unknown);
 
-        let status: ClusterStatus = serde_json::from_str("\"some_new_status\"").unwrap();
+        let status: ClusterStatus =
+            serde_json::from_slice("\"some_new_status\"".as_bytes()).unwrap();
         assert_eq!(status, ClusterStatus::Unknown);
     }
 
@@ -2041,7 +2042,7 @@ mod tests {
             "signature": "(atoms, **kwargs)",
             "type": "job"
         }"#;
-        let recipe: Recipe = serde_json::from_str(json).unwrap();
+        let recipe: Recipe = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(recipe.name, "relax_job");
         assert_eq!(recipe.category(), "core");
         assert!(recipe.is_job());
@@ -2082,7 +2083,7 @@ mod tests {
             "quacc_version": "0.11.0",
             "error": null
         }"#;
-        let response: RecipesListResponse = serde_json::from_str(json).unwrap();
+        let response: RecipesListResponse = serde_json::from_slice(json.as_bytes()).unwrap();
         assert!(response.recipes.is_empty());
         assert_eq!(response.quacc_version, Some("0.11.0".to_string()));
     }
@@ -2094,7 +2095,7 @@ mod tests {
             "installed": ["parsl", "dask"],
             "quacc_installed": true
         }"#;
-        let status: WorkflowEngineStatus = serde_json::from_str(json).unwrap();
+        let status: WorkflowEngineStatus = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(status.configured_display(), "parsl");
         assert!(status.has_engine());
     }
@@ -2106,7 +2107,7 @@ mod tests {
             "installed": [],
             "quacc_installed": false
         }"#;
-        let status: WorkflowEngineStatus = serde_json::from_str(json).unwrap();
+        let status: WorkflowEngineStatus = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(status.configured_display(), "None");
         assert!(!status.has_engine());
         assert!(!status.quacc_installed);
@@ -2118,7 +2119,7 @@ mod tests {
             "clusters": [{"name": "test", "partition": "gpu"}],
             "workflow_engine": {"quacc_installed": false}
         }"#;
-        let response: ClustersListResponse = serde_json::from_str(json).unwrap();
+        let response: ClustersListResponse = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(response.clusters.len(), 1);
         assert!(!response.workflow_engine.quacc_installed);
     }
@@ -2126,7 +2127,7 @@ mod tests {
     #[test]
     fn test_quacc_cluster_config_defaults() {
         let json = r#"{"name": "local", "partition": "batch"}"#;
-        let config: QuaccClusterConfig = serde_json::from_str(json).unwrap();
+        let config: QuaccClusterConfig = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(config.name, "local");
         assert_eq!(config.partition, "batch");
         assert_eq!(config.nodes_per_block, 1);
@@ -2146,7 +2147,7 @@ mod tests {
             "cluster": "nersc",
             "work_dir": "/scratch/job-123"
         }"#;
-        let job: QuaccJobMetadata = serde_json::from_str(json).unwrap();
+        let job: QuaccJobMetadata = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(job.id, "job-123");
         assert_eq!(job.recipe, "relax_job");
         assert_eq!(job.status, "running");
@@ -2159,7 +2160,7 @@ mod tests {
             "jobs": [],
             "total": 0
         }"#;
-        let response: QuaccJobsListResponse = serde_json::from_str(json).unwrap();
+        let response: QuaccJobsListResponse = serde_json::from_slice(json.as_bytes()).unwrap();
         assert!(response.jobs.is_empty());
         assert_eq!(response.total, 0);
     }
@@ -2202,7 +2203,7 @@ mod tests {
             "status": "pending",
             "error": null
         }"#;
-        let response: QuaccJobSubmitResponse = serde_json::from_str(json).unwrap();
+        let response: QuaccJobSubmitResponse = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(response.job_id, Some("abc-123-def".to_string()));
         assert_eq!(response.status, "pending");
         assert!(response.error.is_none());
@@ -2215,7 +2216,7 @@ mod tests {
             "status": "error",
             "error": "VASP_PP_PATH not configured"
         }"#;
-        let response: QuaccJobSubmitResponse = serde_json::from_str(json).unwrap();
+        let response: QuaccJobSubmitResponse = serde_json::from_slice(json.as_bytes()).unwrap();
         assert!(response.job_id.is_none());
         assert_eq!(response.status, "error");
         assert_eq!(
@@ -2236,7 +2237,7 @@ mod tests {
                 "formula": "MgO"
             }
         }"#;
-        let response: QuaccJobStatusResponse = serde_json::from_str(json).unwrap();
+        let response: QuaccJobStatusResponse = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(response.job_id, "job-456");
         assert_eq!(response.status, "completed");
         assert!(response.result.is_some());
@@ -2252,7 +2253,7 @@ mod tests {
             "job_id": "job-789",
             "status": "running"
         }"#;
-        let response: QuaccJobStatusResponse = serde_json::from_str(json).unwrap();
+        let response: QuaccJobStatusResponse = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(response.job_id, "job-789");
         assert_eq!(response.status, "running");
         assert!(response.error.is_none());
@@ -2262,7 +2263,7 @@ mod tests {
     #[test]
     fn test_quacc_job_result_summary_defaults() {
         let json = r#"{}"#;
-        let result: QuaccJobResultSummary = serde_json::from_str(json).unwrap();
+        let result: QuaccJobResultSummary = serde_json::from_slice(json.as_bytes()).unwrap();
         assert!(result.energy_ev.is_none());
         assert!(result.max_force_ev_ang.is_none());
         assert!(result.formula.is_none());

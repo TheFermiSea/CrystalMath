@@ -1,0 +1,61 @@
+---
+adr_id: 001
+title: "Python Textual As Primary Tui Rust Ratatui As Secondary"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-001: Python Textual As Primary Tui Rust Ratatui As Secondary
+
+
+
+> **⚠️ SUPERSEDED by [ADR-006](adr-006-unify-on-rust-tui.md) (2026-05-31).** The project has
+> reversed this decision: the **Rust TUI is now the single primary UI** over an IPC backend,
+> and the **Python TUI is deprecated**. This ADR is retained for historical context only.
+
+**Status:** Superseded by ADR-006
+**Date:** 2026-01-06
+**Deciders:** Project maintainers
+
+## Context
+
+The repository currently contains three overlapping interfaces:
+
+- Bash CLI (`cli/`)
+- Python Textual TUI (`tui/`)
+- Rust Ratatui TUI (`src/` with PyO3)
+
+This split causes duplicated logic, unclear ownership, and high maintenance cost. The backend logic (AiiDA integration, pymatgen/ASE, parsers, database access) is Python-heavy, which makes embedding Python into a Rust TUI (via PyO3) fragile and expensive to maintain.
+
+We still value Rust/Ratatui for high-performance monitoring, but the project needs a single **primary** UI path for feature development and user workflows.
+
+## Decision
+
+1. **Python/Textual is the primary TUI** for all user workflows (job creation, configuration, templates, workflows).
+2. **Rust/Ratatui is secondary/experimental**, focused on optional monitoring use cases.
+3. **No new Rust TUI feature work without a stable IPC boundary.** PyO3 embedding should not expand; Rust should communicate with a Python service over a defined protocol.
+4. The **Python core library** becomes the single source of truth for business logic.
+
+## Consequences
+
+### Positive
+- Faster iteration on core features (single primary UI stack).
+- Eliminates duplicated logic between Rust and Python UIs.
+- Keeps Rust UI available for performance-sensitive monitoring without blocking core progress.
+
+### Negative / Tradeoffs
+- Rust TUI may lag feature parity until IPC is established.
+- Requires clear documentation to avoid user confusion about which UI is primary.
+
+## Implementation Notes
+
+- Update docs to mark Python TUI as primary and Rust TUI as secondary.
+- Create and maintain a Rust↔Python IPC contract before expanding Rust features.
+- Centralize templates and core logic in Python so both UIs (and CLI) share behavior.
+
+## Follow-ups
+
+- [ADR-002](adr-002-rust-tui-secondary-policy.md): Rust TUI secondary/experimental policy (completed).
+- ADR-003 (planned): IPC boundary design for Rust TUI.
+- Migration plan for repo layout and core extraction.

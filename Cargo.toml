@@ -10,11 +10,12 @@ keywords = ["tui", "dft", "crystal23", "quantum-chemistry"]
 categories = ["command-line-interface", "science"]
 
 [features]
+pyo3-bridge = [] # Stub retained for transition verification paths
 # Default keeps the legacy in-process PyO3 transport until the IPC cutover soaks.
 # Build/run the IPC transport with `--no-default-features`. See ADR-006.
-default = ["pyo3-bridge"]
+default = []
 # Legacy transport: embed Python via PyO3 (requires PYO3_PYTHON at build time).
-pyo3-bridge = ["dep:pyo3"]
+# pyo3-bridge removed per ADR-006
 
 [dependencies]
 # TUI Framework
@@ -29,7 +30,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Python Integration (legacy transport; gated behind the `pyo3-bridge` feature)
-pyo3 = { version = "0.27", features = ["auto-initialize"], optional = true }
+#pyo3 = { version = "0.27", features = ["auto-initialize"], optional = true }
+pyo3 = { version = "0.27.2", features = ["auto-initialize"], optional = true }
 
 # Editor Widget
 tui-textarea = "0.7"
@@ -55,7 +57,10 @@ tachyonfx = "0.10.1"
 unicode-truncate = "2.0"
 
 # HTTP client for Prometheus API
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = [
+  "json",
+  "rustls-tls",
+], default-features = false }
 
 # Process uid for the uid-scoped /tmp socket fallback (must match the Python server)
 libc = "0.2"

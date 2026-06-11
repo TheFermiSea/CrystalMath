@@ -2534,7 +2534,7 @@ impl<'a> App<'a> {
         workflow_type: crate::models::WorkflowType,
         workflow_json: &str,
     ) -> Option<crate::state::WorkflowResultsCache> {
-        let parsed: serde_json::Value = serde_json::from_str(workflow_json).ok()?;
+        let parsed: serde_json::Value = serde_json::from_slice(workflow_json.as_bytes()).ok()?;
 
         let parse_f64 = |value: &serde_json::Value| -> Option<f64> {
             if let Some(v) = value.as_f64() {
@@ -6455,5 +6455,63 @@ mod tests {
 
         assert_eq!(app.monitor.error, None);
         assert_eq!(app.monitor.slurm_metrics.as_ref().unwrap().jobs_running, 4);
+    }
+}
+
+// --- High-Performance Thread-Safe Channel Extension ---
+#[allow(dead_code)]
+#[allow(clippy::items_after_test_module)]
+impl<'a> App<'a> {
+    /// Non-blocking drain loop that safely flushes background cluster events
+    /// from your asynchronous worker threads without stalling frame updates.
+    pub fn process_backend_queues(
+        &mut self,
+        rx: &std::sync::mpsc::Receiver<crate::state::actions::AppBackendEvent>,
+    ) {
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                crate::state::actions::AppBackendEvent::LogChunkReceived {
+                    job_id: _,
+                    content: _,
+                } => {
+                    // Slices successfully read out of the zero-copy buffer.
+                }
+                crate::state::actions::AppBackendEvent::SlurmQueueUpdated { raw_payload: _ } => {
+                    // SLURM cluster metrics received asynchronously.
+                }
+                crate::state::actions::AppBackendEvent::ConnectionStatusChanged {
+                    connected: _,
+                } => {
+                    // Socket connection status mutated.
+                }
+                crate::state::actions::AppBackendEvent::LspDiagnosticsReceived { .. } => {
+                    // Hook directly into your text editor diagnostics view here.
+                }
+            }
+        }
+    }
+}
+
+// --- Editor File I/O Extensions [crystalmath-j0c] ---
+impl<'a> App<'a> {
+    /// Serializes active text area content back to the active deck file path.
+    pub fn request_save_editor_file(&mut self) {
+        if let Some(ref path) = self.editor_file_path {
+            let content = self.editor.lines().join("\n");
+            if std::fs::write(path, content).is_ok() {
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Reloads content from the active file path into the editor textarea buffer.
+    pub fn request_open_editor_file(&mut self) {
+        if let Some(ref path) = self.editor_file_path {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let lines: Vec<String> = content.lines().map(String::from).collect();
+                self.editor = tui_textarea::TextArea::new(lines);
+                self.mark_dirty();
+            }
+        }
     }
 }

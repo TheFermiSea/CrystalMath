@@ -34,8 +34,9 @@ governing the CrystalMath platform ecosystem under our unified Rust/Ratatui stra
 | **025** | [Static Typed Workflowdag Validation Crystalmath Validate Before Any Submission](adr-025-static-typed-workflowdag-validation-crystalmath-validate-before-any-submission.md) | `Accepted` | 2026-06-11 |
 | **026** | [Campaign Acquisition Strategy The Pluggable Scientific Brain Typed Acquisitionstrategy Campaignstrategy With Budgetconvergencestopping And Dft Budget Control](adr-026-campaign-acquisition-strategy-the-pluggable-scientific-brain-typed-acquisitionstrategy-campaignstrategy-with-budgetconvergencestopping-and-dft-budget-control.md) | `Accepted` | 2026-06-11 |
 | **027** | [Trustworthy Mlip Evaluation Applicability Domain Measured Not Asserted Surrogate Trust Benchmark Harness Calibrated Uncertainty Oodapplicability Domain Gate Escalation Thresholds](adr-027-trustworthy-mlip-evaluation-applicability-domain-measured-not-asserted-surrogate-trust-benchmark-harness-calibrated-uncertainty-oodapplicability-domain-gate-escalation-thresholds.md) | `Accepted` | 2026-06-11 |
-| **028** | [Model Dataset Registry Lineage Navigable Registries Over The Adr 022 Cas The Single Unified Modelidentifier](adr-028-model-dataset-registry-lineage-navigable-registries-over-the-adr-022-cas-the-single-unified-modelidentifier.md) | `Accepted` | 2026-06-11 |
-| **029** | [crystalmath redesign master index adr 007 adr 027](adr-029-crystalmath-redesign-master-index-adr-007-adr-027.md) | `Accepted` | 2026-06-11 |
-| **030** | [ecosystem consolidation validated refactor plan](adr-030-ecosystem-consolidation-validated-refactor-plan.md) | `Accepted` | 2026-06-11 |
-| **031** | [high level api design](adr-031-high-level-api-design.md) | `Accepted` | 2026-06-11 |
-| **032** | [unified workflow architecture](adr-032-unified-workflow-architecture.md) | `Accepted` | 2026-06-11 |
+| **028** | [Decoupled Slurm Workload Orchestration Over IPC](adr-028-decoupled-slurm-workload-orchestration-over-ipc.md) | `Accepted` | 2026-06-11 |
+| **029** | [Model Dataset Registry Lineage Navigable Registries Over The Adr 022 Cas The Single Unified Modelidentifier](adr-029-model-dataset-registry-lineage-navigable-registries-over-the-adr-022-cas-the-single-unified-modelidentifier.md) | `Accepted` | 2026-06-11 |
+| **030** | [crystalmath redesign master index adr 007 adr 027](adr-030-crystalmath-redesign-master-index-adr-007-adr-027.md) | `Accepted` | 2026-06-11 |
+| **031** | [ecosystem consolidation validated refactor plan](adr-031-ecosystem-consolidation-validated-refactor-plan.md) | `Accepted` | 2026-06-11 |
+| **032** | [high level api design](adr-032-high-level-api-design.md) | `Accepted` | 2026-06-11 |
+| **033** | [unified workflow architecture](adr-033-unified-workflow-architecture.md) | `Accepted` | 2026-06-11 |

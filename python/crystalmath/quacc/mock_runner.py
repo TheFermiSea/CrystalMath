@@ -14,7 +14,7 @@ Example:
 
 import uuid
 from enum import Enum
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from crystalmath.quacc.runner import JobRunner, JobState
 
@@ -54,14 +54,14 @@ class MockRunner(JobRunner):
 
     def __init__(self):
         """Initialize mock runner with empty state."""
-        self._jobs: Dict[str, MockJobState] = {}
-        self._status_calls: Dict[str, int] = {}
-        self._results: Dict[str, Dict] = {}
-        self._recipes: Dict[str, str] = {}
+        self._jobs: dict[str, MockJobState] = {}
+        self._status_calls: dict[str, int] = {}
+        self._results: dict[str, dict] = {}
+        self._recipes: dict[str, str] = {}
         # Job IDs that should fail
-        self.fail_job_ids: Set[str] = set()
+        self.fail_job_ids: set[str] = set()
         # Custom results per job
-        self.custom_results: Dict[str, Dict] = {}
+        self.custom_results: dict[str, dict] = {}
 
     def submit(
         self,
@@ -139,7 +139,7 @@ class MockRunner(JobRunner):
 
         return JobState.PENDING
 
-    def get_result(self, job_id: str) -> Optional[Dict]:
+    def get_result(self, job_id: str) -> dict | None:
         """Get mock result if complete.
 
         Args:
@@ -200,7 +200,7 @@ class MockRunner(JobRunner):
         """
         self._jobs[job_id] = state
 
-    def set_custom_result(self, job_id: str, result: Dict) -> None:
+    def set_custom_result(self, job_id: str, result: dict) -> None:
         """Set custom result for a job.
 
         Args:
@@ -209,7 +209,7 @@ class MockRunner(JobRunner):
         """
         self.custom_results[job_id] = result
 
-    def get_recipe(self, job_id: str) -> Optional[str]:
+    def get_recipe(self, job_id: str) -> str | None:
         """Get the recipe used for a job.
 
         Args:

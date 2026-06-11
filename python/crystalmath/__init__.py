@@ -7,14 +7,14 @@ adapters for Rust/IPC boundaries.
 """
 
 from crystalmath.models import (
-    JobState,
-    DftCode,
-    JobSubmission,
-    JobStatus,
-    JobDetails,
     ClusterConfig,
-    StructureData,
+    DftCode,
+    JobDetails,
+    JobState,
+    JobStatus,
+    JobSubmission,
     RunnerType,
+    StructureData,
     map_to_job_state,
 )
 

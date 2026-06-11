@@ -102,6 +102,16 @@ __version__ = "0.1.0"
 
 # Lazy imports to avoid requiring all dependencies at import time
 if TYPE_CHECKING:
+    from crystalmath.integrations.aiida_enhanced import (
+        AIIDA_AVAILABLE,
+        AiiDAProfileManager,
+        AiiDAQueryHelper,
+        CalculationInfo,
+        ProfileInfo,
+        aiida_to_atomate2_job,
+        atomate2_to_aiida_inputs,
+        workflow_result_from_aiida,
+    )
     from crystalmath.integrations.atomate2_bridge import (
         Atomate2Bridge,
         Atomate2FlowAdapter,
@@ -118,46 +128,36 @@ if TYPE_CHECKING:
         MPMaterial,
         MPProperties,
         mp_id_to_structure,
-        validate_mp_id,
         search_by_formula,
+        validate_mp_id,
     )
     from crystalmath.integrations.pwd_bridge import (
-        PWDConverter,
-        PWDNode,
-        PWDEdge,
         CrystalMathExtensions,
+        PWDConverter,
+        PWDEdge,
+        PWDNode,
         export_to_pwd,
         import_from_pwd,
     )
     from crystalmath.integrations.pymatgen_bridge import (
-        SymmetryInfo,
-        StructureMetadata,
         CrystalSystem,
         Dimensionality,
+        StructureMetadata,
+        SymmetryInfo,
+        convert_structure,
+        from_aiida_structure,
+        from_ase_atoms,
+        get_dimensionality,
+        get_structure_metadata,
+        get_symmetry_info,
         structure_from_cif,
-        structure_from_poscar,
-        structure_from_mp,
         structure_from_cod,
         structure_from_file,
+        structure_from_mp,
+        structure_from_poscar,
         to_aiida_structure,
-        from_aiida_structure,
         to_ase_atoms,
-        from_ase_atoms,
-        convert_structure,
-        get_symmetry_info,
-        get_dimensionality,
         validate_for_dft,
-        get_structure_metadata,
-    )
-    from crystalmath.integrations.aiida_enhanced import (
-        AIIDA_AVAILABLE,
-        ProfileInfo,
-        CalculationInfo,
-        AiiDAProfileManager,
-        AiiDAQueryHelper,
-        aiida_to_atomate2_job,
-        atomate2_to_aiida_inputs,
-        workflow_result_from_aiida,
     )
     from crystalmath.integrations.slurm_runner import (
         SLURMConfig,
@@ -184,8 +184,8 @@ def __getattr__(name: str):
             MPMaterial,
             MPProperties,
             mp_id_to_structure,
-            validate_mp_id,
             search_by_formula,
+            validate_mp_id,
         )
 
         return {
@@ -242,10 +242,10 @@ def __getattr__(name: str):
         "import_from_pwd",
     ):
         from crystalmath.integrations.pwd_bridge import (
-            PWDConverter,
-            PWDNode,
-            PWDEdge,
             CrystalMathExtensions,
+            PWDConverter,
+            PWDEdge,
+            PWDNode,
             export_to_pwd,
             import_from_pwd,
         )
@@ -281,24 +281,24 @@ def __getattr__(name: str):
         "get_structure_metadata",
     ):
         from crystalmath.integrations.pymatgen_bridge import (
-            SymmetryInfo,
-            StructureMetadata,
             CrystalSystem,
             Dimensionality,
+            StructureMetadata,
+            SymmetryInfo,
+            convert_structure,
+            from_aiida_structure,
+            from_ase_atoms,
+            get_dimensionality,
+            get_structure_metadata,
+            get_symmetry_info,
             structure_from_cif,
-            structure_from_poscar,
-            structure_from_mp,
             structure_from_cod,
             structure_from_file,
+            structure_from_mp,
+            structure_from_poscar,
             to_aiida_structure,
-            from_aiida_structure,
             to_ase_atoms,
-            from_ase_atoms,
-            convert_structure,
-            get_symmetry_info,
-            get_dimensionality,
             validate_for_dft,
-            get_structure_metadata,
         )
 
         return {
@@ -335,10 +335,10 @@ def __getattr__(name: str):
     ):
         from crystalmath.integrations.aiida_enhanced import (
             AIIDA_AVAILABLE,
-            ProfileInfo,
-            CalculationInfo,
             AiiDAProfileManager,
             AiiDAQueryHelper,
+            CalculationInfo,
+            ProfileInfo,
             aiida_to_atomate2_job,
             atomate2_to_aiida_inputs,
             workflow_result_from_aiida,

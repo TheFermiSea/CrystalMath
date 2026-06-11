@@ -745,7 +745,7 @@ mod tests {
             "source": "dft-language-server"
         }"#;
 
-        let diag: Diagnostic = serde_json::from_str(json).unwrap();
+        let diag: Diagnostic = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(diag.range.start.line, 5);
         assert_eq!(diag.range.start.character, 10);
         assert_eq!(diag.message, "Unknown keyword");
@@ -763,7 +763,7 @@ mod tests {
             "message": "Error"
         }"#;
 
-        let diag: Diagnostic = serde_json::from_str(json).unwrap();
+        let diag: Diagnostic = serde_json::from_slice(json.as_bytes()).unwrap();
         assert_eq!(diag.message, "Error");
         assert_eq!(diag.severity, None);
         assert_eq!(diag.source, None);

@@ -93,9 +93,9 @@ class SQLiteBackend(Backend):
                     name=job.name,
                     state=_STATUS_MAP.get(job.status, JobState.CREATED),
                     dft_code=DftCode(job.dft_code) if job.dft_code else DftCode.CRYSTAL,
-                    runner_type=RunnerType(job.runner_type)
-                    if job.runner_type
-                    else RunnerType.LOCAL,
+                    runner_type=(
+                        RunnerType(job.runner_type) if job.runner_type else RunnerType.LOCAL
+                    ),
                     workflow_id=job.workflow_id,
                     progress_percent=100.0 if job.status == "COMPLETED" else 0.0,
                     created_at=created_at,
@@ -175,9 +175,9 @@ class SQLiteBackend(Backend):
             cluster_id=submission.cluster_id,
             runner_type=submission.runner_type.value,
             dft_code=submission.dft_code.value,
-            parallelism_config={"mpi_ranks": submission.mpi_ranks}
-            if submission.mpi_ranks
-            else None,
+            parallelism_config=(
+                {"mpi_ranks": submission.mpi_ranks} if submission.mpi_ranks else None
+            ),
         )
         return job_id
 
@@ -239,9 +239,9 @@ class SQLiteBackend(Backend):
             "runner_type": submission.runner_type.value,
             "mpi_ranks": submission.mpi_ranks or 1,
             "parallel_mode": submission.parallel_mode or "serial",
-            "auxiliary_files": list(submission.auxiliary_files.keys())
-            if submission.auxiliary_files
-            else [],
+            "auxiliary_files": (
+                list(submission.auxiliary_files.keys()) if submission.auxiliary_files else []
+            ),
         }
 
         if submission.scheduler_options:
