@@ -1,4 +1,14 @@
-# ADR-005: Unified Configuration Across CLI and Python Core
+---
+adr_id: 006
+title: "Unified Configuration Across Cli And Python Core"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-006: Unified Configuration Across Cli And Python Core
+
+
 
 > **⚠️ Superseded-on-acceptance by [ADR-015](adr-015-unified-config-pydantic-settings.md).**
 > ADR-015 replaces this hand-rolled TOML/dataclass design with a single `pydantic-settings`
@@ -54,7 +64,7 @@ database_path = ".crystal_tui.db"
 root_dir = "~/CRYSTAL23"
 version = "v1.0.1"
 architecture = "MacOsx_ARM-gfortran_omp"
-# Derived: executable_dir = root_dir/bin/architecture/version
+
 
 [vasp]
 potcar_dir = "~/VASP/POTENTIALS"
@@ -65,7 +75,7 @@ pseudo_dir = "~/QE/pseudo"
 executable = "pw.x"
 
 [clusters]
-# Inline or path to YAML files
+
 config_dir = "~/.config/crystalmath/clusters"
 ```
 
@@ -113,7 +123,7 @@ def load_config(
 
 **Option A: Python helper** (recommended)
 ```bash
-# In cry-config.sh
+
 cry_load_config() {
     # Call Python to read TOML and export variables
     eval "$(python3 -m crystalmath.config --export-bash)"
@@ -122,7 +132,7 @@ cry_load_config() {
 
 **Option B: Direct TOML parsing** (fallback)
 ```bash
-# Simple grep-based parsing for critical variables
+
 CRY23_ROOT=$(grep -E '^root_dir\s*=' ~/.config/crystalmath/config.toml | cut -d'"' -f2)
 ```
 

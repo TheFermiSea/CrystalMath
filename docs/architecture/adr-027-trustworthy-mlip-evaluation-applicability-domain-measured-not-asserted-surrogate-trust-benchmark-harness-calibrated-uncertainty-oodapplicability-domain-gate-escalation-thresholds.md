@@ -1,4 +1,14 @@
-# ADR-026: Trustworthy MLIP Evaluation & Applicability Domain — measured (not asserted) surrogate trust: benchmark harness, calibrated uncertainty, OOD/applicability-domain gate, escalation thresholds
+---
+adr_id: 027
+title: "Trustworthy Mlip Evaluation Applicability Domain Measured Not Asserted Surrogate Trust Benchmark Harness Calibrated Uncertainty Oodapplicability Domain Gate Escalation Thresholds"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-027: Trustworthy Mlip Evaluation Applicability Domain Measured Not Asserted Surrogate Trust Benchmark Harness Calibrated Uncertainty Oodapplicability Domain Gate Escalation Thresholds
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

@@ -1,4 +1,14 @@
-# ADR-021: Generalize the Calculation Layer to `CalculatorStage`; MLIP/Foundation Calculators as First-Class Peers of DFT
+---
+adr_id: 022
+title: "Generalize The Calculation Layer To Calculatorstage Mlipfoundation Calculators As First Class Peers Of Dft"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-022: Generalize The Calculation Layer To Calculatorstage Mlipfoundation Calculators As First Class Peers Of Dft
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

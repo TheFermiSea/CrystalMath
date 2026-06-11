@@ -1,4 +1,14 @@
-# ADR-013: Multi-Code Handoff Contract — Typed Document Edges with Mandatory Restart-File Validation
+---
+adr_id: 014
+title: "Multi Code Handoff Contract Typed Document Edges With Mandatory Restart File Validation"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-014: Multi Code Handoff Contract Typed Document Edges With Mandatory Restart File Validation
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

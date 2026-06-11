@@ -1,4 +1,14 @@
-# ADR-001: Python Textual as Primary TUI; Rust Ratatui as Secondary
+---
+adr_id: 001
+title: "Python Textual As Primary Tui Rust Ratatui As Secondary"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-001: Python Textual As Primary Tui Rust Ratatui As Secondary
+
+
 
 > **⚠️ SUPERSEDED by [ADR-006](adr-006-unify-on-rust-tui.md) (2026-05-31).** The project has
 > reversed this decision: the **Rust TUI is now the single primary UI** over an IPC backend,

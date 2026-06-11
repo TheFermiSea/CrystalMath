@@ -1,4 +1,14 @@
-# ADR-027: Model & Dataset Registry + Lineage — navigable registries over the ADR-022 CAS; the single unified `ModelIdentifier`
+---
+adr_id: 028
+title: "Model Dataset Registry Lineage Navigable Registries Over The Adr 022 Cas The Single Unified Modelidentifier"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-028: Model Dataset Registry Lineage Navigable Registries Over The Adr 022 Cas The Single Unified Modelidentifier
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

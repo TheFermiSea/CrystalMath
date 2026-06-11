@@ -1,4 +1,14 @@
-# ADR-018: Replace the Bespoke ADAPTIVE Recovery with custodian-Style Code-Specific Error Handlers
+---
+adr_id: 019
+title: "Replace The Bespoke Adaptive Recovery With Custodian Style Code Specific Error Handlers"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-019: Replace The Bespoke Adaptive Recovery With Custodian Style Code Specific Error Handlers
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

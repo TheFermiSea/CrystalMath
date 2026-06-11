@@ -1,4 +1,14 @@
-# ADR-022: Content-addressed execution identity, hash-hit caching, and the replay contract as the default execution gate
+---
+adr_id: 023
+title: "Content Addressed Execution Identity Hash Hit Caching And The Replay Contract As The Default Execution Gate"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-023: Content Addressed Execution Identity Hash Hit Caching And The Replay Contract As The Default Execution Gate
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

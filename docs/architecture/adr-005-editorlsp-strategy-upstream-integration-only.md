@@ -1,4 +1,14 @@
-# ADR-004: Editor/LSP Strategy - Upstream Integration Only
+---
+adr_id: 005
+title: "Editorlsp Strategy Upstream Integration Only"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-005: Editorlsp Strategy Upstream Integration Only
+
+
 
 **Status:** Accepted
 **Date:** 2026-01-06
@@ -44,10 +54,10 @@ Maintaining a parallel LSP implementation adds significant maintenance burden fo
 **Installation methods:**
 
 ```bash
-# Option A: Global install (npm)
+
 npm install -g dft-language-server
 
-# Option B: Build bundled (development)
+
 cd third_party/vasp-language-server
 npm install && npm run build
 ```
@@ -65,7 +75,7 @@ For users who need full editing capabilities beyond the embedded editor:
 **VS Code integration:**
 
 ```bash
-# Install the VS Code extension
+
 code --install-extension dft-lsp.vasp-language-features
 ```
 

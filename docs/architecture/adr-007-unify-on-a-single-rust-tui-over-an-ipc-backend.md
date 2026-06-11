@@ -1,4 +1,14 @@
-# ADR-006: Unify on a Single Rust TUI over an IPC Backend
+---
+adr_id: 007
+title: "Unify On A Single Rust Tui Over An Ipc Backend"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-007: Unify On A Single Rust Tui Over An Ipc Backend
+
+
 
 **Status:** Accepted
 **Date:** 2026-05-31

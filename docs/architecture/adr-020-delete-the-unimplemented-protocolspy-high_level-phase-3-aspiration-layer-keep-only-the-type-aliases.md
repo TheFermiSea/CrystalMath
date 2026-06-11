@@ -1,4 +1,14 @@
-# ADR-019: Delete the Unimplemented protocols.py / high_level 'Phase 3' Aspiration Layer; Keep Only the Type Aliases
+---
+adr_id: 020
+title: "Delete The Unimplemented Protocolspy High_level Phase 3 Aspiration Layer Keep Only The Type Aliases"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-020: Delete The Unimplemented Protocolspy High_level Phase 3 Aspiration Layer Keep Only The Type Aliases
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

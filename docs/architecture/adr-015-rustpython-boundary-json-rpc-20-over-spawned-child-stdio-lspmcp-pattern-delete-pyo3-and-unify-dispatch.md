@@ -1,4 +1,14 @@
-# ADR-014: Rust↔Python Boundary — JSON-RPC 2.0 over Spawned-Child stdio (LSP/MCP Pattern); Delete PyO3 and Unify Dispatch
+---
+adr_id: 015
+title: "Rustpython Boundary Json Rpc 20 Over Spawned Child Stdio Lspmcp Pattern Delete Pyo3 And Unify Dispatch"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-015: Rustpython Boundary Json Rpc 20 Over Spawned Child Stdio Lspmcp Pattern Delete Pyo3 And Unify Dispatch
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

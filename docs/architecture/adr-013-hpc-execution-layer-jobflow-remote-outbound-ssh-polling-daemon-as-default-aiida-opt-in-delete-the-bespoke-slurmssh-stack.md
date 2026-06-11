@@ -1,4 +1,14 @@
-# ADR-012: HPC Execution Layer — jobflow-remote (Outbound-SSH Polling Daemon) as Default, AiiDA Opt-In; Delete the Bespoke SLURM/SSH Stack
+---
+adr_id: 013
+title: "Hpc Execution Layer Jobflow Remote Outbound Ssh Polling Daemon As Default Aiida Opt In Delete The Bespoke Slurmssh Stack"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-013: Hpc Execution Layer Jobflow Remote Outbound Ssh Polling Daemon As Default Aiida Opt In Delete The Bespoke Slurmssh Stack
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

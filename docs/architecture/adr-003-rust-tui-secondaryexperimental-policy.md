@@ -1,4 +1,14 @@
-# ADR-002: Rust TUI Secondary/Experimental Policy
+---
+adr_id: 003
+title: "Rust Tui Secondaryexperimental Policy"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-003: Rust Tui Secondaryexperimental Policy
+
+
 
 > **⚠️ SUPERSEDED by [ADR-006](adr-006-unify-on-rust-tui.md) (2026-05-31).** The feature freeze
 > defined below has been **rescinded** — its precondition (a defined IPC boundary) was met

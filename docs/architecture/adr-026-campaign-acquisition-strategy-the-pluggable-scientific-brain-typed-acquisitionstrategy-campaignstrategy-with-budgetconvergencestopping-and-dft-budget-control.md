@@ -1,4 +1,14 @@
-# ADR-025: Campaign & Acquisition Strategy — the pluggable scientific brain: typed `AcquisitionStrategy` + `CampaignStrategy` with budget/convergence/stopping and DFT-budget control
+---
+adr_id: 026
+title: "Campaign Acquisition Strategy The Pluggable Scientific Brain Typed Acquisitionstrategy Campaignstrategy With Budgetconvergencestopping And Dft Budget Control"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-026: Campaign Acquisition Strategy The Pluggable Scientific Brain Typed Acquisitionstrategy Campaignstrategy With Budgetconvergencestopping And Dft Budget Control
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

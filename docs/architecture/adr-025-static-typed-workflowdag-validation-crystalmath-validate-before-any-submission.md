@@ -1,4 +1,14 @@
-# ADR-024: Static typed workflow/DAG validation: `crystalmath validate` before any submission
+---
+adr_id: 025
+title: "Static Typed Workflowdag Validation Crystalmath Validate Before Any Submission"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-025: Static Typed Workflowdag Validation Crystalmath Validate Before Any Submission
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

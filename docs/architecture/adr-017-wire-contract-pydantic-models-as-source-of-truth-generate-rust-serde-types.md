@@ -1,4 +1,14 @@
-# ADR-016: Wire Contract — pydantic Models as Source of Truth, Generate Rust serde Types
+---
+adr_id: 017
+title: "Wire Contract Pydantic Models As Source Of Truth Generate Rust Serde Types"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-017: Wire Contract Pydantic Models As Source Of Truth Generate Rust Serde Types
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

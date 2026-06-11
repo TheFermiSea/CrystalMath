@@ -1,4 +1,14 @@
-# ADR-017: Packaging & Testing — Two Decoupled Artifacts, pixi for HPC, an Extras-Matrix CI
+---
+adr_id: 018
+title: "Packaging Testing Two Decoupled Artifacts Pixi For Hpc An Extras Matrix Ci"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-018: Packaging Testing Two Decoupled Artifacts Pixi For Hpc An Extras Matrix Ci
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

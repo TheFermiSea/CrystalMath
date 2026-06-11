@@ -1,4 +1,14 @@
-# ADR-008: Standardize Structure and Input/Output on pymatgen + ASE; `CodeDeckGenerator` Becomes a Thin Adapter
+---
+adr_id: 009
+title: "Standardize Structure And Inputoutput On Pymatgen Ase Codedeckgenerator Becomes A Thin Adapter"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-009: Standardize Structure And Inputoutput On Pymatgen Ase Codedeckgenerator Becomes A Thin Adapter
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

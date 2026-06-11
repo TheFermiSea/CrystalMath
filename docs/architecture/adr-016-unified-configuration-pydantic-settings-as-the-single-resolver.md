@@ -1,4 +1,14 @@
-# ADR-015: Unified Configuration — pydantic-settings as the Single Resolver
+---
+adr_id: 016
+title: "Unified Configuration Pydantic Settings As The Single Resolver"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-016: Unified Configuration Pydantic Settings As The Single Resolver
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

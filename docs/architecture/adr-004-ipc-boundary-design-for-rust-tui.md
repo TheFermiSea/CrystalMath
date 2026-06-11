@@ -1,4 +1,14 @@
-# ADR-003: IPC Boundary Design for Rust TUI
+---
+adr_id: 004
+title: "Ipc Boundary Design For Rust Tui"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-004: Ipc Boundary Design For Rust Tui
+
+
 
 > **✅ IMPLEMENTED.** Both sides of this boundary exist: the Rust client (`src/ipc/client.rs`,
 > `src/ipc/framing.rs`) and the Python service (`python/crystalmath/server/`, the

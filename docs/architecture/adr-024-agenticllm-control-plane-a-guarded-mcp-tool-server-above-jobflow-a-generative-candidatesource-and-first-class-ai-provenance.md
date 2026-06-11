@@ -1,4 +1,14 @@
-# ADR-023: Agentic/LLM Control Plane — a Guarded MCP Tool-Server Above jobflow, a Generative CandidateSource, and First-Class AI Provenance
+---
+adr_id: 024
+title: "Agenticllm Control Plane A Guarded Mcp Tool Server Above Jobflow A Generative Candidatesource And First Class Ai Provenance"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-024: Agenticllm Control Plane A Guarded Mcp Tool Server Above Jobflow A Generative Candidatesource And First Class Ai Provenance
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

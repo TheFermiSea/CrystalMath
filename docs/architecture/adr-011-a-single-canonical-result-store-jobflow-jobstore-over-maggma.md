@@ -1,4 +1,14 @@
-# ADR-010: A Single Canonical Result Store — jobflow JobStore over maggma
+---
+adr_id: 011
+title: "A Single Canonical Result Store Jobflow Jobstore Over Maggma"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-011: A Single Canonical Result Store Jobflow Jobstore Over Maggma
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03
@@ -101,10 +111,10 @@ A `[store]` section in the unified config (ADR-015) selects the backend:
 [store]
 kind = "local"        # default: MontyStore docstore + local blob store
 
-# kind = "mongo"      # shared / HPC deployment
-# uri = "mongodb://..."
-# database = "crystalmath"
-# [store.blobs] kind = "s3"  bucket = "..."   # or "gridfs"
+
+
+
+
 ```
 
 The Python core maps this onto `JobStore(docs_store=..., additional_stores={...})`. Because maggma's

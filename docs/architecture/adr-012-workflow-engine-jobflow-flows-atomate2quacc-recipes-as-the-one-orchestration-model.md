@@ -1,4 +1,14 @@
-# ADR-011: Workflow Engine — jobflow Flows (atomate2/quacc recipes) as the One Orchestration Model
+---
+adr_id: 012
+title: "Workflow Engine Jobflow Flows Atomate2quacc Recipes As The One Orchestration Model"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-012: Workflow Engine Jobflow Flows Atomate2quacc Recipes As The One Orchestration Model
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

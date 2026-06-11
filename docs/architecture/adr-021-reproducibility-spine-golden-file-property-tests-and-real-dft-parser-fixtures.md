@@ -1,4 +1,14 @@
-# ADR-020: Reproducibility Spine — Golden-File + Property Tests and Real-DFT Parser Fixtures
+---
+adr_id: 021
+title: "Reproducibility Spine Golden File Property Tests And Real Dft Parser Fixtures"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-021: Reproducibility Spine Golden File Property Tests And Real Dft Parser Fixtures
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03

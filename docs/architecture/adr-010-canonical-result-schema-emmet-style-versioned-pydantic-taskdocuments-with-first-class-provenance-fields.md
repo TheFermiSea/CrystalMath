@@ -1,4 +1,14 @@
-# ADR-009: Canonical Result Schema — emmet-style Versioned pydantic TaskDocuments with First-Class Provenance Fields
+---
+adr_id: 010
+title: "Canonical Result Schema Emmet Style Versioned Pydantic Taskdocuments With First Class Provenance Fields"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-010: Canonical Result Schema Emmet Style Versioned Pydantic Taskdocuments With First Class Provenance Fields
+
+
 
 **Status:** Proposed
 **Date:** 2026-06-03
@@ -89,7 +99,7 @@ Introduce `crystalmath.schemas` with an emmet-style base (mirroring emmet-core's
 `EmmetBaseModel`) and one concrete document per supported code:
 
 ```python
-# python/crystalmath/schemas/base.py
+
 class TaskDocument(BaseModel):                 # the emmet-core pattern, our own base
     model_config = ConfigDict(extra="forbid")  # validate on write; reject unknown keys
 
@@ -121,7 +131,7 @@ class ProvenanceDoc(BaseModel):
 ```
 
 ```python
-# python/crystalmath/schemas/crystal.py
+
 class CrystalTaskDoc(TaskDocument):
     code: Literal[DftCode.CRYSTAL] = DftCode.CRYSTAL
     scf_cycles: int | None = Field(default=None, ge=0)

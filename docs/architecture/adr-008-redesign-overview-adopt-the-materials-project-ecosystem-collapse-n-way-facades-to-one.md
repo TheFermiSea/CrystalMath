@@ -1,4 +1,14 @@
-# ADR-007: Redesign Overview — Adopt the Materials-Project Ecosystem, Collapse N-Way Facades to One
+---
+adr_id: 008
+title: "Redesign Overview Adopt The Materials Project Ecosystem Collapse N Way Facades To One"
+status: "Accepted"
+date: "2026-06-11"
+macro_context: "crystalmath-tui-core"
+---
+
+# ADR-008: Redesign Overview Adopt The Materials Project Ecosystem Collapse N Way Facades To One
+
+
 
 > **North-star ADR.** This is the umbrella decision for the free-rein redesign. It does not
 > introduce a new mechanism so much as it sets a *rule* — replace every "N co-equal
