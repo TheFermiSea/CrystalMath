@@ -64,6 +64,8 @@ reqwest = { version = "0.12", features = [
 
 # Process uid for the uid-scoped /tmp socket fallback (must match the Python server)
 libc = "0.2"
+ratatui-image = { version = "11.0.4", default-features = false, features = ["crossterm", "image-defaults"] }
+image = "0.24.7"
 
 
 [dev-dependencies]
