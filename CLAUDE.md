@@ -9,16 +9,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Quick orientation (full detail in `AGENTS.md`):
 
-- **Direction:** Per [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md), the project is
+- **Direction:** Per [ADR-007](docs/architecture/adr-007-unify-on-a-single-rust-tui-over-an-ipc-backend.md), the project is
   unifying on the **Rust/Ratatui TUI** (`src/`) over an IPC backend; the Python/Textual TUI
-  (`tui/`) is **deprecated**. ADR-006 supersedes ADR-001/002 (the old "Python primary, Rust
+  (`tui/`) is **deprecated**. ADR-007 supersedes ADR-001/002 (the old "Python primary, Rust
   frozen" policy is no longer in effect).
 - **Core logic** lives in the Python package `crystalmath` (`python/`), exposed over IPC by
-  `crystalmath-server`. The live Rust↔Python transport is still PyO3 (`src/bridge.rs`); cutting
-  over to `src/ipc/client.rs` is the keystone follow-up — do not expand PyO3.
-- **Build the Rust TUI** from the repo root with `./scripts/build-tui.sh` (required while PyO3 is
-  live). **Python:** `uv sync` then `uv run pytest`. **CLI:** `bats` in `cli/`.
-- **Issues:** `bd` (beads), backed by Dolt under `.beads/` — not `issues.jsonl`.
+  `crystalmath-server`. The default Rust build uses `src/bridge_ipc.rs` + `src/ipc/client.rs`;
+  `src/bridge.rs` is legacy PyO3/shared JSON-RPC cutover code — do not expand PyO3.
+- **Build the Rust TUI** from the repo root with `cargo build` / `cargo test` (IPC default).
+  **Python:** `uv sync` then `uv run pytest` for the core suite. **CLI:** `bats` in `cli/`.
+- **Issues:** `bd` (beads) under `.beads/`; run `bd prime` first. In this checkout,
+  `.beads/issues.jsonl` and `.beads/interactions.jsonl` are tracked exports updated by `bd`, not
+  files to edit by hand. If the generated beads block below disagrees with `bd prime`, follow
+  `bd prime`.
 - **Project status** is tracked in beads (`bd ready` / `bd list`), not in a table here, so it
   cannot go stale.
 
