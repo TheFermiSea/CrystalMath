@@ -18,7 +18,12 @@ Quick orientation (full detail in `AGENTS.md`):
   over to `src/ipc/client.rs` is the keystone follow-up — do not expand PyO3.
 - **Build the Rust TUI** from the repo root with `./scripts/build-tui.sh` (required while PyO3 is
   live). **Python:** `uv sync` then `uv run pytest`. **CLI:** `bats` in `cli/`.
-- **Issues:** `bd` (beads), backed by Dolt under `.beads/` — not `issues.jsonl`.
+- **Workflow helpers:** `./scripts/init-dev-session.sh` initializes a session and installs the
+  composite hook; `./scripts/pre-push-quality.sh </dev/null` runs its path-aware gates manually;
+  `python3 scripts/check_doc_links.py --stale-only` runs the blocking docs check.
+- **Issues:** use `bd` (beads). The Dolt DB is local, while `bd`-generated
+  `.beads/issues.jsonl` and `.beads/interactions.jsonl` are Git-tracked for repository sync; stage
+  them when changed, and never hand-edit them.
 - **Project status** is tracked in beads (`bd ready` / `bd list`), not in a table here, so it
   cannot go stale.
 

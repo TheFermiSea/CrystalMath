@@ -79,6 +79,18 @@ bats tests/unit/cry-parallel_test.bats  # single file
 bin/runcrystal --explain my_job         # dry-run / educational mode
 ```
 
+### Session, hook & docs helpers
+Run these from the repo root:
+```bash
+./scripts/init-dev-session.sh                 # inspect status, sync beads, install hook, run sanity tests
+./scripts/install-hooks.sh                    # install the composite pre-push quality + beads hook
+./scripts/pre-push-quality.sh </dev/null      # run path-aware Python/Rust/CLI gates manually
+python3 scripts/check_doc_links.py --stale-only  # blocking archived-path check used by CI
+python3 scripts/check_doc_links.py             # also report broken relative links (non-blocking in CI)
+```
+The pre-push helper determines affected components from the refs Git supplies on a real push;
+with no ref input, it falls back to the upstream diff or the latest commit.
+
 ### LSP server (editor diagnostics, optional)
 The Rust TUI editor spawns the vendored language server at
 `third_party/vasp-language-server/` over JSON-RPC/stdio (it is referred to in code as the
@@ -106,18 +118,19 @@ degrade gracefully if the server is missing. See
 
 ## 4. Issue Tracking (beads / `bd`)
 
-This repo uses **`bd` (beads) backed by a Dolt database** under `.beads/` — **not** the old
-`.beads/issues.jsonl` (that file was removed during the Dolt migration; do not recreate or commit
-it). `bd` auto-commits to Dolt; you just `git push` your code at session end.
+This repo uses **`bd` (beads) backed by a Dolt database** under `.beads/`. The current repository
+also Git-tracks `.beads/issues.jsonl` and `.beads/interactions.jsonl`; do not hand-edit them, but
+include their `bd`-generated changes in the session commit. No Dolt remote is currently configured,
+so issue sharing in this repository happens through those tracked exports and the normal Git push.
 
 ```bash
 bd ready                     # available work (start here)
 bd list --status=open
 bd show <id>
 bd create --title="..." --description="..." --type=task --priority=2   # priority 0-4, not high/med/low
-bd update <id> --status=in_progress     # claim
+bd update <id> --claim                  # claim
 bd close <id1> <id2> ...
-bd dolt push / bd dolt pull             # sync the Dolt-backed issue DB
+git add .beads/issues.jsonl .beads/interactions.jsonl  # stage generated tracker exports
 ```
 Use `bd` for task tracking (not TodoWrite or markdown files). **Never run `bd edit`** — it opens
 `$EDITOR` and blocks. If `bd` reports "database not initialized," run `bd bootstrap` (or
@@ -136,8 +149,8 @@ Use `bd` for task tracking (not TodoWrite or markdown files). **Never run `bd ed
 │               #   aiida_plugin/, integrations/, vasp/, templates/, workflows/
 ├── tui/        # Python Textual TUI (DEPRECATED): src/core, src/runners, src/tui
 ├── docs/architecture/   # ADRs (see adr-006 for current direction)
-├── .beads/     # Dolt-backed issue DB
-└── scripts/    # build-tui.sh
+├── .beads/     # Dolt-backed issue DB + Git-tracked JSONL exports
+└── scripts/    # build, session setup, hooks, quality gates, docs/ADR maintenance, deployment
 ```
 
 ## 6. Agent "Do Not" List
@@ -147,7 +160,7 @@ Use `bd` for task tracking (not TodoWrite or markdown files). **Never run `bd ed
    the IPC client/server (ADR-003/006).
 3. **Do not** add features to the deprecated Python TUI (`tui/`); target the Rust TUI + core.
 4. **Do not** bypass `scripts/build-tui.sh` while PyO3 is still the live transport.
-5. **Do not** recreate or commit `.beads/issues.jsonl` (beads is Dolt-backed now).
+5. **Do not** hand-edit Beads JSONL exports; let `bd` update them, then commit the tracked changes.
 6. **Do not** hardcode machine paths (`/Users/...`); use env vars (`CRY23_ROOT`,
    `CRY_SCRATCH_BASE`, `CRYSTAL_TUI_DB`).
 7. **Do not** leave tests broken; update tests when you change behavior, and add deps to the
