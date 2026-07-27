@@ -1,8 +1,7 @@
 # CrystalMath — Canonical Agent Guide
 
 > **This is the single source of truth for agent instructions in this repo.** `CLAUDE.md` is a
-> thin pointer to this file; keep guidance here, not there. (`cli/CLAUDE.md`
-> holds CLI-module detail only and links up to this file.)
+> thin pointer to this file; keep guidance here, not there.
 
 CrystalMath is a monorepo of tools for managing **multi-code DFT calculations** — CRYSTAL23,
 VASP, Quantum ESPRESSO, Yambo, and phonopy (see `python/crystalmath/backends/`). It is **not**
@@ -40,8 +39,10 @@ Neither is being removed.
 ## 2. Build, Test & Lint
 
 ### Python workspace (uv)
+
 This is a **uv workspace**; members are `python/` (`crystalmath`) and `tui/` (`crystal-tui`).
 Run from the repo root:
+
 ```bash
 uv sync                       # install core + TUI
 uv sync --all-extras          # + dev, aiida, materials extras
@@ -50,10 +51,13 @@ uv run --package crystalmath pytest    # core only
 uv run --package crystal-tui pytest    # TUI only
 uv run ruff format python/ tui/ && uv run ruff check python/ tui/
 ```
+
 Prefer the workspace commands above over per-package `pip install -e .`.
 
 ### Rust TUI
+
 Run from the **repo root** (not `tui/`):
+
 ```bash
 cargo build                       # default IPC transport; no PYO3_PYTHON required
 cargo test                        # default IPC transport tests
@@ -69,10 +73,12 @@ cargo test  --no-default-features
 # TODO: legacy PyO3 feature wiring is transitional; verify Cargo feature wiring before
 # recommending a PyO3 validation command.
 ```
+
 TODO: `scripts/build-tui.sh` still requires `.venv`/`PYO3_PYTHON` even though it currently runs
 the default IPC build. Prefer direct `cargo build`/`cargo test` unless maintaining that script.
 
 ### CLI (Bash, ≥4.0)
+
 ```bash
 cd cli/
 bats tests/unit/*.bats                  # ~173 tests total across unit+integration
@@ -82,7 +88,9 @@ bin/runcrystal --explain my_job         # dry-run / educational mode
 ```
 
 ### Session, hook & docs helpers
+
 Run these from the repo root:
+
 ```bash
 ./scripts/init-dev-session.sh                 # inspect status, sync beads, install hook, run sanity tests
 ./scripts/install-hooks.sh                    # install the composite pre-push quality + beads hook
@@ -90,6 +98,7 @@ Run these from the repo root:
 python3 scripts/check_doc_links.py --stale-only  # blocking archived-path check used by CI
 python3 scripts/check_doc_links.py             # also report broken relative links (non-blocking in CI)
 ```
+
 The pre-push helper determines affected components from the refs Git supplies on a real push;
 with no ref input, it falls back to the upstream diff or the latest commit.
 
