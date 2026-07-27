@@ -1,8 +1,7 @@
 # CrystalMath — Canonical Agent Guide
 
-> **This is the single source of truth for agent instructions in this repo.** `CLAUDE.md` and
-> `GEMINI.md` are thin pointers to this file; keep guidance here, not there. (`cli/CLAUDE.md`
-> holds CLI-module detail only and links up to this file.)
+> **This is the single source of truth for agent instructions in this repo.** `CLAUDE.md` is a
+> thin pointer to this file; keep guidance here, not there.
 
 CrystalMath is a monorepo of tools for managing **multi-code DFT calculations** — CRYSTAL23,
 VASP, Quantum ESPRESSO, Yambo, and phonopy (see `python/crystalmath/backends/`). It is **not**
@@ -10,9 +9,9 @@ CRYSTAL23-only.
 
 ## 1. Architecture & Direction (read this first)
 
-**Canonical direction — [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md) (2026-05-31):**
+**Canonical direction — [ADR-007](docs/architecture/adr-007-unify-on-a-single-rust-tui-over-an-ipc-backend.md) (2026-05-31):**
 the project is unifying on a **single Rust/Ratatui TUI** that talks to the Python core over an
-**IPC boundary** ([ADR-003](docs/architecture/adr-003-ipc-boundary-design.md)). ADR-006
+**IPC boundary** ([ADR-004](docs/architecture/adr-004-ipc-boundary-design-for-rust-tui.md)). ADR-007
 **supersedes ADR-001 and ADR-002** — the old "Python TUI primary, Rust TUI secondary under a
 feature freeze" policy no longer applies.
 
@@ -21,13 +20,14 @@ feature freeze" policy no longer applies.
 | **CLI** (Bash) | `cli/` | ✅ Production. Thin `bin/runcrystal` orchestrator + `lib/` modules. |
 | **Rust TUI** (Ratatui) — *primary UI* | `src/` | 🔨 Becoming the single UI; freeze rescinded. May add screens/deps/features. |
 | **Python core** (`crystalmath`) — business logic SSOT | `python/` | ✅ Models, API, templates, backends, `crystalmath-server` IPC service. |
-| **Python TUI** (Textual) — *deprecated* | `tui/` | ⚠️ Maintenance-only; being phased out per ADR-006. No new features. |
+| **Python TUI** (Textual) — *deprecated* | `tui/` | ⚠️ Maintenance-only; being phased out per ADR-007. No new features. |
 
-**Rust↔Python boundary:** the IPC service ([ADR-003](docs/architecture/adr-003-ipc-boundary-design.md))
-is the target. It is **built but not yet the live transport** — the running TUI still uses PyO3
-via `src/bridge.rs`. Cutting over to `src/ipc/client.rs` and deleting PyO3 is the keystone
-follow-up. **Do not delete `bridge.rs` or expand it; do not add new PyO3 bindings** — new
-boundary work goes through the IPC client/server.
+**Rust↔Python boundary:** the IPC service ([ADR-004](docs/architecture/adr-004-ipc-boundary-design-for-rust-tui.md))
+is the default Rust build path. `src/main.rs` selects `IpcBridgeHandle` unless the legacy
+`pyo3-bridge` feature is explicitly enabled. `src/bridge.rs` still carries legacy PyO3 internals
+and shared JSON-RPC types during the cutover. **Do not delete `bridge.rs` or expand it; do not add
+new PyO3 bindings** — new boundary work goes through `src/ipc/`, `src/bridge_ipc.rs`, and
+`python/crystalmath/server/`.
 
 **Workflow backends:** `quacc` (`python/crystalmath/quacc/`) and **AiiDA**
 (`python/crystalmath/aiida_plugin/`, `tui/src/aiida/`) are **both supported, co-equal** engines.
@@ -39,38 +39,46 @@ Neither is being removed.
 ## 2. Build, Test & Lint
 
 ### Python workspace (uv)
+
 This is a **uv workspace**; members are `python/` (`crystalmath`) and `tui/` (`crystal-tui`).
 Run from the repo root:
+
 ```bash
 uv sync                       # install core + TUI
 uv sync --all-extras          # + dev, aiida, materials extras
-uv run pytest                 # all Python tests
+uv run pytest                 # Python core tests (root testpaths = python/tests)
 uv run --package crystalmath pytest    # core only
 uv run --package crystal-tui pytest    # TUI only
-uv run black python/ tui/ && uv run ruff check python/ tui/
+uv run ruff format python/ tui/ && uv run ruff check python/ tui/
 ```
+
 Prefer the workspace commands above over per-package `pip install -e .`.
 
 ### Rust TUI
+
 Run from the **repo root** (not `tui/`):
+
 ```bash
-./scripts/build-tui.sh            # default (PyO3) build with the correct PYO3_PYTHON
-./scripts/build-tui.sh --clean    # after a Python version change ("SRE module mismatch")
-cargo test                        # ~242 tests
+cargo build                       # default IPC transport; no PYO3_PYTHON required
+cargo test                        # default IPC transport tests
 cargo test lsp                    # one module
 cargo clippy && cargo fmt --check
-./target/release/crystalmath      # run the TUI
+cargo build --release             # optimized TUI binary
+./target/release/crystalmath      # run the release TUI
 
-# IPC transport (ADR-006 cutover, opt-in until it becomes the default): talks to
-# crystalmath-server over a socket, needs NO PYO3_PYTHON. The server is auto-spawned.
+# Explicit IPC transport build/test; currently equivalent to the default feature set.
 cargo build --no-default-features
 cargo test  --no-default-features
+
+# TODO: legacy PyO3 feature wiring is transitional; verify Cargo feature wiring before
+# recommending a PyO3 validation command.
 ```
-`build-tui.sh` exists because PyO3 must be compiled against the exact runtime Python (the venv
-is 3.12; system Python may be 3.14+). Once the IPC cutover lands (ADR-006), this requirement and
-the script go away.
+
+TODO: `scripts/build-tui.sh` still requires `.venv`/`PYO3_PYTHON` even though it currently runs
+the default IPC build. Prefer direct `cargo build`/`cargo test` unless maintaining that script.
 
 ### CLI (Bash, ≥4.0)
+
 ```bash
 cd cli/
 bats tests/unit/*.bats                  # ~173 tests total across unit+integration
@@ -80,7 +88,9 @@ bin/runcrystal --explain my_job         # dry-run / educational mode
 ```
 
 ### Session, hook & docs helpers
+
 Run these from the repo root:
+
 ```bash
 ./scripts/init-dev-session.sh                 # inspect status, sync beads, install hook, run sanity tests
 ./scripts/install-hooks.sh                    # install the composite pre-push quality + beads hook
@@ -88,6 +98,7 @@ Run these from the repo root:
 python3 scripts/check_doc_links.py --stale-only  # blocking archived-path check used by CI
 python3 scripts/check_doc_links.py             # also report broken relative links (non-blocking in CI)
 ```
+
 The pre-push helper determines affected components from the refs Git supplies on a real push;
 with no ref input, it falls back to the upstream diff or the latest commit.
 
@@ -96,7 +107,7 @@ The Rust TUI editor spawns the vendored language server at
 `third_party/vasp-language-server/` over JSON-RPC/stdio (it is referred to in code as the
 "dft-language-server"). Node is resolved from `CRYSTAL_NODE_PATH` (default `node`). Diagnostics
 degrade gracefully if the server is missing. See
-[ADR-004](docs/architecture/adr-004-editor-lsp-strategy.md).
+[ADR-005](docs/architecture/adr-005-editorlsp-strategy-upstream-integration-only.md).
 
 ## 3. Code Style
 
@@ -148,18 +159,19 @@ Use `bd` for task tracking (not TodoWrite or markdown files). **Never run `bd ed
 │               #   backends/ (crystal, vasp, qe, yambo, phonopy), quacc/,
 │               #   aiida_plugin/, integrations/, vasp/, templates/, workflows/
 ├── tui/        # Python Textual TUI (DEPRECATED): src/core, src/runners, src/tui
-├── docs/architecture/   # ADRs (see adr-006 for current direction)
+├── docs/architecture/   # ADRs (see adr-007 and adr-030/031 for current direction)
 ├── .beads/     # Dolt-backed issue DB + Git-tracked JSONL exports
 └── scripts/    # build, session setup, hooks, quality gates, docs/ADR maintenance, deployment
 ```
 
 ## 6. Agent "Do Not" List
 
-1. **Do not** restate policy in `CLAUDE.md`/`GEMINI.md` — edit *this* file; they are stubs.
+1. **Do not** restate policy in `CLAUDE.md` — edit *this* file; it is a pointer.
 2. **Do not** add new PyO3 bindings or expand `src/bridge.rs`; route new boundary work through
-   the IPC client/server (ADR-003/006).
+   the IPC client/server (ADR-004/007).
 3. **Do not** add features to the deprecated Python TUI (`tui/`); target the Rust TUI + core.
-4. **Do not** bypass `scripts/build-tui.sh` while PyO3 is still the live transport.
+4. **Do not** assume `scripts/build-tui.sh` is the normal path; direct `cargo build` is the
+   current IPC-default workflow unless maintaining the script itself.
 5. **Do not** hand-edit Beads JSONL exports; let `bd` update them, then commit the tracked changes.
 6. **Do not** hardcode machine paths (`/Users/...`); use env vars (`CRY23_ROOT`,
    `CRY_SCRATCH_BASE`, `CRYSTAL_TUI_DB`).
