@@ -102,6 +102,19 @@ python3 scripts/check_doc_links.py             # also report broken relative lin
 The pre-push helper determines affected components from the refs Git supplies on a real push;
 with no ref input, it falls back to the upstream diff or the latest commit.
 
+### Architecture checks (ast-grep)
+
+Run the repository rules from the repo root:
+
+```bash
+ast-grep scan
+```
+
+The rules in `.ast-grep/rules/` flag blocking I/O in async Rust code, track legacy PyO3 boundary
+usage during the IPC cutover, and identify JSON string parsing that may be reviewed for byte-slice
+parsing. Treat the latter two as review prompts, not automatic rewrites; their reported context can
+be intentional.
+
 ### LSP server (editor diagnostics, optional)
 The Rust TUI editor spawns the vendored language server at
 `third_party/vasp-language-server/` over JSON-RPC/stdio (it is referred to in code as the
