@@ -402,14 +402,16 @@ class BaseAnalysisRunner(ABC):
 
         except ImportError as e:
             logger.warning(
-                f"SLURMWorkflowRunner not available: {e}. "
-                f"Jobs will be simulated, NOT submitted to SLURM."
+                f"SLURMWorkflowRunner not available: {e}. No runner will be "
+                f"configured; steps will raise NoRunnerConfiguredError unless "
+                f"stub execution is explicitly opted into."
             )
             return None
         except Exception as e:
             logger.error(
-                f"Failed to create SLURMWorkflowRunner: {e}. "
-                f"Jobs will be simulated, NOT submitted to SLURM."
+                f"Failed to create SLURMWorkflowRunner: {e}. No runner will be "
+                f"configured; steps will raise NoRunnerConfiguredError unless "
+                f"stub execution is explicitly opted into."
             )
             return None
 
