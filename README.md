@@ -1,6 +1,6 @@
 # CrystalMath: Multi-Code DFT Job Management
 
-A unified toolkit for quantum chemistry DFT calculations, supporting **CRYSTAL23**, **Quantum Espresso**, **VASP**, **Yambo**, and **phonopy**. The project is unifying on a single primary Rust/Ratatui TUI (`src/`) that talks to the Python core over an IPC boundary; the legacy Python/Textual TUI (`tui/`) is deprecated and being phased out. See [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md).
+A unified toolkit for quantum chemistry DFT calculations, supporting **CRYSTAL23**, **Quantum Espresso**, **VASP**, **Yambo**, and **phonopy**. The project is unifying on a single primary Rust/Ratatui TUI (`src/`) that talks to the Python core over an IPC boundary; the legacy Python/Textual TUI (`tui/`) is deprecated and being phased out. See [ADR-007](docs/architecture/adr-007-unify-on-a-single-rust-tui-over-an-ipc-backend.md).
 
 ## Features
 
@@ -22,10 +22,10 @@ A unified toolkit for quantum chemistry DFT calculations, supporting **CRYSTAL23
 ### Rust TUI (`src/`) — Primary
 - Primary UI for job creation, configuration, workflows, and high-performance monitoring (Ratatui, 60fps)
 - Handles the full lifecycle: new jobs, editor + LSP, results, logs, clusters, SLURM queue, workflows, recipes, batch submission
-- Talks to the Python core over an IPC boundary (currently still using the PyO3 bridge during cutover) — see [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md)
+- Talks to the Python core over an IPC boundary (currently still using the PyO3 bridge during cutover) — see [ADR-007](docs/architecture/adr-007-unify-on-a-single-rust-tui-over-an-ipc-backend.md)
 
 ### Python TUI (`tui/`) — Deprecated
-- Legacy Textual-based async interface, being phased out under ADR-006
+- Legacy Textual-based async interface, being phased out under ADR-007
 - Retained for reference until the Rust TUI fully supersedes it
 - Tight integration with the Python scientific stack (pymatgen/ASE, quacc/AiiDA backends)
 
@@ -95,10 +95,10 @@ crystal-tui
   - Multi-code support (CRYSTAL23, QE, VASP, Yambo, phonopy)
   - Remote execution (SSH, SLURM)
   - Materials Project integration
-- **Direction** — see [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md) for the unification policy.
+- **Direction** — see [ADR-007](docs/architecture/adr-007-unify-on-a-single-rust-tui-over-an-ipc-backend.md) for the unification policy.
 
 ### Python TUI: Deprecated ⚠️
-- Legacy Textual UI, being phased out under [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md).
+- Legacy Textual UI, being phased out under [ADR-007](docs/architecture/adr-007-unify-on-a-single-rust-tui-over-an-ipc-backend.md).
 - Retained for reference until the Rust TUI fully supersedes it.
 
 ## Architecture
@@ -134,7 +134,7 @@ crystalmath/
 
 ### UI Architecture
 
-The system is unifying on a single Rust TUI over an IPC boundary (see [ADR-006](docs/architecture/adr-006-unify-on-rust-tui.md)):
+The system is unifying on a single Rust TUI over an IPC boundary (see [ADR-007](docs/architecture/adr-007-unify-on-a-single-rust-tui-over-an-ipc-backend.md)):
 1.  **Primary UI (Rust/Ratatui)**: Handles all user interaction, job creation, configuration, workflows, and monitoring.
 2.  **Backend (Python)**: Scientific logic, database access, and HPC communication, exposed over an IPC boundary (`python/crystalmath/server/`). The PyO3 bridge remains the live transport during cutover.
 3.  **Legacy UI (Python/Textual)**: Deprecated, being phased out.
@@ -261,20 +261,39 @@ Full documentation is available in the `docs/` directory:
 
 ## Roadmap
 
-### Completed
-- [x] **CLI**: Production-ready with 173 bats tests
-- [x] **Multi-Code Support**: CRYSTAL23, QE, VASP, Yambo, phonopy
-- [x] **Workflow Backends**: quacc and AiiDA both supported (co-equal)
-- [x] **Rust TUI Core**: 60fps UI, PyO3 bridge, LSP editor, job creation/config/workflows
-- [x] **IPC Boundary**: built (`src/ipc/`, `python/crystalmath/server/`)
+> **Status accuracy note (2026-09-08):** this section previously claimed several
+> items as complete that the issue tracker and [ADR-031](docs/architecture/adr-031-ecosystem-consolidation-validated-refactor-plan.md)
+> contradict. It has been corrected against verified state. "Supported" below
+> means *scaffolding/config exists*, not that an end-to-end vertical (deck
+> generator + parser + error handler + recipe) is authored — per ADR-031, for
+> CRYSTAL23 and YAMBO **no** adopted ecosystem tool covers any of those layers,
+> and authoring them is the bulk of the remaining work.
+
+### Working (verified)
+- [x] **CLI**: 173 bats tests
+- [x] **IPC Boundary** (`src/ipc/`, `python/crystalmath/server/`): Rust TUI ↔ Python
+      core over JSON-RPC with Content-Length framing. *Was built but non-functional
+      until 2026-09-08* — the Rust client spoke a bespoke binary framing the server
+      never implemented, so every request timed out. See [ADR-034](docs/architecture/adr-034-ecosystem-library-verification-crystalpytools-jobflow-remote-yambopy-aiida.md).
+- [x] **Remote execution without a scheduler** (`SSHRunner`): submit/poll/cancel/
+      retrieve over SSH. Verified end-to-end against a real parallel CRYSTAL23
+      build (8 MPI ranks, converged SCF, matching reference energy).
+- [x] **Rust TUI Core**: 60fps UI, LSP editor, job creation/config/workflows
 
 ### In Progress
-- [ ] **Epic `crystalmath-as6l`**: TUI Unification — cut the live transport over from the PyO3 bridge to the IPC client (keystone)
-- [ ] **Phase 4**: Materials Project API integration
+- [ ] **PyO3 → IPC cutover**: delete the PyO3 transport now that IPC works
+      (beads `crystalmath-oho`, P0)
+- [ ] **CRYSTAL23 / YAMBO verticals**: deck generator, parser, custodian error
+      handler, recipe (beads `crystalmath-u94` / `crystalmath-550`, P1) — the
+      flagship differentiators, still largely unauthored
+- [ ] **Execution-backend decision**: jobflow/jobflow-remote vs. the AiiDA plugin
+      ecosystem — [ADR-034](docs/architecture/adr-034-ecosystem-library-verification-crystalpytools-jobflow-remote-yambopy-aiida.md)
+      recommends a time-boxed bake-off before committing
 - [ ] Live log streaming and job status dashboard polish
 
 ### Planned
 - [ ] Fully phase out the deprecated Python/Textual TUI once the Rust TUI supersedes it
+- [ ] Materials Project API integration
 
 ## License
 

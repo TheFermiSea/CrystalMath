@@ -603,7 +603,7 @@ impl IpcClient {
             .map_err(|e| IpcError::Protocol(format!("Failed to serialize request: {}", e)))?;
 
         // Send with framing
-        write_message(&mut self.writer, request_json.as_bytes(), 1)
+        write_message(&mut self.writer, request_json.as_bytes())
             .await
             .map_err(|e| IpcError::Protocol(format!("Failed to send request: {}", e)))?;
 

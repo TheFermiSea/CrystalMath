@@ -16,6 +16,16 @@ macro_context: "crystalmath-tui-core"
 **Supersedes:** none
 **Depends on:** [ADR-011](adr-011-workflow-engine-jobflow-atomate2-quacc.md) (jobflow/quacc as the workflow model)
 
+> **Amendment (2026-09-07) — [ADR-034](adr-034-ecosystem-library-verification-crystalpytools-jobflow-remote-yambopy-aiida.md):**
+> Live-verified today: jobflow-remote's official quickstart docs describe the Runner as requiring
+> a **persistent daemon** for the remote-SSH/SLURM path (`jf runner start`) — the "daemon-free
+> workstation mode" claimed below was not found on that page for this use case; verify before
+> relying on it. Separately, **AiiDA's plugin ecosystem for CRYSTAL/YAMBO is stronger than this
+> ADR's "opt-in, secondary" framing suggests** (`aiida-crystal-dft` actively pushed 2026-07-15;
+> `aiida-yambo` is feature-complete for GW/BSE though its code hasn't been pushed since 2024-02) —
+> see ADR-034 for a recommended bake-off before treating jobflow-remote as the settled default.
+
+
 > **Amendment (2026-06-07) — consolidation audit ([CONSOLIDATION-PLAN.md](CONSOLIDATION-PLAN.md)):**
 > **jobflow-remote reached v1.0.0 (stable, daemon-free workstation mode)**, so the "younger … API
 > still evolving" tradeoff below is **stale** — downgrade it. Two refinements: (1) name jobflow-remote

@@ -30,9 +30,12 @@ CRYSTAL_CONFIG = DFTCodeConfig(
         "FREQINFO.DAT": ".freqinfo",
         "fort.25": ".f25",  # Properties output
     },
-    # Executables
-    serial_executable="crystalOMP",
-    parallel_executable="PcrystalOMP",
+    # Executables. Names match what CRYSTAL23's own build/Makefile produces
+    # (crystal/properties/Pcrystal/Pproperties) — NOT the "OMP"-suffixed
+    # names from the separately-distributed precompiled binary package,
+    # which is a different artifact with a different naming convention.
+    serial_executable="crystal",
+    parallel_executable="Pcrystal",
     invocation_style=InvocationStyle.STDIN,
     # Environment
     root_env_var="CRY23_ROOT",

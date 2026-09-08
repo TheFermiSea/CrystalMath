@@ -1,105 +1,65 @@
-#![allow(dead_code)]
-use serde::{Deserialize, Serialize};
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Header defining the payload length to allow predictable buffer allocations.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(C)]
-#[allow(dead_code)]
-pub struct FrameHeader {
-    pub magic: [u8; 4], // b"CMAT"
-    pub payload_len: u32,
-    pub message_type: u16,
-}
+/// Reads one Content-Length-framed message (HTTP-style headers, same as LSP)
+/// asynchronously from a Tokio stream.
+///
+/// This must match the wire format `crystalmath-server` actually implements
+/// (`python/crystalmath/server/__init__.py`). An earlier version of this
+/// function spoke a bespoke binary `CMAT`-magic-header format that no
+/// consumer (Rust or Python) ever implemented on the other end — every
+/// `IpcClient::call_rpc` request timed out because the server was waiting for
+/// `Content-Length` headers that never arrived. See ADR-034.
+pub async fn read_message<R: AsyncBufRead + Unpin>(mut stream: R) -> IoResult<Vec<u8>> {
+    let mut content_length: Option<usize> = None;
 
-/// Zero-copy data frame that borrows directly from the network/stream buffer.
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-#[allow(dead_code)]
-pub struct ZeroCopyFrame<'a> {
-    pub job_id: u64,
-    #[serde(borrow)]
-    pub code_engine: &'a str,
-    #[serde(borrow)]
-    pub stream_channel: &'a str,
-    #[serde(borrow)]
-    pub payload: &'a str,
-}
+    loop {
+        let mut header = String::new();
+        let n = stream.read_line(&mut header).await?;
+        if n == 0 {
+            return Err(IoError::new(
+                ErrorKind::UnexpectedEof,
+                "Connection closed while reading message headers",
+            ));
+        }
 
-impl<'a> ZeroCopyFrame<'a> {
-    #[inline]
-    pub fn from_slice(slice: &'a [u8]) -> Result<Self, serde_json::Error> {
-        serde_json::from_slice(slice)
+        let trimmed = header.trim();
+        if trimmed.is_empty() {
+            break; // blank line ends the header block
+        }
+
+        if let Some(colon_pos) = trimmed.find(':') {
+            let key = trimmed[..colon_pos].trim();
+            let value = trimmed[colon_pos + 1..].trim();
+            if key.eq_ignore_ascii_case("Content-Length") {
+                content_length = value.parse::<usize>().ok();
+            }
+        }
+        // Other headers (e.g. Content-Type) are ignored, same as the LSP client.
     }
-}
 
-/// Reads a fixed message frame asynchronously from a Tokio stream.
-pub async fn read_message<R: AsyncRead + Unpin>(mut stream: R) -> IoResult<Vec<u8>> {
-    let mut header_buf = [0u8; 10]; // 4 (magic) + 4 (u32 len) + 2 (u16 type)
-    stream.read_exact(&mut header_buf).await?;
+    let size = content_length
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, "Missing Content-Length header"))?;
 
-    if &header_buf[0..4] != b"CMAT" {
+    // Mirrors the LSP client's cap (src/lsp.rs) against a malicious/buggy peer.
+    const MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
+    if size > MAX_MESSAGE_SIZE {
         return Err(IoError::new(
             ErrorKind::InvalidData,
-            "Invalid CMAT magic header",
+            format!("Message exceeds size limit: {size} bytes"),
         ));
     }
 
-    let payload_len =
-        u32::from_be_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]]) as usize;
-
-    let mut payload_buf = vec![0u8; payload_len];
-    stream.read_exact(&mut payload_buf).await?;
-
-    Ok(payload_buf)
+    let mut payload = vec![0u8; size];
+    stream.read_exact(&mut payload).await?;
+    Ok(payload)
 }
 
-/// Writes a fixed message frame asynchronously over a Tokio stream.
-pub async fn write_message<W: AsyncWrite + Unpin>(
-    mut stream: W,
-    payload: &[u8],
-    message_type: u16,
-) -> IoResult<()> {
-    let payload_len = payload.len() as u32;
-
-    stream.write_all(b"CMAT").await?;
-    stream.write_all(&payload_len.to_be_bytes()).await?;
-    stream.write_all(&message_type.to_be_bytes()).await?;
-
+/// Writes one Content-Length-framed message asynchronously over a Tokio stream.
+pub async fn write_message<W: AsyncWrite + Unpin>(mut stream: W, payload: &[u8]) -> IoResult<()> {
+    let header = format!("Content-Length: {}\r\n\r\n", payload.len());
+    stream.write_all(header.as_bytes()).await?;
     stream.write_all(payload).await?;
     stream.flush().await?;
-
     Ok(())
-}
-
-/// A structure to handle incoming packet boundaries without allocating intermediate vectors
-#[allow(dead_code)]
-pub struct ZeroCopyRingBuffer {
-    buffer: Vec<u8>,
-    head: usize,
-    tail: usize,
-}
-
-impl ZeroCopyRingBuffer {
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            buffer: vec![0; capacity],
-            head: 0,
-            tail: 0,
-        }
-    }
-
-    #[inline]
-    pub fn as_slice(&self) -> &[u8] {
-        &self.buffer[self.head..self.tail]
-    }
-
-    #[inline]
-    pub fn consume(&mut self, amt: usize) {
-        self.head = std::cmp::min(self.head + amt, self.tail);
-        if self.head == self.tail {
-            self.head = 0;
-            self.tail = 0;
-        }
-    }
 }
