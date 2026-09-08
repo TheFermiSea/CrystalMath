@@ -38,9 +38,8 @@ pub async fn read_message<R: AsyncBufRead + Unpin>(mut stream: R) -> IoResult<Ve
         // Other headers (e.g. Content-Type) are ignored, same as the LSP client.
     }
 
-    let size = content_length.ok_or_else(|| {
-        IoError::new(ErrorKind::InvalidData, "Missing Content-Length header")
-    })?;
+    let size = content_length
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, "Missing Content-Length header"))?;
 
     // Mirrors the LSP client's cap (src/lsp.rs) against a malicious/buggy peer.
     const MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;

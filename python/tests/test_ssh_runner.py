@@ -12,7 +12,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from crystalmath._vendor.core.codes import DFTCode
 from crystalmath._vendor.runners.base import JobStatus, RunnerConfig
 from crystalmath._vendor.runners.exceptions import JobNotFoundError
@@ -105,7 +104,9 @@ class TestExecutableResolution:
 
 class TestSubmitJob:
     @pytest.mark.asyncio
-    async def test_submit_returns_ssh_handle_with_pid(self, runner, mock_conn, input_file, tmp_path):
+    async def test_submit_returns_ssh_handle_with_pid(
+        self, runner, mock_conn, input_file, tmp_path
+    ):
         mock_conn.run = AsyncMock(
             side_effect=[
                 _make_run_result(),  # mkdir -p
@@ -121,7 +122,9 @@ class TestSubmitJob:
             await runner.submit_job(1, tmp_path / "does_not_exist.d12", tmp_path)
 
     @pytest.mark.asyncio
-    async def test_submit_uploads_input_as_literal_INPUT(self, runner, mock_conn, input_file, tmp_path):
+    async def test_submit_uploads_input_as_literal_input_file(
+        self, runner, mock_conn, input_file, tmp_path
+    ):
         """CRYSTAL's parallel binary doesn't reliably read the input deck via
         redirected stdin across all MPI ranks — it must be staged as a file
         literally named INPUT. See _get_remote_input_name's docstring."""

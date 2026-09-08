@@ -58,9 +58,7 @@ async def main() -> int:
     parser.add_argument("--host", default="ultrafastlab-1.tail0bd2a2.ts.net")
     parser.add_argument("--user", default="jens")
     parser.add_argument("--ntasks", type=int, default=8, help="MPI ranks (0 = serial)")
-    parser.add_argument(
-        "--remote-scratch", default="/tmp/crystalmath_ssh_runner_smoke_test"
-    )
+    parser.add_argument("--remote-scratch", default="/tmp/crystalmath_ssh_runner_smoke_test")
     args = parser.parse_args()
 
     manager = ConnectionManager()
@@ -93,7 +91,9 @@ async def main() -> int:
         )
 
         print(f"=> Submitting to {args.user}@{args.host} (ntasks={args.ntasks})...")
-        handle = await runner.submit_job(job_id=1, input_file=input_file, work_dir=work_dir, config=job_config)
+        handle = await runner.submit_job(
+            job_id=1, input_file=input_file, work_dir=work_dir, config=job_config
+        )
         print(f"=> Job handle: {handle}")
 
         status = await runner.wait_for_completion(handle, poll_interval=1.0, timeout=120.0)
@@ -110,7 +110,7 @@ async def main() -> int:
         out_text = out_files[0].read_text()
         print(f"=> Retrieved {out_files[0].name} ({len(out_text)} bytes)")
 
-        energy_lines = [l for l in out_text.splitlines() if "TOTAL ENERGY(" in l]
+        energy_lines = [line for line in out_text.splitlines() if "TOTAL ENERGY(" in line]
         termination = "EEEEEEEEEE TERMINATION" in out_text
 
         print(f"=> Energy line: {energy_lines[-1] if energy_lines else '(none found)'}")

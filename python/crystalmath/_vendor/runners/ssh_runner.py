@@ -14,9 +14,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import shlex
-import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from .base import JobHandle, JobStatus, RemoteBaseRunner, RunnerConfig
@@ -119,7 +118,9 @@ class SSHRunner(RemoteBaseRunner):
 
             remote_work_dir = f"{self.remote_scratch_base}/{job_id}_{work_dir.name}"
             remote_input_name = self._get_remote_input_name(input_file)
-            remote_output_name = f"{Path(remote_input_name).stem}{self.code_config.output_extension}"
+            remote_output_name = (
+                f"{Path(remote_input_name).stem}{self.code_config.output_extension}"
+            )
 
             async with self.connection_manager.get_connection(self.cluster_id) as conn:
                 await conn.run(f"mkdir -p {shlex.quote(remote_work_dir)}")
@@ -146,7 +147,9 @@ class SSHRunner(RemoteBaseRunner):
                 # `echo $!` (outside the quoted script, in the outer shell)
                 # captures the backgrounded PID, which conn.run() returns
                 # before the job itself has necessarily finished.
-                launch_script = f"cd {shlex.quote(remote_work_dir)} && {inner_cmd}; echo $? > EXIT_CODE"
+                launch_script = (
+                    f"cd {shlex.quote(remote_work_dir)} && {inner_cmd}; echo $? > EXIT_CODE"
+                )
                 launch_cmd = (
                     f"nohup bash -c {shlex.quote(launch_script)} "
                     f"> /dev/null 2>&1 < /dev/null & echo $!"
@@ -223,7 +226,9 @@ class SSHRunner(RemoteBaseRunner):
         output_glob = f"*{self.code_config.output_extension}"
 
         async with self.connection_manager.get_connection(cluster_id) as conn:
-            output_file = f"{remote_dir}/{await self._find_output_file(conn, remote_dir, output_glob)}"
+            output_file = (
+                f"{remote_dir}/{await self._find_output_file(conn, remote_dir, output_glob)}"
+            )
 
             last_size = 0
             while True:
@@ -309,6 +314,8 @@ class SSHRunner(RemoteBaseRunner):
         """Parse "ssh:{cluster_id}:{pid}:{remote_dir}" -> (cluster_id, pid, remote_dir)."""
         parts = str(job_handle).split(":", 3)
         if len(parts) != 4 or parts[0] != "ssh":
-            raise JobNotFoundError(f"Invalid SSH job handle: {job_handle}", job_handle=str(job_handle))
+            raise JobNotFoundError(
+                f"Invalid SSH job handle: {job_handle}", job_handle=str(job_handle)
+            )
         _, cluster_id_str, pid, remote_dir = parts
         return int(cluster_id_str), pid, remote_dir
