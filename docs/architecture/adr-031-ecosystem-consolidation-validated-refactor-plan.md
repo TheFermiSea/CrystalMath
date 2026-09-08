@@ -18,6 +18,15 @@ the project**, roughly 4× the work the ADRs imply.
 
 ---
 
+> **Amendment (2026-09-07) — [ADR-034](adr-034-ecosystem-library-verification-crystalpytools-jobflow-remote-yambopy-aiida.md):**
+> This plan's "CRYSTAL=bespoke" parsing verdict (§3) undersells **CRYSTALpytools** (MIT
+> licensed), which this project's own earlier AiiDA-integration plan had already validated for
+> CRYSTAL output parsing, and which additionally covers `.d12` **input generation** — not
+> credited here at all. See ADR-034 §1 before authoring a bespoke CRYSTAL parser/deck generator.
+> Also: the AiiDA plugin ecosystem (`aiida-crystal-dft`, `aiida-yambo`) deserves a real bake-off
+> against the jobflow/jobflow-remote default this plan assumes — see ADR-034 §2.
+
+
 ## 1. North Star
 
 A thin conductor on the materials/HPC OSS stack: **jobflow** as the one workflow IR;

@@ -40,3 +40,4 @@ governing the CrystalMath platform ecosystem under our unified Rust/Ratatui stra
 | **031** | [ecosystem consolidation validated refactor plan](adr-031-ecosystem-consolidation-validated-refactor-plan.md) | `Accepted` | 2026-06-11 |
 | **032** | [high level api design](adr-032-high-level-api-design.md) | `Accepted` | 2026-06-11 |
 | **033** | [unified workflow architecture](adr-033-unified-workflow-architecture.md) | `Accepted` | 2026-06-11 |
+| **034** | [Ecosystem Library Verification: CRYSTALpytools, jobflow-remote, yambopy, AiiDA](adr-034-ecosystem-library-verification-crystalpytools-jobflow-remote-yambopy-aiida.md) | `Proposed` | 2026-09-07 |
